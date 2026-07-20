@@ -1,0 +1,29 @@
+# Environment and local secrets
+.env
+.env.*
+!.env.example
+secrets/
+/Secret/
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+
+# Existing local confidential files
+/测试key.txt
+/管理.txt
+/账号.png
+
+# Node.js
+node_modules/
+dist/
+coverage/
+*.log
+.pnpm-store/
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

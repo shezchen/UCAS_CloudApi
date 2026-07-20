@@ -9,6 +9,19 @@ type PluginOptions = {
   authID?: string
   /** request timeout ms, default: 15000 */
   timeoutMs?: number
+  /**
+   * Variants applied to discovered models with `capabilities.reasoning: true`
+   * that have no variants defined in config. Set to false to disable.
+   */
+  reasoningVariants?: Record<string, any> | false
+}
+
+const DEFAULT_REASONING_VARIANTS: Record<string, any> = {
+  low: { reasoningEffort: "low" },
+  medium: { reasoningEffort: "medium" },
+  high: { reasoningEffort: "high" },
+  xhigh: { reasoningEffort: "xhigh" },
+  max: { reasoningEffort: "max" },
 }
 
 type RemoteModel = {
@@ -108,6 +121,8 @@ export default async (_input: unknown, options: PluginOptions = {}) => {
   const providerID = options.providerID || "axonhub"
   const authID = options.authID || providerID
   const timeoutMs = options.timeoutMs ?? 15_000
+  const reasoningVariants =
+    options.reasoningVariants === false ? undefined : (options.reasoningVariants ?? DEFAULT_REASONING_VARIANTS)
 
   return {
     config: async (cfg: Record<string, any>) => {
@@ -148,7 +163,12 @@ export default async (_input: unknown, options: PluginOptions = {}) => {
           const discovered = mapModel(remote)
           const override = asRecord(existing[remote.id]) ?? {}
           // config overrides win (e.g. variants / custom name)
-          next[remote.id] = { ...discovered, ...override }
+          const merged: Record<string, any> = { ...discovered, ...override }
+          // attach default reasoning variants when config didn't define any
+          if (!merged.variants && reasoningVariants && remote.capabilities?.reasoning === true) {
+            merged.variants = { ...reasoningVariants }
+          }
+          next[remote.id] = merged
         }
 
         provider.models = next

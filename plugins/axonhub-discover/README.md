@@ -86,11 +86,36 @@ Minimal `~/.config/opencode/opencode.jsonc`:
 
 ## Plugin options
 
-| Option       | Default     | Description                                      |
-| ------------ | ----------- | ------------------------------------------------ |
-| `providerID` | `axonhub`   | Key under `provider` in OpenCode config          |
-| `authID`     | `providerID`| Key in `auth.json` if different from provider id |
-| `timeoutMs`  | `15000`     | HTTP timeout for `GET /models`                   |
+| Option              | Default       | Description                                                          |
+| ------------------- | ------------- | -------------------------------------------------------------------- |
+| `providerID`        | `axonhub`     | Key under `provider` in OpenCode config                              |
+| `authID`            | `providerID`  | Key in `auth.json` if different from provider id                     |
+| `timeoutMs`         | `15000`       | HTTP timeout for `GET /models`                                       |
+| `reasoningVariants` | built-in set  | Variants for reasoning-capable models without config variants; `false` disables |
+
+By default, discovered models whose API item has `capabilities.reasoning: true` get these variants (so you can pick reasoning effort in `/models`). If a model supports reasoning but has no variants, the server should report it via `capabilities.reasoning` in `GET /v1/models`.
+
+The default variant set:
+
+```jsonc
+{
+  "low": { "reasoningEffort": "low" },
+  "medium": { "reasoningEffort": "medium" },
+  "high": { "reasoningEffort": "high" },
+  "xhigh": { "reasoningEffort": "xhigh" },
+  "max": { "reasoningEffort": "max" }
+}
+```
+
+Override with your own set, or turn off:
+
+```jsonc
+["./plugins/axonhub-discover/index.ts", {
+  "reasoningVariants": { "low": { "reasoningEffort": "low" }, "high": { "reasoningEffort": "high" } }
+}]
+// or
+["./plugins/axonhub-discover/index.ts", { "reasoningVariants": false }]
+```
 
 Example with a custom provider id:
 

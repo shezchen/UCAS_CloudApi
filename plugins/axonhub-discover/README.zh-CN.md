@@ -84,11 +84,36 @@ cp plugins/axonhub-discover/index.ts .opencode/plugin/axonhub-discover.ts
 
 ## 插件参数
 
-| 参数         | 默认值       | 说明                                      |
-| ------------ | ------------ | ----------------------------------------- |
-| `providerID` | `axonhub`    | 对应配置里 `provider` 的 key              |
-| `authID`     | 同 providerID | `auth.json` 中的 key（可与 provider 不同） |
-| `timeoutMs`  | `15000`      | 请求 `/models` 的超时（毫秒）             |
+| 参数                | 默认值        | 说明                                                            |
+| ------------------- | ------------- | --------------------------------------------------------------- |
+| `providerID`        | `axonhub`     | 对应配置里 `provider` 的 key                                    |
+| `authID`            | 同 providerID | `auth.json` 中的 key（可与 provider 不同）                      |
+| `timeoutMs`         | `15000`       | 请求 `/models` 的超时（毫秒）                                   |
+| `reasoningVariants` | 内置一组      | 给可推理模型补的默认 variants；传 `false` 关闭                  |
+
+默认情况下，API 返回中 `capabilities.reasoning: true` 的模型会自动获得思维强度 variants。如果某个模型支持推理但没有档位，应由服务端在 `GET /v1/models` 中上报 `capabilities.reasoning`。
+
+默认 variants 组：
+
+```jsonc
+{
+  "low": { "reasoningEffort": "low" },
+  "medium": { "reasoningEffort": "medium" },
+  "high": { "reasoningEffort": "high" },
+  "xhigh": { "reasoningEffort": "xhigh" },
+  "max": { "reasoningEffort": "max" }
+}
+```
+
+可以替换成自己的，或关闭：
+
+```jsonc
+["./plugins/axonhub-discover/index.ts", {
+  "reasoningVariants": { "low": { "reasoningEffort": "low" }, "high": { "reasoningEffort": "high" } }
+}]
+// 或
+["./plugins/axonhub-discover/index.ts", { "reasoningVariants": false }]
+```
 
 自定义 provider id 示例：
 

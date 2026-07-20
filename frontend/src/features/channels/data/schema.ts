@@ -348,10 +348,7 @@ export const channelSchema = z.object({
 });
 export type Channel = z.infer<typeof channelSchema>;
 
-export function isActiveDonationOwnedByAnotherUser(
-  channel: Pick<Channel, 'userID' | 'expiresAt'>,
-  viewerUserID?: string
-): boolean {
+export function isActiveDonationOwnedByAnotherUser(channel: Pick<Channel, 'userID' | 'expiresAt'>, viewerUserID?: string): boolean {
   if (!channel.userID || channel.userID === viewerUserID) return false;
   if (!channel.expiresAt) return true;
 
@@ -497,12 +494,12 @@ export const createChannelInputSchema = z
     name: z.string().min(1, 'Name is required'),
     expiresAt: z.string().optional().nullable(),
     policies: channelPoliciesSchema.optional(),
-    supportedModels: z.array(z.string()).min(0, 'At least one supported model is required'),
-    autoSyncSupportedModels: z.boolean().optional().default(false),
+    supportedModels: z.array(z.string()),
+    autoSyncSupportedModels: z.boolean().optional().default(true),
     autoSyncModelPattern: z.string().optional().default(''),
     manualModels: z.array(z.string()).optional().nullable(),
     tags: z.array(z.string()).optional().default([]),
-    defaultTestModel: z.string().min(1, 'Please select a default test model'),
+    defaultTestModel: z.string(),
     remark: z.string().optional(),
     orderingWeight: z.number().int().optional(),
     settings: channelSettingsSchema.optional(),
@@ -522,6 +519,22 @@ export const createChannelInputSchema = z
     }),
   })
   .superRefine((data, ctx) => {
+    if (!data.autoSyncSupportedModels && data.supportedModels.length === 0) {
+      ctx.addIssue({
+        code: 'custom' as const,
+        message: 'At least one supported model is required',
+        path: ['supportedModels'],
+      });
+    }
+
+    if (!data.autoSyncSupportedModels && data.defaultTestModel.trim().length === 0) {
+      ctx.addIssue({
+        code: 'custom' as const,
+        message: 'Please select a default test model',
+        path: ['defaultTestModel'],
+      });
+    }
+
     const isOAuthType =
       data.type === 'codex' || data.type === 'claudecode' || data.type === 'antigravity' || data.type === 'github_copilot';
     const hasApiKey = data.credentials.apiKey && data.credentials.apiKey.trim().length > 0;
@@ -586,12 +599,12 @@ export const updateChannelInputSchema = z
     expiresAt: z.string().optional().nullable(),
     clearExpiresAt: z.boolean().optional(),
     policies: channelPoliciesSchema.optional(),
-    supportedModels: z.array(z.string()).min(1, 'At least one supported model is required').optional(),
+    supportedModels: z.array(z.string()).optional(),
     autoSyncSupportedModels: z.boolean().optional(),
     autoSyncModelPattern: z.string().optional(),
     manualModels: z.array(z.string()).optional().nullable(),
     tags: z.array(z.string()).optional(),
-    defaultTestModel: z.string().min(1, 'Please select a default test model').optional(),
+    defaultTestModel: z.string().optional(),
     settings: channelSettingsSchema.optional(),
     errorMessage: z.string().optional().nullable(),
     remark: z.string().optional().nullable(),
@@ -614,6 +627,24 @@ export const updateChannelInputSchema = z
     orderingWeight: z.number().optional(),
   })
   .superRefine((data, ctx) => {
+    if (data.autoSyncSupportedModels === false) {
+      if (!data.supportedModels || data.supportedModels.length === 0) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'At least one supported model is required',
+          path: ['supportedModels'],
+        });
+      }
+
+      if (!data.defaultTestModel || data.defaultTestModel.trim().length === 0) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Please select a default test model',
+          path: ['defaultTestModel'],
+        });
+      }
+    }
+
     const effectiveType = data.type;
     const hasApiKey = data.credentials?.apiKey && data.credentials.apiKey.trim().length > 0;
 

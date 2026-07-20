@@ -697,7 +697,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
               expiresAt: formatDateTimeLocal(duplicateFromRow.expiresAt),
               policies: duplicateFromRow.policies ?? { stream: 'unlimited' },
               supportedModels: duplicateFromRow.supportedModels,
-              autoSyncSupportedModels: isOwner ? duplicateFromRow.autoSyncSupportedModels : true,
+              autoSyncSupportedModels: duplicateFromRow.autoSyncSupportedModels,
               autoSyncModelPattern: duplicateFromRow.autoSyncModelPattern || '',
               defaultTestModel: duplicateFromRow.defaultTestModel,
               tags: duplicateFromRow.tags || [],
@@ -729,7 +729,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                 },
               },
               supportedModels: [],
-              autoSyncSupportedModels: !isOwner,
+              autoSyncSupportedModels: true,
               defaultTestModel: '',
               tags: [],
               remark: '',
@@ -773,6 +773,12 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
   const selectedType = form.watch('type') as ChannelType | undefined;
   const watchedAutoSync = form.watch('autoSyncSupportedModels');
   const watchedAutoSyncPattern = form.watch('autoSyncModelPattern');
+
+  // The model picker keeps its large list outside react-hook-form. Mirror the
+  // current list so schema validation sees the same models that will be sent.
+  useEffect(() => {
+    form.setValue('supportedModels', supportedModels, { shouldValidate: false });
+  }, [form, supportedModels]);
 
   const activeChannelType = selectedType || derivedChannelType;
   const isCodexType = activeChannelType === 'codex';
@@ -2533,7 +2539,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                             </Tooltip>
                           </div>
 
-                          {supportedModels.length === 0 && (
+                          {supportedModels.length === 0 && !watchedAutoSync && (
                             <p className='text-destructive text-sm'>{t('channels.dialogs.fields.supportedModels.required')}</p>
                           )}
 
@@ -3403,7 +3409,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
             <Button
               type='submit'
               form='channel-form'
-              disabled={isSubmitting || supportedModels.length === 0}
+              disabled={isSubmitting || (!watchedAutoSync && supportedModels.length === 0)}
               data-testid='channel-submit-button'
             >
               {isSubmitting

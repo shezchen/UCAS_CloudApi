@@ -1,41 +1,113 @@
 import { useEffect, useMemo, useState } from 'react';
-import { BookOpenCheck, Check, Copy, KeyRound, Layers3, Loader2, RadioTower, Search, ShieldCheck, UserRound } from 'lucide-react';
+import {
+  BookOpenCheck,
+  Check,
+  Copy,
+  KeyRound,
+  Layers3,
+  Loader2,
+  RadioTower,
+  Search,
+  Settings2,
+  ShieldCheck,
+  UserRound,
+} from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
+import { usePermissions } from '@/hooks/usePermissions';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Switch } from '@/components/ui/switch';
 import { Header } from '@/components/layout/header';
 import { Main } from '@/components/layout/main';
-import { type CampusResourceChannel, useCampusResources } from './data/resources';
+import {
+  type CampusManagedChannel,
+  type CampusModelDetail,
+  type CampusResourceChannel,
+  useCampusResources,
+  useChannelModelCapabilities,
+  useUpdateChannelModelCapability,
+} from './data/resources';
 
 const ALL_API_KEYS = 'all';
+const MAX_CAPABILITY_TOKENS = 10_000_000;
 
-function ModelCopyButton({ model }: { model: string }) {
+function ModelCapabilityBadge({ label, enabled }: { label: string; enabled: boolean }) {
   const { t } = useTranslation();
-  const { isCopied, handleCopy } = useCopyToClipboard({ text: model });
 
   return (
-    <button
-      type='button'
-      className='group bg-background hover:border-primary/40 hover:bg-accent/50 focus-visible:ring-ring/50 flex min-w-0 items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors focus-visible:ring-[3px] focus-visible:outline-none'
-      onClick={handleCopy}
-      aria-label={t('resources.models.copy', { model })}
-      title={t('resources.models.copy', { model })}
-      data-testid='campus-resource-model-copy'
-      data-model-name={model}
-    >
-      <code className='min-w-0 truncate text-xs font-medium sm:text-sm'>{model}</code>
-      {isCopied ? (
-        <Check className='size-4 shrink-0 text-emerald-600' aria-hidden='true' />
-      ) : (
-        <Copy className='text-muted-foreground group-hover:text-foreground size-4 shrink-0 transition-colors' aria-hidden='true' />
+    <Badge
+      variant='outline'
+      className={cn(
+        'font-normal',
+        enabled
+          ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+          : 'text-muted-foreground border-border bg-muted/40'
       )}
-    </button>
+    >
+      {label}: {t(enabled ? 'resources.models.capability.supported' : 'resources.models.capability.unsupported')}
+    </Badge>
+  );
+}
+
+function ModelCard({ model, details }: { model: string; details?: CampusModelDetail }) {
+  const { t, i18n } = useTranslation();
+  const { isCopied, handleCopy } = useCopyToClipboard({ text: model });
+  const numberFormatter = useMemo(() => new Intl.NumberFormat(i18n.language.startsWith('zh') ? 'zh-CN' : 'en-US'), [i18n.language]);
+
+  return (
+    <div className='bg-background flex min-w-0 flex-col gap-3 rounded-lg border p-3'>
+      <button
+        type='button'
+        className='group hover:text-primary focus-visible:ring-ring/50 flex min-w-0 items-center justify-between gap-3 rounded-sm text-left transition-colors focus-visible:ring-[3px] focus-visible:outline-none'
+        onClick={handleCopy}
+        aria-label={t('resources.models.copy', { model })}
+        title={t('resources.models.copy', { model })}
+        data-testid='campus-resource-model-copy'
+        data-model-name={model}
+      >
+        <code className='min-w-0 truncate text-xs font-medium sm:text-sm'>{model}</code>
+        {isCopied ? (
+          <Check className='size-4 shrink-0 text-emerald-600' aria-hidden='true' />
+        ) : (
+          <Copy className='text-muted-foreground group-hover:text-foreground size-4 shrink-0 transition-colors' aria-hidden='true' />
+        )}
+      </button>
+
+      {details && (
+        <div className='flex flex-wrap gap-1.5 text-[11px]'>
+          <Badge variant='secondary' className='font-normal'>
+            {t('resources.models.capability.source')}: {t(`resources.models.source.${details.source}`, { defaultValue: details.source })}
+          </Badge>
+          {details.variesByAPIKey && (
+            <Badge variant='secondary' className='font-normal'>
+              {t('resources.models.capability.variesByAPIKey')}
+            </Badge>
+          )}
+          <ModelCapabilityBadge label={t('resources.models.capability.vision')} enabled={details.vision} />
+          <ModelCapabilityBadge label={t('resources.models.capability.toolCall')} enabled={details.toolCall} />
+          <ModelCapabilityBadge label={t('resources.models.capability.reasoning')} enabled={details.reasoning} />
+          <Badge variant='outline' className='font-normal'>
+            {t('resources.models.capability.context')}:{' '}
+            {details.contextLength > 0 ? numberFormatter.format(details.contextLength) : t('resources.models.capability.unknown')}
+          </Badge>
+          <Badge variant='outline' className='font-normal'>
+            {t('resources.models.capability.output')}:{' '}
+            {details.maxOutputTokens === undefined
+              ? t('resources.models.capability.unknown')
+              : numberFormatter.format(details.maxOutputTokens)}
+          </Badge>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -132,6 +204,288 @@ function ChannelCard({ channel }: { channel: CampusResourceChannel }) {
   );
 }
 
+function ChannelModelCapabilityDialog({
+  channel,
+  open,
+  onOpenChange,
+}: {
+  channel: CampusManagedChannel;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { t } = useTranslation();
+  const updateCapability = useUpdateChannelModelCapability();
+  const firstModel = channel.models[0];
+  const [selectedModelID, setSelectedModelID] = useState(firstModel?.id ?? '');
+  const [vision, setVision] = useState(firstModel?.vision ?? true);
+  const [toolCall, setToolCall] = useState(firstModel?.toolCall ?? true);
+  const [reasoning, setReasoning] = useState(firstModel?.reasoning ?? true);
+  const [contextLength, setContextLength] = useState(String(firstModel?.contextLength ?? 1_000_000));
+  const [maxOutputTokens, setMaxOutputTokens] = useState(
+    firstModel?.maxOutputTokens === undefined ? '' : String(firstModel.maxOutputTokens)
+  );
+
+  const selectedModel = channel.models.find((model) => model.id === selectedModelID);
+  const parsedContextLength = Number(contextLength);
+  const parsedMaxOutputTokens = maxOutputTokens.trim() === '' ? undefined : Number(maxOutputTokens);
+  const contextLengthIsValid =
+    Number.isSafeInteger(parsedContextLength) && parsedContextLength > 0 && parsedContextLength <= MAX_CAPABILITY_TOKENS;
+  const maxOutputTokensIsValid =
+    parsedMaxOutputTokens === undefined ||
+    (Number.isSafeInteger(parsedMaxOutputTokens) &&
+      parsedMaxOutputTokens > 0 &&
+      parsedMaxOutputTokens <= MAX_CAPABILITY_TOKENS &&
+      parsedMaxOutputTokens <= parsedContextLength);
+
+  const selectModel = (modelID: string) => {
+    const model = channel.models.find((candidate) => candidate.id === modelID);
+    if (!model) return;
+
+    setSelectedModelID(modelID);
+    setVision(model.vision);
+    setToolCall(model.toolCall);
+    setReasoning(model.reasoning);
+    setContextLength(String(model.contextLength));
+    setMaxOutputTokens(model.maxOutputTokens === undefined ? '' : String(model.maxOutputTokens));
+  };
+
+  const closeAfterSuccess = (message: string) => {
+    toast.success(message);
+    onOpenChange(false);
+  };
+
+  const saveOverride = () => {
+    if (!selectedModel || !contextLengthIsValid || !maxOutputTokensIsValid) return;
+
+    updateCapability.mutate(
+      {
+        channelID: channel.id,
+        modelID: selectedModel.id,
+        override: {
+          vision,
+          toolCall,
+          reasoning,
+          contextLength: parsedContextLength,
+          ...(parsedMaxOutputTokens === undefined ? {} : { maxOutputTokens: parsedMaxOutputTokens }),
+        },
+      },
+      {
+        onSuccess: () => closeAfterSuccess(t('resources.manage.saveSuccess')),
+        onError: () => toast.error(t('resources.manage.updateError')),
+      }
+    );
+  };
+
+  const restoreAutomatic = () => {
+    if (!selectedModel) return;
+
+    updateCapability.mutate(
+      {
+        channelID: channel.id,
+        modelID: selectedModel.id,
+        override: null,
+      },
+      {
+        onSuccess: () => closeAfterSuccess(t('resources.manage.resetSuccess')),
+        onError: () => toast.error(t('resources.manage.updateError')),
+      }
+    );
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className='sm:max-w-xl' data-testid='campus-channel-model-capability-dialog'>
+        <DialogHeader>
+          <DialogTitle>{t('resources.manage.dialogTitle', { channel: channel.name })}</DialogTitle>
+          <DialogDescription>{t('resources.manage.dialogDescription')}</DialogDescription>
+        </DialogHeader>
+
+        <div className='space-y-5'>
+          <div className='space-y-2'>
+            <Label htmlFor='campus-capability-model'>{t('resources.manage.model')}</Label>
+            <Select value={selectedModelID} onValueChange={selectModel}>
+              <SelectTrigger id='campus-capability-model' className='w-full' data-testid='campus-capability-model-select'>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {channel.models.map((model) => (
+                  <SelectItem key={model.id} value={model.id}>
+                    {model.id}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {selectedModel && (
+            <>
+              <div className='bg-muted/40 flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 text-xs'>
+                <span className='text-muted-foreground'>{t('resources.manage.source')}</span>
+                <Badge variant='secondary'>
+                  {t(`resources.models.source.${selectedModel.source}`, { defaultValue: selectedModel.source })}
+                </Badge>
+                <Badge variant={selectedModel.overridden ? 'default' : 'outline'}>
+                  {t(selectedModel.overridden ? 'resources.manage.overridden' : 'resources.manage.automatic')}
+                </Badge>
+              </div>
+
+              <div className='grid gap-3 sm:grid-cols-3'>
+                <div className='flex items-center justify-between gap-3 rounded-lg border p-3'>
+                  <Label htmlFor='campus-capability-vision'>{t('resources.models.capability.vision')}</Label>
+                  <Switch id='campus-capability-vision' checked={vision} onCheckedChange={setVision} />
+                </div>
+                <div className='flex items-center justify-between gap-3 rounded-lg border p-3'>
+                  <Label htmlFor='campus-capability-tool-call'>{t('resources.models.capability.toolCall')}</Label>
+                  <Switch id='campus-capability-tool-call' checked={toolCall} onCheckedChange={setToolCall} />
+                </div>
+                <div className='flex items-center justify-between gap-3 rounded-lg border p-3'>
+                  <Label htmlFor='campus-capability-reasoning'>{t('resources.models.capability.reasoning')}</Label>
+                  <Switch id='campus-capability-reasoning' checked={reasoning} onCheckedChange={setReasoning} />
+                </div>
+              </div>
+
+              <div className='grid gap-4 sm:grid-cols-2'>
+                <div className='space-y-2'>
+                  <Label htmlFor='campus-capability-context'>{t('resources.manage.contextLength')}</Label>
+                  <Input
+                    id='campus-capability-context'
+                    type='number'
+                    min={1}
+                    max={MAX_CAPABILITY_TOKENS}
+                    step={1}
+                    value={contextLength}
+                    onChange={(event) => setContextLength(event.target.value)}
+                    aria-invalid={!contextLengthIsValid}
+                  />
+                  {!contextLengthIsValid && <p className='text-destructive text-xs'>{t('resources.manage.invalidContext')}</p>}
+                </div>
+                <div className='space-y-2'>
+                  <Label htmlFor='campus-capability-output'>{t('resources.manage.maxOutputTokens')}</Label>
+                  <Input
+                    id='campus-capability-output'
+                    type='number'
+                    min={1}
+                    max={contextLengthIsValid ? parsedContextLength : MAX_CAPABILITY_TOKENS}
+                    step={1}
+                    value={maxOutputTokens}
+                    onChange={(event) => setMaxOutputTokens(event.target.value)}
+                    placeholder={t('resources.manage.outputOptional')}
+                    aria-invalid={!maxOutputTokensIsValid}
+                  />
+                  {!maxOutputTokensIsValid && <p className='text-destructive text-xs'>{t('resources.manage.invalidOutput')}</p>}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        <DialogFooter className='sm:justify-between'>
+          <Button
+            type='button'
+            variant='outline'
+            onClick={restoreAutomatic}
+            disabled={!selectedModel?.overridden || updateCapability.isPending}
+          >
+            {t('resources.manage.restoreAuto')}
+          </Button>
+          <div className='flex flex-col-reverse gap-2 sm:flex-row'>
+            <Button type='button' variant='ghost' onClick={() => onOpenChange(false)} disabled={updateCapability.isPending}>
+              {t('common.buttons.cancel')}
+            </Button>
+            <Button
+              type='button'
+              onClick={saveOverride}
+              disabled={!selectedModel || !contextLengthIsValid || !maxOutputTokensIsValid || updateCapability.isPending}
+            >
+              {updateCapability.isPending && <Loader2 className='size-4 animate-spin' aria-hidden='true' />}
+              {t('resources.manage.save')}
+            </Button>
+          </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ChannelModelManagement() {
+  const { t } = useTranslation();
+  const [editingChannel, setEditingChannel] = useState<CampusManagedChannel | null>(null);
+  const { data, isLoading, isFetching, error, refetch } = useChannelModelCapabilities();
+
+  return (
+    <section className='space-y-4' aria-labelledby='campus-channel-model-management-title' data-testid='campus-channel-model-capabilities'>
+      <div className='flex items-start gap-3'>
+        <Settings2 className='text-primary mt-0.5 size-5 shrink-0' aria-hidden='true' />
+        <div className='min-w-0 flex-1'>
+          <div className='flex items-center gap-2'>
+            <h3 id='campus-channel-model-management-title' className='font-semibold'>
+              {t('resources.manage.title')}
+            </h3>
+            {isFetching && !isLoading && <Loader2 className='text-muted-foreground size-3.5 animate-spin' aria-hidden='true' />}
+          </div>
+          <p className='text-muted-foreground text-sm'>{t('resources.manage.description')}</p>
+        </div>
+      </div>
+
+      {isLoading ? (
+        <div className='grid gap-3 sm:grid-cols-2'>
+          <Skeleton className='h-24' />
+          <Skeleton className='h-24' />
+        </div>
+      ) : error || !data ? (
+        <div className='text-muted-foreground flex min-h-28 flex-col items-center justify-center gap-3 rounded-xl border border-dashed px-4 text-center text-sm'>
+          <span>{t('resources.manage.loadError')}</span>
+          <Button type='button' variant='outline' size='sm' onClick={() => void refetch()}>
+            {t('common.buttons.retry')}
+          </Button>
+        </div>
+      ) : data.channels.length === 0 ? (
+        <div className='text-muted-foreground flex min-h-28 items-center justify-center rounded-xl border border-dashed px-4 text-center text-sm'>
+          {t('resources.manage.empty')}
+        </div>
+      ) : (
+        <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-3' data-testid='campus-channel-model-management-list'>
+          {data.channels.map((channel) => (
+            <Card key={channel.id} className='gap-3 py-4 shadow-none'>
+              <CardHeader className='gap-1 px-4'>
+                <CardTitle className='truncate text-base' title={channel.name}>
+                  {channel.name}
+                </CardTitle>
+                <CardDescription>{t('resources.manage.channelModelCount', { count: channel.models.length })}</CardDescription>
+              </CardHeader>
+              <CardContent className='px-4'>
+                <Button
+                  type='button'
+                  variant='outline'
+                  size='sm'
+                  className='w-full'
+                  onClick={() => setEditingChannel(channel)}
+                  disabled={channel.models.length === 0}
+                  data-testid='campus-channel-model-edit'
+                >
+                  <Settings2 className='size-4' aria-hidden='true' />
+                  {channel.models.length === 0 ? t('resources.manage.noModels') : t('resources.manage.edit')}
+                </Button>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {editingChannel && (
+        <ChannelModelCapabilityDialog
+          key={editingChannel.id}
+          channel={editingChannel}
+          open
+          onOpenChange={(nextOpen) => {
+            if (!nextOpen) setEditingChannel(null);
+          }}
+        />
+      )}
+    </section>
+  );
+}
+
 function ResourcesLoading() {
   return (
     <div className='flex-1 space-y-5 p-6 md:p-8' data-testid='campus-resources-loading'>
@@ -151,6 +505,7 @@ function ResourcesLoading() {
 
 export default function CampusResourcesPage() {
   const { t } = useTranslation();
+  const { isOwner } = usePermissions();
   const [selectedApiKey, setSelectedApiKey] = useState(ALL_API_KEYS);
   const [modelSearch, setModelSearch] = useState('');
   const { data, isLoading, isFetching, error, refetch } = useCampusResources();
@@ -170,6 +525,16 @@ export default function CampusResourcesPage() {
     const selectedIndex = Number(selectedApiKey.replace('key-', ''));
     return data.apiKeys[selectedIndex]?.models ?? data.models;
   }, [data, selectedApiKey]);
+
+  const selectedModelDetails = useMemo(() => {
+    if (!data) return [];
+    if (selectedApiKey === ALL_API_KEYS) return data.modelDetails;
+
+    const selectedIndex = Number(selectedApiKey.replace('key-', ''));
+    return data.apiKeys[selectedIndex]?.modelDetails ?? [];
+  }, [data, selectedApiKey]);
+
+  const modelDetailsByID = useMemo(() => new Map(selectedModelDetails.map((details) => [details.id, details])), [selectedModelDetails]);
 
   const filteredModels = useMemo(() => {
     const query = modelSearch.trim().toLocaleLowerCase();
@@ -304,12 +669,14 @@ export default function CampusResourcesPage() {
               ) : (
                 <div className='grid gap-2 sm:grid-cols-2 lg:grid-cols-3' data-testid='campus-resource-model-list'>
                   {filteredModels.map((model) => (
-                    <ModelCopyButton key={model} model={model} />
+                    <ModelCard key={model} model={model} details={modelDetailsByID.get(model)} />
                   ))}
                 </div>
               )}
             </CardContent>
           </Card>
+
+          {!isOwner && <ChannelModelManagement />}
 
           <section className='space-y-4' aria-labelledby='campus-resource-channels-title'>
             <div className='flex items-start gap-3'>

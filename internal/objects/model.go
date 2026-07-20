@@ -36,20 +36,66 @@ type ModelCard struct {
 	LastUpdated string              `json:"lastUpdated"`
 }
 
+// ModelMetadataPatch represents partial model metadata. Pointer scalar fields
+// deliberately distinguish an explicit false/zero value from an unknown value.
+// It is used for per-channel metadata overrides and for the built-in provider
+// catalog; it is not a routing configuration.
+type ModelMetadataPatch struct {
+	Name        *string                   `json:"name,omitempty"`
+	Description *string                   `json:"description,omitempty"`
+	Developer   *string                   `json:"developer,omitempty"`
+	Type        *string                   `json:"type,omitempty"`
+	Icon        *string                   `json:"icon,omitempty"`
+	Group       *string                   `json:"group,omitempty"`
+	Reasoning   *ModelCardReasoningPatch  `json:"reasoning,omitempty"`
+	ToolCall    *bool                     `json:"toolCall,omitempty"`
+	Temperature *bool                     `json:"temperature,omitempty"`
+	Modalities  *ModelCardModalitiesPatch `json:"modalities,omitempty"`
+	Vision      *bool                     `json:"vision,omitempty"`
+	Cost        *ModelCardCostPatch       `json:"cost,omitempty"`
+	Limit       *ModelCardLimitPatch      `json:"limit,omitempty"`
+	Knowledge   *string                   `json:"knowledge,omitempty"`
+	ReleaseDate *string                   `json:"releaseDate,omitempty"`
+	LastUpdated *string                   `json:"lastUpdated,omitempty"`
+}
+
+type ModelCardReasoningPatch struct {
+	Supported *bool `json:"supported,omitempty"`
+	Default   *bool `json:"default,omitempty"`
+}
+
+type ModelCardModalitiesPatch struct {
+	// A nil pointer means unknown; a non-nil empty slice means explicitly none.
+	Input  *[]string `json:"input,omitempty"`
+	Output *[]string `json:"output,omitempty"`
+}
+
+type ModelCardCostPatch struct {
+	Input      *float64 `json:"input,omitempty"`
+	Output     *float64 `json:"output,omitempty"`
+	CacheRead  *float64 `json:"cacheRead,omitempty"`
+	CacheWrite *float64 `json:"cacheWrite,omitempty"`
+}
+
+type ModelCardLimitPatch struct {
+	Context *int `json:"context,omitempty"`
+	Output  *int `json:"output,omitempty"`
+}
+
 type ModelSettings struct {
 	DisableDeveloperSettingsInheritance bool                `json:"disableDeveloperSettingsInheritance"`
 	Associations                        []*ModelAssociation `json:"associations"`
 }
 
 const (
-	ModelAssociationConditionFieldPromptTokens  = "prompt_tokens"
-	ModelAssociationConditionFieldStream        = "stream"
-	ModelAssociationConditionFieldRequestFormat = "request_format"
-	ModelAssociationConditionFieldDailyTime     = "daily_time"
-	ModelAssociationConditionFieldHasImage      = "has_image"
-	ModelAssociationConditionFieldHasVideo      = "has_video"
-	ModelAssociationConditionFieldHasDocument   = "has_document"
-	ModelAssociationConditionFieldHasAudio      = "has_audio"
+	ModelAssociationConditionFieldPromptTokens        = "prompt_tokens"
+	ModelAssociationConditionFieldStream              = "stream"
+	ModelAssociationConditionFieldRequestFormat       = "request_format"
+	ModelAssociationConditionFieldDailyTime           = "daily_time"
+	ModelAssociationConditionFieldHasImage            = "has_image"
+	ModelAssociationConditionFieldHasVideo            = "has_video"
+	ModelAssociationConditionFieldHasDocument         = "has_document"
+	ModelAssociationConditionFieldHasAudio            = "has_audio"
 	ModelAssociationConditionFieldRequestHeader       = "request_header"
 	ModelAssociationConditionFieldRequestHeaderPrefix = "request_header."
 )

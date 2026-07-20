@@ -122,6 +122,12 @@ type TransformOptions struct {
 }
 
 type ChannelSettings struct {
+	// ModelMetadataOverrides stores contributor-maintained metadata for models
+	// exposed by this channel. It intentionally remains outside the generic
+	// GraphQL ChannelSettings input/output so callers cannot use it to alter
+	// global Model entities or routing associations.
+	ModelMetadataOverrides map[string]*ModelMetadataPatch `json:"modelMetadataOverrides,omitempty"`
+
 	// ExtraModelPrefix sets the channel accept the model with the extra prefix.
 	// e.g. a channel
 	// supported_modles is ["deepseek-chat", "deepseek-reasoner"]

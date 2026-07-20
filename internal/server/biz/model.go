@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -678,43 +679,52 @@ func (svc *ModelService) ListEnabledModels(ctx context.Context) ([]ModelFacade, 
 		return configuredModels, nil
 	}
 
-	// QueryAllChannelModels=true: merge configured models (higher priority) with channel models
+	// QueryAllChannelModels=true: merge configured models (higher priority) with channel models.
+	// A configured Model is atomic: channel-derived cards never amend it. Dynamic
+	// models with the same request ID are aggregated across every eligible channel.
 	var (
-		models    = configuredModels
-		modelSet  = make(map[string]bool, len(configuredModels))
-		blacklist = settings.ModelBlacklistRegex
+		models         = configuredModels
+		configuredSet  = make(map[string]struct{}, len(configuredModels))
+		dynamicIndexes = make(map[string]int)
+		blacklistedSet = make(map[string]struct{})
+		blacklist      = settings.ModelBlacklistRegex
 	)
 
 	for _, m := range configuredModels {
-		modelSet[m.ID] = true
+		configuredSet[m.ID] = struct{}{}
 	}
 
 	for _, ch := range channels {
 		entries := ch.GetModelEntries()
-
+		requestModels := make([]string, 0, len(entries))
 		for requestModel := range entries {
-			if modelSet[requestModel] {
+			requestModels = append(requestModels, requestModel)
+		}
+		sort.Strings(requestModels)
+
+		for _, requestModel := range requestModels {
+			if _, ok := configuredSet[requestModel]; ok {
+				continue
+			}
+			if _, ok := blacklistedSet[requestModel]; ok {
 				continue
 			}
 
 			// Channel-derived models matching the blacklist regex are excluded.
-			// Configured Model entities above are not affected. Cache the decision
-			// in modelSet so the same model ID coming from another channel skips
-			// the regex match.
+			// Configured Model entities above are not affected.
 			if blacklist != "" && xregexp.MatchString(blacklist, requestModel) {
-				modelSet[requestModel] = true
+				blacklistedSet[requestModel] = struct{}{}
 				continue
 			}
 
-			modelSet[requestModel] = true
+			resolved := svc.ResolveChannelModelFacade(ch, entries[requestModel])
+			if index, ok := dynamicIndexes[requestModel]; ok {
+				models[index] = mergeChannelModelFacades(models[index], resolved)
+				continue
+			}
 
-			models = append(models, ModelFacade{
-				ID:          requestModel,
-				DisplayName: requestModel,
-				CreatedAt:   ch.CreatedAt,
-				Created:     ch.CreatedAt.Unix(),
-				OwnedBy:     ch.Channel.Type.String(),
-			})
+			dynamicIndexes[requestModel] = len(models)
+			models = append(models, resolved)
 		}
 	}
 
@@ -752,16 +762,81 @@ func (svc *ModelService) queryConfiguredModelFacades(ctx context.Context, allowe
 		associations := MatchConnections(effectiveAssociations, channels)
 		if len(associations) > 0 {
 			models = append(models, ModelFacade{
-				ID:          m.ModelID,
-				DisplayName: m.ModelID,
-				CreatedAt:   m.CreatedAt,
-				Created:     m.CreatedAt.Unix(),
-				OwnedBy:     "configured",
+				ID:             m.ModelID,
+				DisplayName:    m.ModelID,
+				CreatedAt:      m.CreatedAt,
+				Created:        m.CreatedAt.Unix(),
+				OwnedBy:        "configured",
+				Metadata:       configuredModelMetadata(m),
+				MetadataSource: ModelMetadataSourceConfigured,
 			})
 		}
 	}
 
 	return models, nil
+}
+
+// OverlayConfiguredModelFacadesForDisplay preserves AxonHub's legacy extended
+// model API behavior without changing visibility or routing. The caller first
+// determines the models that are actually callable; this method then lets any
+// enabled Owner Model with the same ID remain authoritative for display-only
+// metadata, even when its associations do not match the caller's channel
+// subset. It never adds a model ID or changes channel candidates.
+func (svc *ModelService) OverlayConfiguredModelFacadesForDisplay(ctx context.Context, visible []ModelFacade) ([]ModelFacade, error) {
+	if len(visible) == 0 {
+		return visible, nil
+	}
+
+	visibleIDs := make([]string, 0, len(visible))
+	seen := make(map[string]struct{}, len(visible))
+	for _, facade := range visible {
+		if facade.ID == "" {
+			continue
+		}
+		if _, ok := seen[facade.ID]; ok {
+			continue
+		}
+		seen[facade.ID] = struct{}{}
+		visibleIDs = append(visibleIDs, facade.ID)
+	}
+	if len(visibleIDs) == 0 {
+		return visible, nil
+	}
+
+	configured, err := svc.entFromContext(ctx).Model.Query().
+		Where(
+			model.StatusEQ(model.StatusEnabled),
+			model.ModelIDIn(visibleIDs...),
+		).
+		All(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("query configured model display metadata: %w", err)
+	}
+
+	configuredByID := make(map[string]*ent.Model, len(configured))
+	for _, row := range configured {
+		configuredByID[row.ModelID] = row
+	}
+
+	result := make([]ModelFacade, len(visible))
+	copy(result, visible)
+	for index, facade := range result {
+		row := configuredByID[facade.ID]
+		if row == nil {
+			continue
+		}
+		result[index] = ModelFacade{
+			ID:             facade.ID,
+			DisplayName:    facade.ID,
+			CreatedAt:      row.CreatedAt,
+			Created:        row.CreatedAt.Unix(),
+			OwnedBy:        "configured",
+			Metadata:       configuredModelMetadata(row),
+			MetadataSource: ModelMetadataSourceConfigured,
+		}
+	}
+
+	return result, nil
 }
 
 // CountAssociatedChannels counts the number of unique channels associated with the given model associations.
@@ -915,4 +990,9 @@ type ModelFacade struct {
 	CreatedAt time.Time `json:"created_at"`
 	// Owned by
 	OwnedBy string `json:"owned_by"`
+	// Metadata is the effective model card. Configured Model entities are
+	// atomic; channel-derived cards are resolved from overrides/catalog/defaults.
+	Metadata *objects.ModelMetadataPatch `json:"metadata,omitempty"`
+	// MetadataSource identifies the strongest source used to resolve Metadata.
+	MetadataSource ModelMetadataSource `json:"metadata_source,omitempty"`
 }

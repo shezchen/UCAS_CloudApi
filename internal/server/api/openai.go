@@ -12,8 +12,6 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/looplj/axonhub/internal/contexts"
-	"github.com/looplj/axonhub/internal/ent"
-	"github.com/looplj/axonhub/internal/ent/model"
 	entprivacy "github.com/looplj/axonhub/internal/ent/privacy"
 	"github.com/looplj/axonhub/internal/log"
 	"github.com/looplj/axonhub/internal/server/biz"
@@ -42,7 +40,6 @@ type OpenAIHandlersParams struct {
 	LiveStreamRegistry          *biz.LiveStreamRegistry
 	ChannelLimiterManager       *orchestrator.ChannelLimiterManager
 	ProviderQuotaStatusProvider orchestrator.ProviderQuotaStatusProvider
-	Client                      *ent.Client
 }
 
 type OpenAIHandlers struct {
@@ -64,7 +61,6 @@ type OpenAIHandlers struct {
 	TranscriptionHandlers      *ChatCompletionHandlers
 	TranslationHandlers        *ChatCompletionHandlers
 	SpeechInboundTransformer   *openai.AudioInboundTransformer
-	EntClient                  *ent.Client
 }
 
 type speechRouteRequestBody struct {
@@ -231,7 +227,6 @@ func NewOpenAIHandlers(params OpenAIHandlersParams) *OpenAIHandlers {
 		},
 		VideoInboundTransformer: videoInbound,
 		VideoService:            params.VideoService,
-		EntClient:               params.Client,
 		ChannelService:          params.ChannelService,
 		ModelService:            params.ModelService,
 		SystemService:           params.SystemService,
@@ -556,86 +551,88 @@ func convertModelFacadeToOpenAIModel(m biz.ModelFacade) OpenAIModel {
 	}
 }
 
-// convertModelToOpenAIExtended transforms an ent.Model to OpenAIModel with extended metadata fields.
-// It safely handles nil ModelCard, Cost, and Limit fields.
-// The include set specifies which optional fields to populate. If nil or empty, all fields are populated.
-// Supported field names: name, description, context_length, max_output_tokens, modalities, capabilities, pricing, icon, type.
-func convertModelToOpenAIExtended(m *ent.Model, include map[string]bool) OpenAIModel {
-	result := OpenAIModel{
-		ID:      m.ModelID,
-		Object:  openAIModelObjectType,
-		Created: m.CreatedAt.Unix(),
-		OwnedBy: m.Developer,
+// convertModelFacadeToOpenAIExtended renders the already-resolved effective
+// metadata. This works for both explicit owner Model entities and dynamic
+// channel models, so API handlers do not need a second database query.
+func convertModelFacadeToOpenAIExtended(m biz.ModelFacade, include map[string]bool) OpenAIModel {
+	result := convertModelFacadeToOpenAIModel(m)
+	metadata := m.Metadata
+	if metadata == nil {
+		return result
 	}
 
-	// Helper function to check if a field should be included
 	shouldInclude := func(field string) bool {
-		if include == nil {
-			return true // all fields included
-		}
-		return include[field]
+		return include == nil || include[field]
+	}
+	if metadata.Developer != nil {
+		result.OwnedBy = *metadata.Developer
+	}
+	if shouldInclude("name") && metadata.Name != nil {
+		result.Name = *metadata.Name
+	}
+	if shouldInclude("description") && metadata.Description != nil {
+		result.Description = *metadata.Description
+	}
+	if shouldInclude("icon") && metadata.Icon != nil {
+		result.Icon = *metadata.Icon
+	}
+	if shouldInclude("type") && metadata.Type != nil {
+		result.Type = *metadata.Type
 	}
 
-	// Always include basic fields (ID, Object, Created, OwnedBy) - they're set above
+	if shouldInclude("modalities") && metadata.Modalities != nil {
+		input := []string{}
+		if metadata.Modalities.Input != nil {
+			input = append(input, (*metadata.Modalities.Input)...)
+		}
+		output := []string{}
+		if metadata.Modalities.Output != nil {
+			output = append(output, (*metadata.Modalities.Output)...)
+		}
+		result.Modalities = &Modalities{Input: input, Output: output}
+	}
+	if shouldInclude("capabilities") {
+		hasCapabilities := metadata.Vision != nil || metadata.ToolCall != nil ||
+			(metadata.Reasoning != nil && metadata.Reasoning.Supported != nil)
+		if hasCapabilities {
+			capabilities := &Capabilities{}
+			if metadata.Vision != nil {
+				capabilities.Vision = *metadata.Vision
+			}
+			if metadata.ToolCall != nil {
+				capabilities.ToolCall = *metadata.ToolCall
+			}
+			if metadata.Reasoning != nil && metadata.Reasoning.Supported != nil {
+				capabilities.Reasoning = *metadata.Reasoning.Supported
+			}
+			result.Capabilities = capabilities
+		}
+	}
+	if metadata.Limit != nil {
+		if shouldInclude("context_length") && metadata.Limit.Context != nil {
+			result.ContextLength = *metadata.Limit.Context
+		}
+		if shouldInclude("max_output_tokens") && metadata.Limit.Output != nil {
+			result.MaxOutputTokens = *metadata.Limit.Output
+		}
+	}
+	if shouldInclude("pricing") && metadata.Cost != nil {
+		pricing := &Pricing{Unit: "per_1m_tokens", Currency: "USD"}
+		if metadata.Cost.Input != nil {
+			pricing.Input = *metadata.Cost.Input
+		}
+		if metadata.Cost.Output != nil {
+			pricing.Output = *metadata.Cost.Output
+		}
+		if metadata.Cost.CacheRead != nil {
+			pricing.CacheRead = *metadata.Cost.CacheRead
+		}
+		if metadata.Cost.CacheWrite != nil {
+			pricing.CacheWrite = *metadata.Cost.CacheWrite
+		}
+		result.Pricing = pricing
+	}
 
-	// Optional fields
-	if shouldInclude("name") {
-		result.Name = m.Name
-	}
-	if shouldInclude("icon") {
-		result.Icon = m.Icon
-	}
-	if shouldInclude("type") {
-		result.Type = string(m.Type)
-	}
-	if shouldInclude("description") {
-		if m.Remark != nil {
-			result.Description = *m.Remark
-		}
-	}
-
-	if m.ModelCard != nil {
-		// Modalities, Capabilities, ContextLength, MaxOutputTokens, Pricing come from ModelCard
-		if shouldInclude("modalities") {
-			input := m.ModelCard.Modalities.Input
-			if input == nil {
-				input = []string{}
-			}
-			output := m.ModelCard.Modalities.Output
-			if output == nil {
-				output = []string{}
-			}
-			result.Modalities = &Modalities{
-				Input:  input,
-				Output: output,
-			}
-		}
-		if shouldInclude("capabilities") {
-			caps := Capabilities{
-				Vision:    m.ModelCard.Vision,
-				ToolCall:  m.ModelCard.ToolCall,
-				Reasoning: m.ModelCard.Reasoning.Supported,
-			}
-			result.Capabilities = &caps
-		}
-		if shouldInclude("context_length") {
-			result.ContextLength = m.ModelCard.Limit.Context
-		}
-		if shouldInclude("max_output_tokens") {
-			result.MaxOutputTokens = m.ModelCard.Limit.Output
-		}
-		if shouldInclude("pricing") {
-			pricing := Pricing{
-				Input:      m.ModelCard.Cost.Input,
-				Output:     m.ModelCard.Cost.Output,
-				CacheRead:  m.ModelCard.Cost.CacheRead,
-				CacheWrite: m.ModelCard.Cost.CacheWrite,
-				Unit:       "per_1m_tokens",
-				Currency:   "USD",
-			}
-			result.Pricing = &pricing
-		}
-	}
 	return result
 }
 
@@ -721,24 +718,13 @@ func (handlers *OpenAIHandlers) RetrieveModel(c *gin.Context) {
 		c.JSON(http.StatusOK, convertModelFacadeToOpenAIModel(visibleModel))
 		return
 	}
-
-	configuredModel, err := handlers.EntClient.Model.Query().
-		Where(
-			model.ModelID(modelID),
-			model.StatusEQ(model.StatusEnabled),
-		).
-		Only(ctx)
+	displayModels, err := handlers.ModelService.OverlayConfiguredModelFacadesForDisplay(ctx, []biz.ModelFacade{visibleModel})
 	if err != nil {
-		if ent.IsNotFound(err) {
-			c.JSON(http.StatusOK, convertModelFacadeToOpenAIModel(visibleModel))
-			return
-		}
-
 		handlers.writeOpenAIInternalError(c, requestID, err)
 		return
 	}
 
-	c.JSON(http.StatusOK, convertModelToOpenAIExtended(configuredModel, include))
+	c.JSON(http.StatusOK, convertModelFacadeToOpenAIExtended(displayModels[0], include))
 }
 
 // ListModels returns all available models.
@@ -777,32 +763,13 @@ func (handlers *OpenAIHandlers) ListModels(c *gin.Context) {
 			return convertModelFacadeToOpenAIModel(m)
 		})
 	} else {
-		visibleIDs := lo.Map(visibleModels, func(m biz.ModelFacade, _ int) string {
-			return m.ID
-		})
-
-		dbModels, err := handlers.EntClient.Model.Query().
-			Where(
-				model.StatusEQ(model.StatusEnabled),
-				model.ModelIDIn(visibleIDs...),
-			).
-			All(ctx)
+		displayModels, err := handlers.ModelService.OverlayConfiguredModelFacadesForDisplay(ctx, visibleModels)
 		if err != nil {
 			handlers.writeOpenAIInternalError(c, requestID, err)
 			return
 		}
-
-		dbModelMap := make(map[string]*ent.Model, len(dbModels))
-		for _, m := range dbModels {
-			dbModelMap[m.ModelID] = m
-		}
-
-		openaiModels = lo.Map(visibleModels, func(m biz.ModelFacade, _ int) OpenAIModel {
-			if dbModel, ok := dbModelMap[m.ID]; ok {
-				return convertModelToOpenAIExtended(dbModel, include)
-			}
-
-			return convertModelFacadeToOpenAIModel(m)
+		openaiModels = lo.Map(displayModels, func(m biz.ModelFacade, _ int) OpenAIModel {
+			return convertModelFacadeToOpenAIExtended(m, include)
 		})
 	}
 

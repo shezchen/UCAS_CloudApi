@@ -45,7 +45,6 @@ func setupOpenAIRetrieveTest(t *testing.T) (*ent.Client, *biz.ChannelService, *b
 	handlers := &OpenAIHandlers{
 		ModelService:  modelSvc,
 		SystemService: systemSvc,
-		EntClient:     client,
 	}
 
 	router := gin.New()
@@ -97,7 +96,7 @@ func TestOpenAIHandlers_RetrieveModel_SupportsSlashModelIDs(t *testing.T) {
 	require.Equal(t, "openai", got.OwnedBy)
 }
 
-func TestOpenAIHandlers_RetrieveModel_FallsBackToBasicWhenConfiguredMetadataMissing(t *testing.T) {
+func TestOpenAIHandlers_RetrieveModel_UsesCatalogWhenConfiguredMetadataMissing(t *testing.T) {
 	client, channelSvc, _, router, ctx := setupOpenAIRetrieveTest(t)
 
 	createdAt := time.Unix(1712345688, 0)
@@ -127,9 +126,59 @@ func TestOpenAIHandlers_RetrieveModel_FallsBackToBasicWhenConfiguredMetadataMiss
 	require.Equal(t, "model", got.Object)
 	require.Equal(t, createdAt.Unix(), got.Created)
 	require.Equal(t, "openai", got.OwnedBy)
-	require.Empty(t, got.Name)
-	require.Nil(t, got.Capabilities)
+	require.Equal(t, "GPT-4o mini", got.Name)
+	require.Equal(t, "chat", got.Type)
+	require.Equal(t, 128000, got.ContextLength)
+	require.Equal(t, 16384, got.MaxOutputTokens)
+	require.NotNil(t, got.Capabilities)
+	require.True(t, got.Capabilities.Vision)
+	require.True(t, got.Capabilities.ToolCall)
+	require.False(t, got.Capabilities.Reasoning)
+	require.NotNil(t, got.Modalities)
+	require.Contains(t, got.Modalities.Input, "image")
 	require.Nil(t, got.Pricing)
+}
+
+func TestOpenAIHandlers_RetrieveModel_UsesPermissiveDefaultsForUnknownModel(t *testing.T) {
+	client, channelSvc, _, router, ctx := setupOpenAIRetrieveTest(t)
+
+	createdAt := time.Unix(1712345689, 0)
+	ch, err := client.Channel.Create().
+		SetType(channel.TypeOpenai).
+		SetName("Custom Compatible Channel").
+		SetBaseURL("https://custom.example/v1").
+		SetCredentials(objects.ChannelCredentials{APIKey: "key"}).
+		SetSupportedModels([]string{"school-new-model"}).
+		SetDefaultTestModel("school-new-model").
+		SetStatus(channel.StatusEnabled).
+		SetCreatedAt(createdAt).
+		Save(ctx)
+	require.NoError(t, err)
+
+	channelSvc.SetEnabledChannelsForTest([]*biz.Channel{{Channel: ch}})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/models/school-new-model?include=all", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var got OpenAIModel
+	body := w.Body.Bytes()
+	require.NoError(t, json.Unmarshal(body, &got))
+	require.Equal(t, "school-new-model", got.ID)
+	require.Equal(t, "school-new-model", got.Name)
+	require.Equal(t, 1_000_000, got.ContextLength)
+	require.Zero(t, got.MaxOutputTokens, "unknown output limits must be omitted")
+	require.NotNil(t, got.Capabilities)
+	require.True(t, got.Capabilities.Vision)
+	require.True(t, got.Capabilities.ToolCall)
+	require.True(t, got.Capabilities.Reasoning)
+	require.NotNil(t, got.Modalities)
+	require.Equal(t, []string{"text", "image"}, got.Modalities.Input)
+	require.Equal(t, []string{"text"}, got.Modalities.Output)
+	require.Nil(t, got.Pricing)
+	require.NotContains(t, string(body), "max_output_tokens", "unknown output limits must be omitted from JSON")
+	require.NotContains(t, string(body), "pricing", "dynamic channel cards must not expose catalog pricing")
 }
 
 func TestOpenAIHandlers_RetrieveModel_ReturnsExtendedConfiguredModel(t *testing.T) {
@@ -560,7 +609,6 @@ func TestOpenAIHandlers_ListModels_ExtendedModeRespectsAPIKeyProfile(t *testing.
 			Ent:            client,
 		}),
 		SystemService: systemSvc,
-		EntClient:     client,
 	}
 	restrictedRouter.GET("/v1/models", handlers.ListModels)
 
@@ -582,7 +630,7 @@ func TestOpenAIHandlers_ListModels_ExtendedModeRespectsAPIKeyProfile(t *testing.
 	require.NotNil(t, got.Data[0].Pricing)
 }
 
-func TestOpenAIHandlers_ListModels_ExtendedModeFallsBackToBasicForMissingDBModel(t *testing.T) {
+func TestOpenAIHandlers_ListModels_ExtendedModeResolvesMissingDBModel(t *testing.T) {
 	client, channelSvc, systemSvc, _, ctx := setupOpenAIRetrieveTest(t)
 
 	err := systemSvc.SetModelSettings(ctx, biz.SystemModelSettings{
@@ -654,7 +702,6 @@ func TestOpenAIHandlers_ListModels_ExtendedModeFallsBackToBasicForMissingDBModel
 	handlers := &OpenAIHandlers{
 		ModelService:  biz.NewModelService(biz.ModelServiceParams{ChannelService: channelSvc, SystemService: systemSvc, Ent: client}),
 		SystemService: systemSvc,
-		EntClient:     client,
 	}
 	restrictedRouter.GET("/v1/models", handlers.ListModels)
 
@@ -682,7 +729,13 @@ func TestOpenAIHandlers_ListModels_ExtendedModeFallsBackToBasicForMissingDBModel
 
 	gpt41mini, ok := resultMap["gpt-4.1-mini"]
 	require.True(t, ok, "gpt-4.1-mini should be present")
-	require.Nil(t, gpt41mini.Capabilities, "gpt-4.1-mini has no DB entry so should fall back to basic fields")
+	require.NotNil(t, gpt41mini.Capabilities, "dynamic models should receive effective catalog metadata")
+	require.True(t, gpt41mini.Capabilities.Vision)
+	require.True(t, gpt41mini.Capabilities.ToolCall)
+	require.False(t, gpt41mini.Capabilities.Reasoning)
+	require.Equal(t, 1047576, gpt41mini.ContextLength)
+	require.Equal(t, 32768, gpt41mini.MaxOutputTokens)
+	require.Nil(t, gpt41mini.Pricing, "channel metadata must not be presented as billing")
 }
 
 func TestOpenAIHandlers_ListModels_ExtendedModeWithZeroAllowedModelsReturnsEmpty(t *testing.T) {
@@ -735,7 +788,6 @@ func TestOpenAIHandlers_ListModels_ExtendedModeWithZeroAllowedModelsReturnsEmpty
 	handlers := &OpenAIHandlers{
 		ModelService:  biz.NewModelService(biz.ModelServiceParams{ChannelService: channelSvc, SystemService: systemSvc, Ent: client}),
 		SystemService: systemSvc,
-		EntClient:     client,
 	}
 	restrictedRouter.GET("/v1/models", handlers.ListModels)
 
@@ -750,4 +802,119 @@ func TestOpenAIHandlers_ListModels_ExtendedModeWithZeroAllowedModelsReturnsEmpty
 	}
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&got))
 	require.Empty(t, got.Data, "API key with no matching models should return empty list")
+}
+
+func TestOpenAIHandlers_ExtendedModelsKeepOwnerMetadataWithoutChangingVisibility(t *testing.T) {
+	client, channelSvc, systemSvc, router, ctx := setupOpenAIRetrieveTest(t)
+
+	visibleChannel, err := client.Channel.Create().
+		SetType(channel.TypeOpenai).
+		SetName("Visible dynamic channel").
+		SetBaseURL("https://visible.example/v1").
+		SetCredentials(objects.ChannelCredentials{APIKey: "visible"}).
+		SetSupportedModels([]string{"shared-display-model"}).
+		SetDefaultTestModel("shared-display-model").
+		SetStatus(channel.StatusEnabled).
+		SetCreatedAt(time.Unix(100, 0)).
+		Save(ctx)
+	require.NoError(t, err)
+
+	hiddenAssociationChannel, err := client.Channel.Create().
+		SetType(channel.TypeAnthropic).
+		SetName("Association-only channel").
+		SetBaseURL("https://hidden.example/v1").
+		SetCredentials(objects.ChannelCredentials{APIKey: "hidden"}).
+		SetSupportedModels([]string{"other-upstream-model"}).
+		SetDefaultTestModel("other-upstream-model").
+		SetStatus(channel.StatusEnabled).
+		Save(ctx)
+	require.NoError(t, err)
+
+	_, err = client.Model.Create().
+		SetDeveloper("owner-developer").
+		SetModelID("shared-display-model").
+		SetName("Owner display metadata").
+		SetType(model.TypeChat).
+		SetGroup("owner").
+		SetIcon("Owner").
+		SetModelCard(&objects.ModelCard{
+			Vision: false,
+			Limit:  objects.ModelCardLimit{Context: 8192, Output: 2048},
+			Cost:   objects.ModelCardCost{Input: 1.25, Output: 2.5},
+		}).
+		SetSettings(&objects.ModelSettings{Associations: []*objects.ModelAssociation{{
+			Type: "channel_model",
+			ChannelModel: &objects.ChannelModelAssociation{
+				ChannelID: hiddenAssociationChannel.ID,
+				ModelID:   "other-upstream-model",
+			},
+		}}}).
+		SetStatus(model.StatusEnabled).
+		SetCreatedAt(time.Unix(200, 0)).
+		Save(ctx)
+	require.NoError(t, err)
+
+	_, err = client.Model.Create().
+		SetDeveloper("owner-developer").
+		SetModelID("owner-only-invisible-model").
+		SetName("Must stay invisible").
+		SetType(model.TypeChat).
+		SetGroup("owner").
+		SetIcon("Owner").
+		SetModelCard(&objects.ModelCard{}).
+		SetSettings(&objects.ModelSettings{Associations: []*objects.ModelAssociation{{
+			Type: "channel_model",
+			ChannelModel: &objects.ChannelModelAssociation{
+				ChannelID: hiddenAssociationChannel.ID,
+				ModelID:   "other-upstream-model",
+			},
+		}}}).
+		SetStatus(model.StatusEnabled).
+		Save(ctx)
+	require.NoError(t, err)
+
+	channelSvc.SetEnabledChannelsForTest([]*biz.Channel{{Channel: visibleChannel}})
+	require.NoError(t, systemSvc.SetModelSettings(ctx, biz.SystemModelSettings{
+		QueryAllChannelModels:     true,
+		DefaultModelAPIIncludeAll: false,
+	}))
+
+	basicRequest := httptest.NewRequest(http.MethodGet, "/v1/models?include=bogus", nil)
+	basicWriter := httptest.NewRecorder()
+	router.ServeHTTP(basicWriter, basicRequest)
+	require.Equal(t, http.StatusOK, basicWriter.Code)
+	var basic struct {
+		Data []OpenAIModel `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(basicWriter.Body).Decode(&basic))
+	require.Len(t, basic.Data, 1)
+	require.Equal(t, "shared-display-model", basic.Data[0].ID)
+	require.Equal(t, "openai", basic.Data[0].OwnedBy, "display overlay must not affect the basic visibility facade")
+	require.Empty(t, basic.Data[0].Name)
+
+	extendedRequest := httptest.NewRequest(http.MethodGet, "/v1/models?include=all", nil)
+	extendedWriter := httptest.NewRecorder()
+	router.ServeHTTP(extendedWriter, extendedRequest)
+	require.Equal(t, http.StatusOK, extendedWriter.Code)
+	var extended struct {
+		Data []OpenAIModel `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(extendedWriter.Body).Decode(&extended))
+	require.Len(t, extended.Data, 1, "display overlay must never add an uncallable Owner model")
+	require.Equal(t, "shared-display-model", extended.Data[0].ID)
+	require.Equal(t, "Owner display metadata", extended.Data[0].Name)
+	require.Equal(t, "owner-developer", extended.Data[0].OwnedBy)
+	require.Equal(t, int64(200), extended.Data[0].Created)
+	require.Equal(t, 8192, extended.Data[0].ContextLength)
+	require.NotNil(t, extended.Data[0].Pricing)
+	require.Equal(t, 1.25, extended.Data[0].Pricing.Input)
+
+	retrieveRequest := httptest.NewRequest(http.MethodGet, "/v1/models/shared-display-model?include=all", nil)
+	retrieveWriter := httptest.NewRecorder()
+	router.ServeHTTP(retrieveWriter, retrieveRequest)
+	require.Equal(t, http.StatusOK, retrieveWriter.Code)
+	var retrieved OpenAIModel
+	require.NoError(t, json.NewDecoder(retrieveWriter.Body).Decode(&retrieved))
+	require.Equal(t, "Owner display metadata", retrieved.Name)
+	require.Equal(t, "owner-developer", retrieved.OwnedBy)
 }

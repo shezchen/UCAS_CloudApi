@@ -6,6 +6,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { URL } = require("node:url");
 
+const { writeBackendModelCatalog } = require("./generate-backend-model-catalog");
+
 const SOURCE_URL =
 	"https://raw.githubusercontent.com/ThinkInAIXYZ/PublicProviderConf/refs/heads/dev/dist/all.json";
 const CONSTANTS_PATH = path.join(
@@ -467,6 +469,9 @@ async function main() {
 
 		console.log("Writing to:", OUTPUT_PATH);
 		fs.writeFileSync(OUTPUT_PATH, `${JSON.stringify(filtered, null, 2)}\n`);
+
+		const backendModelCount = writeBackendModelCatalog(OUTPUT_PATH);
+		console.log(`Updated backend model catalog with ${backendModelCount} models`);
 
 		console.log("Sync completed successfully!");
 	} catch (error) {

@@ -167,3 +167,32 @@ config.schema.json
 .omc/
 .playwright-mcp/
 .ace-tool/
+
+# Generic generated frontend output
+dist/
+coverage/
+Thumbs.db
+
+# Local secrets and credentials. Keep this block after the broad !*.* rule
+# above so confidential files cannot be accidentally re-included.
+.env
+.env.*
+!.env.example
+secrets/
+/Secret/
+QQ.md
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+
+# Large local model/training artifacts
+*.pt
+*.pth
+*.ckpt
+
+# Known local confidential artifacts
+/测试key.txt
+/管理.txt
+/账号.png

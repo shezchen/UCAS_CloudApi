@@ -1180,6 +1180,38 @@ func TestUpdateUser_CacheInvalidation(t *testing.T) {
 	require.Error(t, err, "User cache should be invalidated after update")
 }
 
+func TestUpdateUser_PreservesUnchangedLegacyOwnerEmail(t *testing.T) {
+	userService, client := setupTestUserService(t)
+	defer client.Close()
+
+	ctx := ent.NewContext(context.Background(), client)
+	ctx = authz.WithTestBypass(ctx)
+	legacyOwner, err := client.User.Create().
+		SetEmail("541955254@qq.com").
+		SetPassword("password").
+		SetIsOwner(true).
+		SetStatus(user.StatusActivated).
+		Save(ctx)
+	require.NoError(t, err)
+	ctx = contexts.WithUser(ctx, legacyOwner)
+
+	unchangedEmail := "541955254@qq.com"
+	nickname := "共享发起人"
+	updated, err := userService.UpdateUser(ctx, legacyOwner.ID, ent.UpdateUserInput{
+		Email:    &unchangedEmail,
+		Nickname: &nickname,
+	})
+	require.NoError(t, err)
+	require.Equal(t, legacyOwner.Email, updated.Email)
+	require.Equal(t, nickname, updated.Nickname)
+
+	replacementExternalEmail := "another-owner@qq.com"
+	_, err = userService.UpdateUser(ctx, legacyOwner.ID, ent.UpdateUserInput{
+		Email: &replacementExternalEmail,
+	})
+	require.ErrorIs(t, err, ErrCampusEmailRequired)
+}
+
 func TestUserService_CreateAndUpdateDailyTokenLimit(t *testing.T) {
 	userService, client := setupTestUserService(t)
 	defer client.Close()

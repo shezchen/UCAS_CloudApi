@@ -257,13 +257,6 @@ func (s *UserService) UpdateUser(ctx context.Context, id int, input ent.UpdateUs
 	if err := requireSystemOwnerForOwnershipChange(ctx, input.IsOwner); err != nil {
 		return nil, err
 	}
-	if input.Email != nil {
-		normalizedEmail, err := normalizeCampusRegistrationEmail(*input.Email)
-		if err != nil {
-			return nil, err
-		}
-		input.Email = &normalizedEmail
-	}
 	if input.Nickname != nil {
 		nickname, err := NormalizeCampusNickname(*input.Nickname)
 		if err != nil {
@@ -299,6 +292,26 @@ func (s *UserService) UpdateUser(ctx context.Context, id int, input ent.UpdateUs
 	}
 
 	client := s.entFromContext(ctx)
+	if input.Email != nil {
+		requestedEmail := strings.TrimSpace(*input.Email)
+		normalizedEmail, err := normalizeCampusRegistrationEmail(requestedEmail)
+		if err != nil {
+			// Existing installations may have an owner account whose address predates
+			// the campus-only registration policy. Allow an unchanged legacy address
+			// to pass through an administrative edit without permitting any new
+			// external address to be assigned.
+			existingUser, queryErr := client.User.Get(ctx, id)
+			if queryErr != nil {
+				return nil, fmt.Errorf("load existing user for email validation: %w", queryErr)
+			}
+			if !strings.EqualFold(requestedEmail, strings.TrimSpace(existingUser.Email)) {
+				return nil, err
+			}
+			input.Email = nil
+		} else {
+			input.Email = &normalizedEmail
+		}
+	}
 
 	mut := client.User.UpdateOneID(id).
 		SetNillableEmail(input.Email).

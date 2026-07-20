@@ -7,7 +7,8 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
 
 COPY ./frontend .
-ENV NODE_OPTIONS="--max-old-space-size=4096"
+ARG FRONTEND_NODE_OPTIONS="--max-old-space-size=4096"
+ENV NODE_OPTIONS="$FRONTEND_NODE_OPTIONS"
 RUN pnpm build
 
 # Copy dist to a stage with the target platform to avoid architecture mismatch

@@ -23,7 +23,7 @@ import { TableSkeleton } from '@/components/ui/table-skeleton';
 import { ServerSidePagination } from '@/components/server-side-pagination';
 import { ChannelExpandedRow } from './channel-expanded-row';
 import { useChannels } from '../context/channels-context';
-import { Channel, ChannelConnection } from '../data/schema';
+import { Channel, ChannelConnection, isActiveDonationOwnedByAnotherUser } from '../data/schema';
 import { DataTableToolbar } from './data-table-toolbar';
 
 const MotionTableRow = motion.create(TableRow);
@@ -64,6 +64,8 @@ interface DataTableProps {
   onModelFilterChange: (filter: string) => void;
   onHealthColumnVisibilityChange?: (visible: boolean) => void;
   canWrite?: boolean;
+  isOwner?: boolean;
+  viewerUserID?: string;
 }
 
 const DEFAULT_COLUMN_VISIBILITY: VisibilityState = {
@@ -99,6 +101,8 @@ export function ChannelsTable({
   onModelFilterChange,
   onHealthColumnVisibilityChange,
   canWrite = true,
+  isOwner = false,
+  viewerUserID,
 }: DataTableProps) {
   const { t } = useTranslation();
   const { setSelectedChannels, setResetRowSelection, setOpen } = useChannels();
@@ -218,7 +222,7 @@ export function ChannelsTable({
       columnFilters,
       expanded,
     },
-    enableRowSelection: true,
+    enableRowSelection: isOwner,
     getRowId: (row) => row.id,
     onRowSelectionChange: setRowSelection,
     onExpandedChange: setExpanded,
@@ -251,6 +255,10 @@ export function ChannelsTable({
   );
   
   const selectedCount = useMemo(() => filteredSelectedRows.length, [filteredSelectedRows]);
+  const selectionContainsProtectedDonation = useMemo(
+    () => isOwner && filteredSelectedRows.some((row) => isActiveDonationOwnedByAnotherUser(row.original, viewerUserID)),
+    [filteredSelectedRows, isOwner, viewerUserID]
+  );
   const isFiltered = useMemo(() => columnFilters.length > 0, [columnFilters.length]);
 
   useEffect(() => {
@@ -293,6 +301,7 @@ export function ChannelsTable({
         selectedTypeTab={selectedTypeTab}
         showErrorOnly={showErrorOnly}
         onExitErrorOnlyMode={onExitErrorOnlyMode}
+        isOwner={isOwner}
       />
       <div className='shadow-soft relative mt-4 flex-1 overflow-auto rounded-2xl border border-[var(--table-border)]'>
         <div className='min-w-max'>
@@ -384,7 +393,7 @@ export function ChannelsTable({
         />
       </div>
       {/* Floating Bulk Actions Bar */}
-      {selectedCount > 0 && canWrite && (
+      {selectedCount > 0 && canWrite && isOwner && (
         <div className='fixed bottom-6 left-1/2 z-50 -translate-x-1/2'>
           <div className='bg-background flex items-center gap-2 rounded-lg border px-4 py-2 shadow-lg'>
             <Button variant='ghost' size='icon' className='h-8 w-8' onClick={() => setRowSelection({})}>
@@ -451,15 +460,17 @@ export function ChannelsTable({
             >
               <IconArchive className='h-4 w-4' />
             </Button>
-            <Button
-              variant='ghost'
-              size='icon'
-              className='text-destructive h-8 w-8 hover:bg-red-100 hover:text-red-700'
-              onClick={() => setOpen('bulkDelete')}
-              title={t('common.buttons.delete')}
-            >
-              <IconTrash className='h-4 w-4' />
-            </Button>
+            {!selectionContainsProtectedDonation && (
+              <Button
+                variant='ghost'
+                size='icon'
+                className='text-destructive h-8 w-8 hover:bg-red-100 hover:text-red-700'
+                onClick={() => setOpen('bulkDelete')}
+                title={t('common.buttons.delete')}
+              >
+                <IconTrash className='h-4 w-4' />
+              </Button>
+            )}
           </div>
         </div>
       )}

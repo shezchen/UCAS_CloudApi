@@ -17,6 +17,7 @@ interface DataTableToolbarProps<TData> {
   selectedTypeTab?: string;
   showErrorOnly?: boolean;
   onExitErrorOnlyMode?: () => void;
+  isOwner?: boolean;
 }
 
 export function DataTableToolbar<TData>({
@@ -26,6 +27,7 @@ export function DataTableToolbar<TData>({
   selectedTypeTab = 'all',
   showErrorOnly,
   onExitErrorOnlyMode,
+  isOwner = false,
 }: DataTableToolbarProps<TData>) {
   const { t } = useTranslation();
   const tableState = table.getState();
@@ -39,12 +41,14 @@ export function DataTableToolbar<TData>({
 
   // Fetch models on component mount
   useEffect(() => {
+    if (!isOwner) return;
+
     fetchModels({
       statusIn: ['enabled', 'disabled'],
       includeMapping: true,
       includePrefix: true,
     });
-  }, [fetchModels]);
+  }, [fetchModels, isOwner]);
 
   const tagOptions = useMemo(
     () =>
@@ -108,7 +112,7 @@ export function DataTableToolbar<TData>({
       {table.getColumn('tags') && tagOptions?.length > 0 && (
         <DataTableFacetedFilter column={table.getColumn('tags')} title={t('channels.filters.tags')} options={tagOptions} singleSelect />
       )}
-      {table.getColumn('model') && modelOptions?.length > 0 && (
+      {isOwner && table.getColumn('model') && modelOptions?.length > 0 && (
         <DataTableFacetedFilter column={table.getColumn('model')} title={t('channels.filters.model')} options={modelOptions} singleSelect />
       )}
       {isFiltered && (

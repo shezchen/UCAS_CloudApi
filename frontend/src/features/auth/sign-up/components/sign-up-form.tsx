@@ -1,40 +1,39 @@
-import { HTMLAttributes, useState } from 'react';
+import { HTMLAttributes } from 'react';
 import { z } from 'zod';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { IconBrandFacebook, IconBrandGithub } from '@tabler/icons-react';
 import { cn } from '@/lib/utils';
+import { passwordSchema } from '@/lib/validation';
 import { Button } from '@/components/ui/button';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/password-input';
+import { useSignUp } from '@/features/auth/data/auth';
 
 type SignUpFormProps = HTMLAttributes<HTMLFormElement>;
 
-const formSchema = z
-  .object({
-    email: z.string().min(1, { message: 'Please enter your email' }).email({ message: 'Invalid email address' }),
-    password: z
-      .string()
-      .min(1, {
-        message: 'Please enter your password',
-      })
-      .min(7, {
-        message: 'Password must be at least 7 characters long',
-      }),
-    confirmPassword: z.string(),
-  })
-  .refine((data) => data.password === data.confirmPassword, {
-    message: "Passwords don't match.",
-    path: ['confirmPassword'],
-  });
-
 import { useTranslation } from 'react-i18next';
+
+const campusEmailDomains = new Set(['mails.ucas.ac.cn', 'ucas.ac.cn', 'mails.ucas.edu.cn', 'ucas.edu.cn']);
 
 export function SignUpForm({ className, ...props }: SignUpFormProps) {
   const { t } = useTranslation();
+  const signUp = useSignUp();
 
-  const [isLoading, setIsLoading] = useState(false);
+  const formSchema = z
+    .object({
+      email: z
+        .email({ message: t('auth.signUp.validation.invalidEmail') })
+        .refine((email) => campusEmailDomains.has(email.trim().toLowerCase().split('@').at(-1) || ''), {
+          message: t('auth.signUp.validation.campusEmail'),
+        }),
+      password: passwordSchema(t),
+      confirmPassword: z.string(),
+    })
+    .refine((data) => data.password === data.confirmPassword, {
+      message: t('auth.signUp.validation.passwordMismatch'),
+      path: ['confirmPassword'],
+    });
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -46,11 +45,7 @@ export function SignUpForm({ className, ...props }: SignUpFormProps) {
   });
 
   function onSubmit(data: z.infer<typeof formSchema>) {
-    setIsLoading(true);
-
-    setTimeout(() => {
-      setIsLoading(false);
-    }, 3000);
+    signUp.mutate({ email: data.email, password: data.password });
   }
 
   return (
@@ -61,9 +56,9 @@ export function SignUpForm({ className, ...props }: SignUpFormProps) {
           name='email'
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Email</FormLabel>
+              <FormLabel>{t('auth.signUp.email')}</FormLabel>
               <FormControl>
-                <Input placeholder='name@example.com' {...field} />
+                <Input type='email' placeholder='name@mails.ucas.ac.cn' {...field} />
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -74,7 +69,7 @@ export function SignUpForm({ className, ...props }: SignUpFormProps) {
           name='password'
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Password</FormLabel>
+              <FormLabel>{t('auth.signUp.password')}</FormLabel>
               <FormControl>
                 <PasswordInput placeholder='********' {...field} />
               </FormControl>
@@ -95,8 +90,8 @@ export function SignUpForm({ className, ...props }: SignUpFormProps) {
             </FormItem>
           )}
         />
-        <Button className='mt-2' disabled={isLoading}>
-          Create Account
+        <Button className='mt-2' disabled={signUp.isPending}>
+          {signUp.isPending ? t('auth.signUp.submitting') : t('auth.signUp.submit')}
         </Button>
 
         {/* <div className='relative my-2'>

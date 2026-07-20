@@ -6,7 +6,7 @@ import UsageStatisticsPage from '@/features/usage-statistics';
 function ProtectedUsageStats() {
   return (
     <ProjectGuard>
-      <RouteGuard requiredScopes={['read_requests']} scopeLevel="any" requireProjectOwner={true}>
+      <RouteGuard>
         <UsageStatisticsPage />
       </RouteGuard>
     </ProjectGuard>

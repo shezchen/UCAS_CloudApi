@@ -2,18 +2,21 @@ import { Link } from '@tanstack/react-router';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import AuthLayout from '../auth-layout';
 import { SignUpForm } from './components/sign-up-form';
+import { useTranslation } from 'react-i18next';
 
 export default function SignUp() {
+  const { t } = useTranslation();
+
   return (
     <AuthLayout>
       <Card className='gap-4'>
         <CardHeader>
-          <CardTitle className='text-lg tracking-tight'>Create an account</CardTitle>
+          <CardTitle className='text-lg tracking-tight'>{t('auth.signUp.title')}</CardTitle>
           <CardDescription>
-            Enter your email and password to create an account. <br />
-            Already have an account?{' '}
+            {t('auth.signUp.description')} <br />
+            {t('auth.signUp.alreadyHaveAccount')}{' '}
             <Link to='/sign-in' className='hover:text-primary underline underline-offset-4'>
-              Sign In
+              {t('auth.signUp.signIn')}
             </Link>
           </CardDescription>
         </CardHeader>

@@ -13,15 +13,26 @@ interface RouteGuardProps {
   scopeLevel?: ScopeLevel;
   fallbackPath?: string;
   showForbidden?: boolean;
+  requireOwner?: boolean; // 是否仅允许 system owner
   requireProjectOwner?: boolean; // 是否需要项目所有者权限
 }
 
-export function RouteGuard({ children, requiredScopes = [], scopeLevel, fallbackPath = '/', showForbidden = true, requireProjectOwner = false }: RouteGuardProps) {
+export function RouteGuard({
+  children,
+  requiredScopes = [],
+  scopeLevel,
+  fallbackPath = '/',
+  showForbidden = true,
+  requireOwner = false,
+  requireProjectOwner = false,
+}: RouteGuardProps) {
   const router = useRouter();
   const { userScopes, systemScopes, projectScopes, isOwner, isProjectOwner } = useRoutePermissions();
 
   let hasAccess = true;
-  if (requireProjectOwner && !isProjectOwner) {
+  if (requireOwner && !isOwner) {
+    hasAccess = false;
+  } else if (requireProjectOwner && !isProjectOwner) {
     hasAccess = false;
   } else {
     // 根据 scopeLevel 决定检查哪些权限

@@ -37,6 +37,10 @@ export function useRoutePermissions() {
 
   // 检查路由权限（根据 scopeLevel 决定检查哪个级别的权限）
   const hasRouteAccess = (routeConfig: RouteConfig, groupScopeLevel?: ScopeLevel): boolean => {
+    if (routeConfig.requireOwner && !isOwner) {
+      return false;
+    }
+
     // 检查项目所有者权限限制
     if (routeConfig.requireProjectOwner && !isProjectOwner) {
       return false;

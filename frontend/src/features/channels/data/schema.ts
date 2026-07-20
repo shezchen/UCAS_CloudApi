@@ -300,6 +300,13 @@ export const channelCredentialsSchema = z.object({
 });
 export type ChannelCredentials = z.infer<typeof channelCredentialsSchema>;
 
+export const channelDonorSchema = z.object({
+  id: z.string(),
+  email: z.string(),
+  firstName: z.string().optional().nullable(),
+  lastName: z.string().optional().nullable(),
+});
+
 // Disabled API Key
 export const disabledAPIKeySchema = z.object({
   key: z.string(),
@@ -314,6 +321,9 @@ export const channelSchema = z.object({
   id: z.string(),
   createdAt: z.string(),
   updatedAt: z.string(),
+  userID: z.string().optional().nullable(),
+  user: channelDonorSchema.optional().nullable(),
+  expiresAt: z.string().optional().nullable(),
   type: channelTypeSchema,
   baseURL: z.string(),
   name: z.string(),
@@ -337,6 +347,17 @@ export const channelSchema = z.object({
   defaultEndpoints: z.array(channelEndpointSchema).optional().default([]).nullable(),
 });
 export type Channel = z.infer<typeof channelSchema>;
+
+export function isActiveDonationOwnedByAnotherUser(
+  channel: Pick<Channel, 'userID' | 'expiresAt'>,
+  viewerUserID?: string
+): boolean {
+  if (!channel.userID || channel.userID === viewerUserID) return false;
+  if (!channel.expiresAt) return true;
+
+  const expiresAt = Date.parse(channel.expiresAt);
+  return Number.isNaN(expiresAt) || expiresAt > Date.now();
+}
 
 // Simplified schema for saveChannelEndpoints mutation response
 export const channelEndpointsResponseSchema = z.object({
@@ -474,6 +495,7 @@ export const createChannelInputSchema = z
     type: channelTypeSchema,
     baseURL: z.url('Please enter a valid URL'),
     name: z.string().min(1, 'Name is required'),
+    expiresAt: z.string().optional().nullable(),
     policies: channelPoliciesSchema.optional(),
     supportedModels: z.array(z.string()).min(0, 'At least one supported model is required'),
     autoSyncSupportedModels: z.boolean().optional().default(false),
@@ -561,6 +583,8 @@ export const updateChannelInputSchema = z
     type: channelTypeSchema.optional(),
     baseURL: z.string().url('Please enter a valid URL').optional(),
     name: z.string().min(1, 'Name is required').optional(),
+    expiresAt: z.string().optional().nullable(),
+    clearExpiresAt: z.boolean().optional(),
     policies: channelPoliciesSchema.optional(),
     supportedModels: z.array(z.string()).min(1, 'At least one supported model is required').optional(),
     autoSyncSupportedModels: z.boolean().optional(),

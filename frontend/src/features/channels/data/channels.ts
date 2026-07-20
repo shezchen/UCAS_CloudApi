@@ -5,6 +5,7 @@ import { pageInfoSchema } from '@/gql/pagination';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { useErrorHandler } from '@/hooks/use-error-handler';
+import { useAuthStore } from '@/stores/authStore';
 import {
   Channel,
   ChannelConnection,
@@ -31,6 +32,14 @@ import {
   TestAPIKeyResult,
   testAPIKeyResultSchema,
 } from './schema';
+
+function useChannelViewerCacheKey(): string {
+  return useAuthStore((state) => {
+    const user = state.auth.user;
+    if (!user) return 'anonymous';
+    return `${user.id}:${user.isOwner ? 'owner' : 'user'}`;
+  });
+}
 
 const QUERY_CHANNEL_NAMES_QUERY = `
   query QueryChannelNames($input: QueryChannelInput!) {
@@ -71,6 +80,8 @@ const CREATE_CHANNEL_MUTATION = `
       type
       createdAt
       updatedAt
+      userID
+      expiresAt
       baseURL
       name
       status
@@ -144,6 +155,8 @@ const DUPLICATE_CHANNEL_MUTATION = `
       type
       createdAt
       updatedAt
+      userID
+      expiresAt
       baseURL
       name
       status
@@ -217,6 +230,8 @@ const BULK_CREATE_CHANNELS_MUTATION = `
       type
       createdAt
       updatedAt
+      userID
+      expiresAt
       baseURL
       name
       status
@@ -290,6 +305,8 @@ const UPDATE_CHANNEL_MUTATION = `
       type
       createdAt
       updatedAt
+      userID
+      expiresAt
       baseURL
       name
       status
@@ -783,13 +800,21 @@ const ALL_CHANNEL_TAGS_QUERY = `
 `;
 
 const QUERY_CHANNELS_QUERY = `
-  query QueryChannels($input: QueryChannelInput!) {
+  query QueryChannels($input: QueryChannelInput!, $includeDonor: Boolean!) {
     queryChannels(input: $input) {
       edges {
         node {
           id
           createdAt
           updatedAt
+          userID
+          user @include(if: $includeDonor) {
+            id
+            email
+            firstName
+            lastName
+          }
+          expiresAt
           type
           baseURL
           name
@@ -994,11 +1019,14 @@ export function useQueryChannels(
 ) {
   const { handleError } = useErrorHandler();
   const { t } = useTranslation();
+  const viewerCacheKey = useChannelViewerCacheKey();
+  const isOwner = useAuthStore((state) => state.auth.user?.isOwner === true);
 
   return useQuery({
     enabled: !options?.disableAutoFetch,
     queryKey: [
       'channels',
+      viewerCacheKey,
       variables?.where,
       variables?.orderBy?.field,
       variables?.orderBy?.direction,
@@ -1011,7 +1039,10 @@ export function useQueryChannels(
     ],
     queryFn: async () => {
       try {
-        const data = await graphqlRequest<{ queryChannels: ChannelConnection }>(QUERY_CHANNELS_QUERY, { input: variables });
+        const data = await graphqlRequest<{ queryChannels: ChannelConnection }>(QUERY_CHANNELS_QUERY, {
+          input: variables,
+          includeDonor: isOwner,
+        });
         return channelConnectionSchema.parse(data?.queryChannels);
       } catch (error) {
         handleError(error, t('common.errors.internalServerError'));
@@ -1028,10 +1059,11 @@ export function useQueryChannels(
 export function useAllChannelNames(options?: { enabled?: boolean }) {
   const { handleError } = useErrorHandler();
   const { t } = useTranslation();
+  const viewerCacheKey = useChannelViewerCacheKey();
 
   return useQuery({
     enabled: options?.enabled ?? true,
-    queryKey: ['channels', 'names'],
+    queryKey: ['channels', viewerCacheKey, 'names'],
     queryFn: async () => {
       try {
         const names: string[] = [];
@@ -1654,9 +1686,10 @@ export interface ChannelTypeCount {
 export function useChannelTypes(statusIn?: string[]) {
   const { handleError } = useErrorHandler();
   const { t } = useTranslation();
+  const viewerCacheKey = useChannelViewerCacheKey();
 
   return useQuery({
-    queryKey: ['channelTypes', statusIn],
+    queryKey: ['channelTypes', viewerCacheKey, statusIn],
     queryFn: async () => {
       try {
         const input: { statusIn?: string[] } = {};
@@ -1688,9 +1721,10 @@ const ERROR_CHANNELS_COUNT_QUERY = `
 export function useErrorChannelsCount() {
   const { handleError } = useErrorHandler();
   const { t } = useTranslation();
+  const viewerCacheKey = useChannelViewerCacheKey();
 
   return useQuery({
-    queryKey: ['errorChannelsCount'],
+    queryKey: ['errorChannelsCount', viewerCacheKey],
     queryFn: async () => {
       try {
         const data = await graphqlRequest<{ channels: { totalCount: number } }>(ERROR_CHANNELS_COUNT_QUERY);
@@ -1704,12 +1738,13 @@ export function useErrorChannelsCount() {
   });
 }
 
-export function useAllChannelTags(projectId?: string | null) {
+export function useAllChannelTags(projectId?: string | null, options?: { enabled?: boolean }) {
   const { handleError } = useErrorHandler();
   const { t } = useTranslation();
+  const viewerCacheKey = useChannelViewerCacheKey();
 
   return useQuery({
-    queryKey: ['allChannelTags', projectId],
+    queryKey: ['allChannelTags', viewerCacheKey, projectId],
     queryFn: async () => {
       try {
         const headers = projectId ? { 'X-Project-ID': projectId } : undefined;
@@ -1720,6 +1755,7 @@ export function useAllChannelTags(projectId?: string | null) {
         throw error;
       }
     },
+    enabled: options?.enabled ?? true,
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 }
@@ -1742,9 +1778,10 @@ const CHANNEL_PROBE_DATA_QUERY = `
 export function useChannelProbeData(channelIDs: string[], options?: { enabled?: boolean }) {
   const { handleError } = useErrorHandler();
   const { t } = useTranslation();
+  const viewerCacheKey = useChannelViewerCacheKey();
 
   return useQuery({
-    queryKey: ['channelProbeData', channelIDs],
+    queryKey: ['channelProbeData', viewerCacheKey, channelIDs],
     queryFn: async () => {
       try {
         const data = await graphqlRequest<{ channelProbeData: any[] }>(CHANNEL_PROBE_DATA_QUERY, {

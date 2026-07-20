@@ -1,3 +1,4 @@
+import { usePermissions } from '@/hooks/usePermissions';
 import { useChannels } from '../context/channels-context';
 import { ChannelsActionDialog } from './channels-action-dialog';
 import { ChannelsArchiveDialog } from './channels-archive-dialog';
@@ -27,34 +28,31 @@ import { ChannelsEndpointsDialog } from './channels-endpoints-dialog';
 import { ChannelsSystemSettingsDialog } from './channels-system-settings-dialog';
 
 export function ChannelsDialogs() {
+  const { isOwner } = usePermissions();
   const { open, setOpen, currentRow, setCurrentRow, selectedChannels } = useChannels();
   return (
     <>
-      <ChannelsSystemSettingsDialog />
+      {isOwner && <ChannelsSystemSettingsDialog />}
 
       <ChannelsActionDialog key='channel-add' open={open === 'add'} onOpenChange={(isOpen) => setOpen(isOpen ? 'add' : null)} />
 
-      <ChannelsBulkArchiveDialog />
-
-      <ChannelsBulkDisableDialog />
-
-      <ChannelsBulkEnableDialog />
-
-      <ChannelsBulkTestDialog />
-
-      <ChannelsBulkDeleteDialog />
-
-      <ChannelsBulkApplyTemplateDialog
-        open={open === 'bulkApplyTemplate'}
-        onOpenChange={(isOpen) => setOpen(isOpen ? 'bulkApplyTemplate' : null)}
-        selectedChannels={selectedChannels}
-      />
-
-      <ChannelsBulkClearTemplateDialog />
-
-      <ChannelsBulkImportDialog isOpen={open === 'bulkImport'} onClose={() => setOpen(null)} />
-
-      <ChannelsBulkOrderingDialog open={open === 'bulkOrdering'} onOpenChange={(isOpen) => setOpen(isOpen ? 'bulkOrdering' : null)} />
+      {isOwner && (
+        <>
+          <ChannelsBulkArchiveDialog />
+          <ChannelsBulkDisableDialog />
+          <ChannelsBulkEnableDialog />
+          <ChannelsBulkTestDialog />
+          <ChannelsBulkDeleteDialog />
+          <ChannelsBulkApplyTemplateDialog
+            open={open === 'bulkApplyTemplate'}
+            onOpenChange={(isOpen) => setOpen(isOpen ? 'bulkApplyTemplate' : null)}
+            selectedChannels={selectedChannels}
+          />
+          <ChannelsBulkClearTemplateDialog />
+          <ChannelsBulkImportDialog isOpen={open === 'bulkImport'} onClose={() => setOpen(null)} />
+          <ChannelsBulkOrderingDialog open={open === 'bulkOrdering'} onOpenChange={(isOpen) => setOpen(isOpen ? 'bulkOrdering' : null)} />
+        </>
+      )}
 
       {currentRow && (
         <>
@@ -121,18 +119,6 @@ export function ChannelsDialogs() {
             currentRow={currentRow}
           />
 
-          {/* <ChannelsSettingsDialog
-            key={`channel-settings-${currentRow.id}`}
-            open={open === 'settings'}
-            onOpenChange={() => {
-              setOpen('settings')
-              setTimeout(() => {
-                setCurrentRow(null)
-              }, 500)
-            }}
-            currentRow={currentRow}
-          /> */}
-
           <ChannelsModelMappingDialog
             key={`channel-model-mapping-${currentRow.id}`}
             open={open === 'modelMapping'}
@@ -149,7 +135,7 @@ export function ChannelsDialogs() {
             currentRow={currentRow}
           />
 
-          <ChannelsModelPriceDialog />
+          {isOwner && <ChannelsModelPriceDialog />}
 
           <ChannelsOverrideDialog
             key={`channel-overrides-${currentRow.id}`}
@@ -165,19 +151,21 @@ export function ChannelsDialogs() {
             currentRow={currentRow}
           />
 
-          <ChannelsProxyDialog
-            key={`channel-proxy-${currentRow.id}`}
-            open={open === 'proxy'}
-            onOpenChange={(isOpen) => {
-              if (!isOpen) {
-                setOpen(null);
-                setTimeout(() => {
-                  setCurrentRow(null);
-                }, 500);
-              }
-            }}
-            currentRow={currentRow}
-          />
+          {isOwner && (
+            <ChannelsProxyDialog
+              key={`channel-proxy-${currentRow.id}`}
+              open={open === 'proxy'}
+              onOpenChange={(isOpen) => {
+                if (!isOpen) {
+                  setOpen(null);
+                  setTimeout(() => {
+                    setCurrentRow(null);
+                  }, 500);
+                }
+              }}
+              currentRow={currentRow}
+            />
+          )}
 
           <ChannelsStatusDialog
             key={`channel-status-${currentRow.id}`}
@@ -227,21 +215,23 @@ export function ChannelsDialogs() {
             channel={currentRow}
           />
 
-          <ChannelsTestHistoryDrawer
-            key={`channel-test-history-${currentRow.id}`}
-            open={open === 'testHistory'}
-            onOpenChange={(isOpen) => {
-              if (isOpen) {
-                setOpen('testHistory');
-              } else {
-                setOpen(null);
-                setTimeout(() => {
-                  setCurrentRow(null);
-                }, 500);
-              }
-            }}
-            channel={currentRow}
-          />
+          {isOwner && (
+            <ChannelsTestHistoryDrawer
+              key={`channel-test-history-${currentRow.id}`}
+              open={open === 'testHistory'}
+              onOpenChange={(isOpen) => {
+                if (isOpen) {
+                  setOpen('testHistory');
+                } else {
+                  setOpen(null);
+                  setTimeout(() => {
+                    setCurrentRow(null);
+                  }, 500);
+                }
+              }}
+              channel={currentRow}
+            />
+          )}
 
           <ChannelsErrorResolvedDialog
             key={`channel-error-resolved-${currentRow.id}`}

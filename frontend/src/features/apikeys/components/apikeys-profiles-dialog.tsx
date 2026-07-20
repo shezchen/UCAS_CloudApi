@@ -10,6 +10,7 @@ import { useQueryModels } from '@/gql/models';
 import { useTranslation } from 'react-i18next';
 import { extractNumberID } from '@/lib/utils';
 import { useDebounce } from '@/hooks/use-debounce';
+import { usePermissions } from '@/hooks/usePermissions';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -78,6 +79,7 @@ interface ApiKeyProfilesDialogProps {
 export function ApiKeyProfilesDialog({ open, onOpenChange, onSubmit, loading = false, initialData }: ApiKeyProfilesDialogProps) {
   const { t, i18n } = useTranslation();
   const { selectedApiKey } = useApiKeysContext();
+  const { isProjectOwner } = usePermissions();
   const selectedProjectId = useSelectedProjectId();
   const { data: availableModels, mutateAsync: fetchModels } = useQueryModels();
   const [templateLoadPending, setTemplateLoadPending] = useState(false);
@@ -102,14 +104,14 @@ export function ApiKeyProfilesDialog({ open, onOpenChange, onSubmit, loading = f
   const [saveTemplateProfileIndex, setSaveTemplateProfileIndex] = useState<number | null>(null);
 
   useEffect(() => {
-    if (open) {
+    if (open && isProjectOwner) {
       fetchModels({
         statusIn: ['enabled'],
         includeMapping: true,
         includePrefix: true,
       });
     }
-  }, [open, fetchModels]);
+  }, [open, fetchModels, isProjectOwner]);
 
   const defaultValues = useMemo(
     () => ({
@@ -302,19 +304,21 @@ export function ApiKeyProfilesDialog({ open, onOpenChange, onSubmit, loading = f
                 <div className='flex items-center justify-between'>
                   <h3 className='text-lg font-medium'>{t('apikeys.profiles.profilesTitle')}</h3>
                   <div className='flex items-center gap-2'>
-                    <ApiKeyLoadTemplatePopover
-                      apiKeyID={apiKeyId}
-                      projectID={selectedProjectId}
-                      onLoadComplete={(loadedProfiles) => {
-                        const resetData = {
-                          activeProfile: loadedProfiles.activeProfile || loadedProfiles.profiles[0]?.name || '',
-                          profiles: loadedProfiles.profiles,
-                        };
-                        setTemplateLoadPending(true);
-                        form.reset(resetData);
-                        lastInitialDataRef.current = JSON.stringify(resetData);
-                      }}
-                    />
+                    {isProjectOwner && (
+                      <ApiKeyLoadTemplatePopover
+                        apiKeyID={apiKeyId}
+                        projectID={selectedProjectId}
+                        onLoadComplete={(loadedProfiles) => {
+                          const resetData = {
+                            activeProfile: loadedProfiles.activeProfile || loadedProfiles.profiles[0]?.name || '',
+                            profiles: loadedProfiles.profiles,
+                          };
+                          setTemplateLoadPending(true);
+                          form.reset(resetData);
+                          lastInitialDataRef.current = JSON.stringify(resetData);
+                        }}
+                      />
+                    )}
                     <Button type='button' variant='outline' size='sm' onClick={addProfile} className='flex items-center gap-2'>
                       <IconPlus className='h-4 w-4' />
                       {t('apikeys.profiles.addProfile')}
@@ -356,6 +360,7 @@ export function ApiKeyProfilesDialog({ open, onOpenChange, onSubmit, loading = f
                               defaultExpanded={isActive}
                               portalContainer={dialogContent}
                               selectedProjectId={selectedProjectId}
+                              canConfigureRouting={isProjectOwner}
                               onSaveTemplate={(idx) => {
                                 setSaveTemplateProfileIndex(idx);
                                 setSaveTemplateOpen(true);
@@ -425,7 +430,7 @@ export function ApiKeyProfilesDialog({ open, onOpenChange, onSubmit, loading = f
             </Button>
           </div>
         </DialogFooter>
-        {saveTemplateOpen && saveTemplateProfileIndex !== null && (
+        {isProjectOwner && saveTemplateOpen && saveTemplateProfileIndex !== null && (
           <ApiKeySaveTemplateDialog
             open={saveTemplateOpen}
             onOpenChange={(open) => {
@@ -455,6 +460,8 @@ interface ProfileCardProps {
   portalContainer?: HTMLElement | null;
   /** 当前选中的 project ID */
   selectedProjectId?: string | null;
+  /** Only project owners may edit channel/model routing details. */
+  canConfigureRouting: boolean;
   onSaveTemplate: (profileIndex: number) => void;
 }
 
@@ -470,11 +477,12 @@ function ProfileCard({
   defaultExpanded = false,
   portalContainer,
   selectedProjectId,
+  canConfigureRouting,
   onSaveTemplate,
 }: ProfileCardProps) {
   const [localProfileName, setLocalProfileName] = useState('');
   const [isCollapsed, setIsCollapsed] = useState(!defaultExpanded);
-  const { data: channelsData } = useAllChannelSummarys(selectedProjectId, { enabled: true });
+  const { data: channelsData } = useAllChannelSummarys(selectedProjectId, { enabled: canConfigureRouting });
 
   const debouncedProfileName = useDebounce(localProfileName, 500);
 
@@ -586,14 +594,16 @@ function ProfileCard({
             >
               {isCollapsed ? <IconChevronDown className='h-4 w-4' /> : <IconChevronUp className='h-4 w-4' />}
             </Button>
-            <Button
-              type='button'
-              variant='ghost'
-              size='sm'
-              onClick={() => onSaveTemplate(profileIndex)}
-            >
-              {t('apikeys.templates.saveAsTemplateButton')}
-            </Button>
+            {canConfigureRouting && (
+              <Button
+                type='button'
+                variant='ghost'
+                size='sm'
+                onClick={() => onSaveTemplate(profileIndex)}
+              >
+                {t('apikeys.templates.saveAsTemplateButton')}
+              </Button>
+            )}
             {canRemove && (
               <Button type='button' variant='ghost' size='sm' onClick={onRemove} className='text-destructive hover:text-destructive'>
                 <IconTrash className='h-4 w-4' />
@@ -867,8 +877,10 @@ function ProfileCard({
             )}
           </div>
 
-          {/* Load Balancer Strategy */}
-          <div className='border-t pt-6'>
+          {canConfigureRouting && (
+            <>
+              {/* Load Balancer Strategy */}
+              <div className='border-t pt-6'>
             <FormField
               control={form.control}
               name={`profiles.${profileIndex}.loadBalanceStrategy`}
@@ -911,9 +923,9 @@ function ProfileCard({
                 </FormItem>
               )}
             />
-          </div>
+              </div>
 
-          <div className='border-t pt-6'>
+              <div className='border-t pt-6'>
             <div className='flex items-center justify-between'>
               <h4 className='text-sm font-medium'>{t('apikeys.profiles.modelMappings')}</h4>
               <Button type='button' variant='outline' size='sm' onClick={addMapping} className='mb-3 flex items-center gap-2'>
@@ -940,10 +952,10 @@ function ProfileCard({
                 />
               ))}
             </div>
-          </div>
+              </div>
 
           {/* Model IDs Restrictions Section */}
-          <div className='border-t pt-6'>
+              <div className='border-t pt-6'>
             <h4 className='mb-3 text-sm font-medium'>{t('apikeys.profiles.allowedModels')}</h4>
             <p className='text-muted-foreground mb-3 text-xs'>{t('apikeys.profiles.allowedModelsDescription')}</p>
             <FormField
@@ -964,10 +976,10 @@ function ProfileCard({
                 </FormItem>
               )}
             />
-          </div>
+              </div>
 
           {/* Channel Restrictions Section */}
-          <div className='border-t pt-6'>
+              <div className='border-t pt-6'>
             <h4 className='mb-3 text-sm font-medium'>{t('apikeys.profiles.allowedChannels')}</h4>
             <p className='text-muted-foreground mb-3 text-xs'>{t('apikeys.profiles.allowedChannelsDescription')}</p>
             <FormField
@@ -999,10 +1011,10 @@ function ProfileCard({
                 </FormItem>
               )}
             />
-          </div>
+              </div>
 
           {/* Channel Tags Restrictions Section */}
-          <div className='border-t pt-6'>
+              <div className='border-t pt-6'>
             <div className='mb-3 flex items-start justify-between gap-3'>
               <div>
                 <h4 className='text-sm font-medium'>
@@ -1053,7 +1065,9 @@ function ProfileCard({
                 </FormItem>
               )}
             />
-          </div>
+              </div>
+            </>
+          )}
         </CardContent>
       )}
     </Card>

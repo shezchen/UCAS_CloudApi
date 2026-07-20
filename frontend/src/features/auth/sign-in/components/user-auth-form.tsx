@@ -128,6 +128,12 @@ export function UserAuthForm({ className, ...props }: UserAuthFormProps) {
               t('auth.signIn.form.signInButton')
             )}
           </Button>
+          <p className='text-center text-sm text-slate-500'>
+            {t('auth.signUp.noAccount')}{' '}
+            <Link to='/sign-up' className='font-medium text-slate-700 underline underline-offset-4'>
+              {t('auth.signUp.link')}
+            </Link>
+          </p>
         </form>
       )}
         

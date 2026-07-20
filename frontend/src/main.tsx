@@ -4,6 +4,7 @@ import { QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-qu
 import { RouterProvider, createRouter } from '@tanstack/react-router';
 import { toast } from 'sonner';
 import { useAuthStore } from '@/stores/authStore';
+import { resetSessionQueryCache } from '@/features/auth/data/auth';
 import { handleServerError } from '@/utils/handle-server-error';
 import { FontProvider } from './context/font-context';
 import { SearchProvider } from './context/search-context';
@@ -15,6 +16,13 @@ import i18n from './lib/i18n';
 // Generated Routes
 import { routeTree } from './routeTree.gen';
 
+function handleExpiredSession() {
+  toast.error(i18n.t('common.errors.sessionExpired'));
+  useAuthStore.getState().auth.reset();
+  resetSessionQueryCache(queryClient);
+  const redirect = `${router.history.location.href}`;
+  router.navigate({ to: '/sign-in', search: { redirect } });
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -43,6 +51,10 @@ const queryClient = new QueryClient({
         const status =
           error instanceof Response ? error.status : error && typeof error === 'object' && 'status' in error ? (error as any).status : 0;
 
+        if (status === 401) {
+          handleExpiredSession();
+        }
+
         if (status === 304) {
           toast.error(i18n.t('common.errors.contentNotModified'));
         }
@@ -56,10 +68,7 @@ const queryClient = new QueryClient({
         error instanceof Response ? error.status : error && typeof error === 'object' && 'status' in error ? (error as any).status : 0;
 
       if (status === 401) {
-        toast.error(i18n.t('common.errors.sessionExpired'));
-        useAuthStore.getState().auth.reset();
-        const redirect = `${router.history.location.href}`;
-        router.navigate({ to: '/sign-in', search: { redirect } });
+        handleExpiredSession();
       }
       if (status === 500) {
         toast.error(i18n.t('common.errors.internalServerError'));

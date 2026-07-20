@@ -1,3 +1,4 @@
+import { usePermissions } from '@/hooks/usePermissions';
 import { useApiKeysContext } from '../context/apikeys-context';
 import { useApiKey, useUpdateApiKeyProfiles } from '../data/apikeys';
 import { type UpdateApiKeyProfilesInput } from '../data/schema';
@@ -71,6 +72,9 @@ function ApiKeysProfilesDialogWrapper() {
 
 function ApiKeysProfileTemplatesDialogWrapper() {
   const { isDialogOpen, closeDialog } = useApiKeysContext();
+  const { isProjectOwner } = usePermissions();
+
+  if (!isProjectOwner) return null;
 
   return (
     <ApiKeysProfileTemplatesDialog open={isDialogOpen.profileTemplates} onOpenChange={(open) => !open && closeDialog('profileTemplates')} />

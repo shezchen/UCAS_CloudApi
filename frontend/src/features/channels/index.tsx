@@ -20,7 +20,8 @@ const ChannelsDialogs = lazy(() => import('./components/channels-dialogs').then(
 function ChannelsContent() {
   const { t } = useTranslation();
   useProvidersData();
-  const { channelPermissions } = usePermissions();
+  const { isOwner, user } = usePermissions();
+  const canManageOwnChannels = isOwner || !!user;
   const { pageSize, setCursors, setPageSize, resetCursor, paginationArgs } = usePaginationSearch({
     defaultPageSize: 20,
     pageSizeStorageKey: 'channels-table-page-size',
@@ -138,14 +139,14 @@ function ChannelsContent() {
     where: whereClause,
     orderBy: currentOrderBy,
     hasTag: tagFilter || undefined,
-    model: modelFilter || undefined,
+    model: isOwner ? modelFilter || undefined : undefined,
   });
 
   const channelIDs = useMemo(() => {
     return data?.edges?.map((edge) => edge.node.id) || [];
   }, [data?.edges]);
 
-  const { data: probeData } = useChannelProbeData(channelIDs, { enabled: isHealthColumnVisible });
+  const { data: probeData } = useChannelProbeData(channelIDs, { enabled: isOwner && isHealthColumnVisible });
 
   const channelsWithProbeData = useMemo(() => {
     if (!data?.edges) return [];
@@ -244,7 +245,10 @@ function ChannelsContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const columns = useMemo(() => createColumns(t, channelPermissions.canWrite), [t, channelPermissions.canWrite]);
+  const columns = useMemo(
+    () => createColumns(t, canManageOwnChannels, isOwner),
+    [t, canManageOwnChannels, isOwner]
+  );
 
   return (
     <div className='flex flex-1 flex-col overflow-hidden'>
@@ -282,7 +286,9 @@ function ChannelsContent() {
         onTagFilterChange={handleTagFilterChange}
         onModelFilterChange={handleModelFilterChange}
         onHealthColumnVisibilityChange={setIsHealthColumnVisible}
-        canWrite={channelPermissions.canWrite}
+        canWrite={canManageOwnChannels}
+        isOwner={isOwner}
+        viewerUserID={user?.id}
       />
     </div>
   );

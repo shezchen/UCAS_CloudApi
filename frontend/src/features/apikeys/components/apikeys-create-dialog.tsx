@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useTranslation } from 'react-i18next';
@@ -11,9 +11,11 @@ import { useApiKeysContext } from '../context/apikeys-context';
 import { useCreateApiKey } from '../data/apikeys';
 import { CreateApiKeyInput, createApiKeyInputSchema } from '../data/schema';
 import { ScopesSelect } from '@/components/scopes-select';
+import { usePermissions } from '@/hooks/usePermissions';
 
 export function ApiKeysCreateDialog() {
   const { t } = useTranslation();
+  const { isOwner } = usePermissions();
   const { isDialogOpen, closeDialog, openDialog, setSelectedApiKey } = useApiKeysContext();
   const createApiKey = useCreateApiKey();
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -24,19 +26,27 @@ export function ApiKeysCreateDialog() {
     resolver: zodResolver(createApiKeyInputSchema),
     defaultValues: {
       name: '',
-      type: 'user',
+      type: isOwner ? 'user' : 'personal',
       scopes: undefined,
     },
   });
 
   const apiKeyType = form.watch('type');
 
+  useEffect(() => {
+    if (!isOwner && form.getValues('type') !== 'personal') {
+      form.setValue('type', 'personal');
+      form.setValue('scopes', undefined);
+    }
+  }, [form, isOwner]);
+
   const onSubmit = async (data: CreateApiKeyInput) => {
     setIsSubmitting(true);
     try {
-      const submitData = data.type === 'user' || data.type === 'personal' ? { ...data, scopes: undefined } : data;
+      const ownerScopedData = data.type === 'user' || data.type === 'personal' ? { ...data, scopes: undefined } : data;
+      const submitData = isOwner ? ownerScopedData : { ...data, type: 'personal' as const, scopes: undefined };
       const result = await createApiKey.mutateAsync(submitData);
-      form.reset();
+      form.reset({ name: '', type: isOwner ? 'user' : 'personal', scopes: undefined });
       closeDialog('create');
       // Open view dialog with the created API key
       setSelectedApiKey(result.createAPIKey);
@@ -49,7 +59,7 @@ export function ApiKeysCreateDialog() {
   };
 
   const handleClose = () => {
-    form.reset();
+    form.reset({ name: '', type: isOwner ? 'user' : 'personal', scopes: undefined });
     closeDialog('create');
   };
 
@@ -76,45 +86,63 @@ export function ApiKeysCreateDialog() {
               )}
             />
 
-            <FormField
-              control={form.control}
-              name='type'
-              render={({ field }) => (
-                <FormItem className='space-y-3'>
-                  <FormLabel>{t('apikeys.dialogs.fields.type.label')}</FormLabel>
-                  <FormControl>
-                    <RadioGroup onValueChange={field.onChange} defaultValue={field.value} className='flex flex-col space-y-1'>
-                      <FormItem className='flex items-center space-y-0 space-x-3'>
-                        <FormControl>
-                          <RadioGroupItem value='user' />
-                        </FormControl>
-                        <FormLabel className='font-normal'>{t('apikeys.dialogs.fields.type.user')}</FormLabel>
-                      </FormItem>
-                      <FormItem className='flex items-center space-y-0 space-x-3'>
-                        <FormControl>
-                          <RadioGroupItem value='personal' />
-                        </FormControl>
-                        <FormLabel className='font-normal'>{t('apikeys.dialogs.fields.type.personal')}</FormLabel>
-                      </FormItem>
-                      <FormItem className='flex items-center space-y-0 space-x-3'>
-                        <FormControl>
-                          <RadioGroupItem value='service_account' />
-                        </FormControl>
-                        <FormLabel className='font-normal'>{t('apikeys.dialogs.fields.type.serviceAccount')}</FormLabel>
-                      </FormItem>
-                    </RadioGroup>
-                  </FormControl>
-                  <FormDescription>
-                    {apiKeyType === 'user' && t('apikeys.dialogs.fields.type.userDescription')}
-                    {apiKeyType === 'personal' && t('apikeys.dialogs.fields.type.personalDescription')}
-                    {apiKeyType === 'service_account' && t('apikeys.dialogs.fields.type.serviceAccountDescription')}
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            {isOwner ? (
+              <FormField
+                control={form.control}
+                name='type'
+                render={({ field }) => (
+                  <FormItem className='space-y-3'>
+                    <FormLabel>{t('apikeys.dialogs.fields.type.label')}</FormLabel>
+                    <FormControl>
+                      <RadioGroup onValueChange={field.onChange} defaultValue={field.value} className='flex flex-col space-y-1'>
+                        <FormItem className='flex items-center space-y-0 space-x-3'>
+                          <FormControl>
+                            <RadioGroupItem value='user' />
+                          </FormControl>
+                          <FormLabel className='font-normal'>{t('apikeys.dialogs.fields.type.user')}</FormLabel>
+                        </FormItem>
+                        <FormItem className='flex items-center space-y-0 space-x-3'>
+                          <FormControl>
+                            <RadioGroupItem value='personal' />
+                          </FormControl>
+                          <FormLabel className='font-normal'>{t('apikeys.dialogs.fields.type.personal')}</FormLabel>
+                        </FormItem>
+                        <FormItem className='flex items-center space-y-0 space-x-3'>
+                          <FormControl>
+                            <RadioGroupItem value='service_account' />
+                          </FormControl>
+                          <FormLabel className='font-normal'>{t('apikeys.dialogs.fields.type.serviceAccount')}</FormLabel>
+                        </FormItem>
+                      </RadioGroup>
+                    </FormControl>
+                    <FormDescription>
+                      {apiKeyType === 'user' && t('apikeys.dialogs.fields.type.userDescription')}
+                      {apiKeyType === 'personal' && t('apikeys.dialogs.fields.type.personalDescription')}
+                      {apiKeyType === 'service_account' && t('apikeys.dialogs.fields.type.serviceAccountDescription')}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            ) : (
+              <FormField
+                control={form.control}
+                name='type'
+                render={({ field }) => (
+                  <FormItem>
+                    <input type='hidden' {...field} value='personal' />
+                    <FormLabel>{t('apikeys.dialogs.fields.type.label')}</FormLabel>
+                    <div className='bg-muted rounded-md border px-3 py-2 text-sm'>
+                      {t('apikeys.dialogs.fields.type.personal')}
+                    </div>
+                    <FormDescription>{t('apikeys.dialogs.fields.type.personalDescription')}</FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
 
-            {apiKeyType === 'service_account' && (
+            {isOwner && apiKeyType === 'service_account' && (
               <FormField
                 control={form.control}
                 name='scopes'

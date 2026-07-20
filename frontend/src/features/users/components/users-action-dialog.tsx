@@ -9,6 +9,7 @@ import { ROLES_QUERY } from '@/gql/roles';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { useAuthStore } from '@/stores/authStore';
+import { usePermissions } from '@/hooks/usePermissions';
 import { filterGrantableRoles, canEditUserPermissions } from '@/lib/permission-utils';
 import { passwordConfirmationSchema } from '@/lib/validation';
 import { Button } from '@/components/ui/button';
@@ -17,7 +18,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { ScopesSelect } from '@/components/scopes-select';
-import { User, CreateUserInput, UpdateUserInput } from '../data/schema';
+import { User, CreateUserInput, UpdateUserInput, DEFAULT_DAILY_TOKEN_LIMIT } from '../data/schema';
 import { useCreateUser, useUpdateUser } from '../data/users';
 
 // 创建表单验证模式的工厂函数
@@ -30,6 +31,7 @@ const createFormSchema = (t: (key: string) => string) =>
       password: z.string().optional(),
       confirmPassword: z.string().optional(),
       isOwner: z.boolean().optional(),
+      dailyTokenLimit: z.number().int().min(0, t('users.validation.dailyTokenLimitNonnegative')),
       roleIDs: z.array(z.string()).optional(),
       scopes: z.array(z.string()).optional(),
     })
@@ -69,6 +71,7 @@ interface Props {
 
 export function UsersActionDialog({ currentRow, open, onOpenChange }: Props) {
   const { t } = useTranslation();
+  const { isOwner } = usePermissions();
   const currentUser = useAuthStore((state) => state.auth.user);
   const isEdit = !!currentRow;
   const [roles, setRoles] = useState<Role[]>([]);
@@ -94,6 +97,7 @@ export function UsersActionDialog({ currentRow, open, onOpenChange }: Props) {
           password: '',
           confirmPassword: '',
           isOwner: currentRow.isOwner,
+          dailyTokenLimit: currentRow.dailyTokenLimit,
           roleIDs: currentRow.roles?.edges?.map((edge) => edge.node.id) || [],
           scopes: currentRow.scopes || [],
         }
@@ -104,6 +108,7 @@ export function UsersActionDialog({ currentRow, open, onOpenChange }: Props) {
           password: '',
           confirmPassword: '',
           isOwner: false,
+          dailyTokenLimit: DEFAULT_DAILY_TOKEN_LIMIT,
           roleIDs: [],
           scopes: [],
         },
@@ -167,6 +172,7 @@ export function UsersActionDialog({ currentRow, open, onOpenChange }: Props) {
           email: values.email,
           isOwner: values.isOwner,
           scopes: values.scopes,
+          ...(isOwner ? { dailyTokenLimit: values.dailyTokenLimit } : {}),
         };
 
         // Only add role fields if there are changes
@@ -192,6 +198,7 @@ export function UsersActionDialog({ currentRow, open, onOpenChange }: Props) {
           isOwner: values.isOwner,
           scopes: values.scopes,
           roleIDs: values.roleIDs,
+          ...(isOwner ? { dailyTokenLimit: values.dailyTokenLimit } : {}),
         };
 
         await createUser.mutateAsync(createInput);
@@ -277,6 +284,33 @@ export function UsersActionDialog({ currentRow, open, onOpenChange }: Props) {
                   </FormItem>
                 )}
               />
+
+              {isOwner && (
+                <FormField
+                  control={form.control}
+                  name='dailyTokenLimit'
+                  render={({ field, fieldState }) => (
+                    <FormItem>
+                      <FormLabel>{t('users.form.dailyTokenLimit')}</FormLabel>
+                      <FormControl>
+                        <Input
+                          type='number'
+                          min={0}
+                          step={1}
+                          inputMode='numeric'
+                          aria-invalid={!!fieldState.error}
+                          {...field}
+                          onChange={(event) => field.onChange(Number(event.target.value))}
+                        />
+                      </FormControl>
+                      <p className='text-muted-foreground text-sm'>{t('users.form.dailyTokenLimitDescription')}</p>
+                      <div className='min-h-[1.25rem]'>
+                        <FormMessage />
+                      </div>
+                    </FormItem>
+                  )}
+                />
+              )}
 
               {/* Password fields - only show when creating new user */}
               {!isEdit && (

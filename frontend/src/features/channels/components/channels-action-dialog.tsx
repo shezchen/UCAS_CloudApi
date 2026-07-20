@@ -8,6 +8,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { X, RefreshCw, Search, ChevronLeft, ChevronRight, PanelLeft, Plus, Trash2, Eye, EyeOff, Copy, Play, Info, Ban } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import { usePermissions } from '@/hooks/usePermissions';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -176,6 +177,16 @@ function getResponsesWebSocketBaseURL(channelType: ChannelType): string | undefi
   return undefined;
 }
 
+function formatDateTimeLocal(value?: string | null): string {
+  if (!value) return '';
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+
+  const localTime = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return localTime.toISOString().slice(0, 16);
+}
+
 function isOpenCodeGoChannelType(channelType: ChannelType | undefined): channelType is 'opencode_go' | 'opencode_go_anthropic' {
   return channelType === 'opencode_go' || channelType === 'opencode_go_anthropic';
 }
@@ -320,9 +331,11 @@ function extractCodexAuthJSONText(apiKey: string | undefined): string | undefine
 
 export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpenChange, showModelsPanel = false }: Props) {
   const { t } = useTranslation();
+  const { isOwner } = usePermissions();
   const isEdit = !!currentRow;
   const isDuplicate = !!duplicateFromRow && !isEdit;
   const initialRow: Channel | undefined = currentRow || duplicateFromRow;
+  const ownerEditingDonation = Boolean(isOwner && isEdit && currentRow?.userID);
   const createChannel = useCreateChannel();
   const duplicateChannel = useDuplicateChannel();
   const updateChannel = useUpdateChannel();
@@ -330,7 +343,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
   const syncChannelModels = useSyncChannelModels();
   const { data: allChannelNames = [], isSuccess: allChannelNamesLoaded } = useAllChannelNames({ enabled: open && isDuplicate });
   const { data: allTags = [], isLoading: isLoadingTags } = useAllChannelTags();
-  const { data: proxyPresets = [] } = useProxyPresets();
+  const { data: proxyPresets = [] } = useProxyPresets({ enabled: isOwner });
   const saveProxyPreset = useSaveProxyPreset();
   const [supportedModels, setSupportedModels] = useState<string[]>(() => initialRow?.supportedModels || []);
   const [manualModels, setManualModels] = useState<string[]>(() => initialRow?.manualModels || []);
@@ -396,6 +409,8 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
 
   // Memoized proxy config for OAuth exchange
   const proxyConfig: ProxyConfig | undefined = useMemo(() => {
+    if (!isOwner) return undefined;
+
     if (proxyType === ProxyType.URL && proxyUrl) {
       return {
         type: proxyType,
@@ -405,7 +420,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
       };
     }
     return undefined;
-  }, [proxyType, proxyUrl, proxyUsername, proxyPassword]);
+  }, [isOwner, proxyType, proxyUrl, proxyUsername, proxyPassword]);
 
   const handleProxyPresetSelect = (presetUrl: string) => {
     const preset = proxyPresets.find((p) => p.url === presetUrl);
@@ -654,6 +669,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
             type: currentRow.type,
             baseURL: currentRow.baseURL,
             name: currentRow.name,
+            expiresAt: formatDateTimeLocal(currentRow.expiresAt),
             policies: currentRow.policies ?? { stream: 'unlimited' },
             supportedModels: currentRow.supportedModels,
             autoSyncSupportedModels: currentRow.autoSyncSupportedModels,
@@ -678,9 +694,10 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
               type: duplicateFromRow.type,
               baseURL: duplicateFromRow.baseURL,
               name: duplicateFromRow.name,
+              expiresAt: formatDateTimeLocal(duplicateFromRow.expiresAt),
               policies: duplicateFromRow.policies ?? { stream: 'unlimited' },
               supportedModels: duplicateFromRow.supportedModels,
-              autoSyncSupportedModels: duplicateFromRow.autoSyncSupportedModels,
+              autoSyncSupportedModels: isOwner ? duplicateFromRow.autoSyncSupportedModels : true,
               autoSyncModelPattern: duplicateFromRow.autoSyncModelPattern || '',
               defaultTestModel: duplicateFromRow.defaultTestModel,
               tags: duplicateFromRow.tags || [],
@@ -701,6 +718,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
               type: derivedChannelType,
               baseURL: getDefaultBaseURL(derivedChannelType),
               name: '',
+              expiresAt: '',
               policies: { stream: 'unlimited' },
               credentials: {
                 apiKeys: [],
@@ -711,6 +729,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                 },
               },
               supportedModels: [],
+              autoSyncSupportedModels: !isOwner,
               defaultTestModel: '',
               tags: [],
               remark: '',
@@ -1158,6 +1177,37 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
     }
 
     try {
+      if (ownerEditingDonation) {
+        delete values.expiresAt;
+        delete (values as z.infer<typeof updateChannelInputSchema>).clearExpiresAt;
+      } else {
+        const rawExpiresAt = values.expiresAt?.trim();
+        if (!isOwner && !rawExpiresAt) {
+          form.setError('expiresAt', {
+            type: 'manual',
+            message: t('channels.dialogs.fields.expiresAt.errors.required'),
+          });
+          return;
+        }
+
+        if (rawExpiresAt) {
+          const expiresAt = new Date(rawExpiresAt);
+          if (Number.isNaN(expiresAt.getTime()) || expiresAt.getTime() <= Date.now()) {
+            form.setError('expiresAt', {
+              type: 'manual',
+              message: t('channels.dialogs.fields.expiresAt.errors.future'),
+            });
+            return;
+          }
+          values.expiresAt = expiresAt.toISOString();
+        } else {
+          values.expiresAt = undefined;
+          if (isEdit && currentRow?.expiresAt) {
+            (values as z.infer<typeof updateChannelInputSchema>).clearExpiresAt = true;
+          }
+        }
+      }
+
       if (values.credentials?.apiKeys) {
         values.credentials.apiKeys = [...new Set(values.credentials.apiKeys.filter((k) => k.trim().length > 0))];
       }
@@ -1281,7 +1331,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
         }
 
         // Auto-save proxy preset (preserve existing name if available)
-        if (proxyType === ProxyType.URL && proxyUrl) {
+        if (isOwner && proxyType === ProxyType.URL && proxyUrl) {
           const existingPreset = proxyPresets.find((p) => p.url === proxyUrl);
           saveProxyPreset.mutate({
             name: existingPreset?.name,
@@ -1467,16 +1517,16 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
   const canFetchModels = () => {
     const baseURL = form.watch('baseURL');
     const apiKeys = form.watch('credentials.apiKeys');
+    const oauthApiKey = form.watch('credentials.apiKey');
     const hasApiKey = apiKeys?.some((key) => key.trim().length > 0);
+    const hasOAuthToken = !!parseOauthToken(oauthApiKey || '');
 
     if (isCodexType || isAntigravityType || isClineType) {
       return !!baseURL;
     }
 
-    if (isCopilotType) {
-      const oauthApiKey = form.watch('credentials.apiKey');
-      const hasOAuthToken = !!parseOauthToken(oauthApiKey || '');
-      return !!baseURL && hasOAuthToken;
+    if (isCopilotType || isClaudeCodeType) {
+      return !!baseURL && (hasOAuthToken || !!hasApiKey);
     }
 
     if (isEdit) {
@@ -2008,7 +2058,40 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                         )}
                       />
 
-                      {!isEdit && (
+                      <FormField
+                        control={form.control}
+                        name='expiresAt'
+                        render={({ field, fieldState }) => (
+                          <FormItem className='grid grid-cols-1 items-start gap-x-6 gap-y-2 md:grid-cols-8'>
+                            <FormLabel className='pt-2 font-medium md:col-span-2 md:text-right'>
+                              {t('channels.dialogs.fields.expiresAt.label')}
+                              {!isOwner && <span className='text-destructive ml-1'>*</span>}
+                            </FormLabel>
+                            <div className='space-y-1 md:col-span-6'>
+                              <Input
+                                type='datetime-local'
+                                min={formatDateTimeLocal(new Date(Date.now() + 60_000).toISOString())}
+                                aria-invalid={!!fieldState.error}
+                                {...field}
+                                value={field.value || ''}
+                                disabled={ownerEditingDonation}
+                              />
+                              <p className='text-muted-foreground text-xs'>
+                                {t(
+                                  ownerEditingDonation
+                                    ? 'channels.dialogs.fields.expiresAt.donatedOwnerDescription'
+                                    : isOwner
+                                    ? 'channels.dialogs.fields.expiresAt.ownerDescription'
+                                    : 'channels.dialogs.fields.expiresAt.donorDescription'
+                                )}
+                              </p>
+                              <FormMessage />
+                            </div>
+                          </FormItem>
+                        )}
+                      />
+
+                      {!isEdit && isOwner && (
                         <FormItem className='grid grid-cols-1 items-start gap-x-6 gap-y-2 md:grid-cols-8'>
                           <FormLabel className='pt-2 font-medium md:col-span-2 md:text-right'>
                             {t('channels.dialogs.proxy.fields.type.label')}

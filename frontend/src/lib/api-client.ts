@@ -133,6 +133,18 @@ export const systemApi = {
 
 // Auth API endpoints
 export const authApi = {
+  signUp: (data: {
+    email: string;
+    password: string;
+  }): Promise<{
+    user: AuthUser;
+    token: string;
+  }> =>
+    apiRequest('/admin/auth/signup', {
+      method: 'POST',
+      body: data,
+    }),
+
   signIn: (data: {
     email: string;
     password: string;

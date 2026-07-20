@@ -87,11 +87,6 @@ const TEMPLATE_FRAGMENT = `
     createdAt
     updatedAt
     userID
-    user {
-      id
-      firstName
-      lastName
-    }
     name
     description
     overrideParameters

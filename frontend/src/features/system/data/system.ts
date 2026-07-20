@@ -1470,7 +1470,7 @@ export interface SaveProxyPresetInput {
   password?: string;
 }
 
-export function useProxyPresets() {
+export function useProxyPresets(options?: { enabled?: boolean }) {
   const { handleError } = useErrorHandler();
 
   return useQuery({
@@ -1484,6 +1484,7 @@ export function useProxyPresets() {
         throw error;
       }
     },
+    enabled: options?.enabled ?? true,
   });
 }
 

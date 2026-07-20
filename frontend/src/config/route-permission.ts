@@ -7,6 +7,7 @@ export interface RouteConfig {
   scopeLevel?: ScopeLevel; // 权限级别：system 只检查系统级权限，project 只检查项目级权限，any 检查两者
   mode?: 'hidden' | 'disabled'; // 当没有权限时的处理方式
   children?: RouteConfig[];
+  requireOwner?: boolean; // 是否仅允许 system owner
   requireProjectOwner?: boolean; // 是否需要 project owner (或 system owner)
 }
 
@@ -44,8 +45,8 @@ export const routeConfigs: RouteGroup[] = [
       },
       {
         path: '/channels',
-        requiredScopes: ['read_channels'],
-        mode: 'hidden',
+        // Authenticated users can manage only their own donated channels.
+        // Models and other global channel-backed pages keep their system scope guards.
       },
       {
         path: '/models',
@@ -104,9 +105,8 @@ export const routeConfigs: RouteGroup[] = [
       },
       {
         path: '/project/usage-stats',
-        requiredScopes: ['read_requests'],
-        mode: 'hidden',
-        requireProjectOwner: true,
+        // Every authenticated project member can view the privacy-safe branch.
+        // Detailed user/cost statistics remain guarded in the page and backend.
       },
       {
         path: '/project/traces',
@@ -130,7 +130,8 @@ export const routeConfigs: RouteGroup[] = [
       },
       {
         path: '/project/playground',
-        // Playground is accessible to all users
+        requireOwner: true,
+        mode: 'hidden',
       },
     ],
   },

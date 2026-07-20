@@ -22,6 +22,7 @@ import {
   IconKeyOff,
   IconGauge,
   IconHistory,
+  IconLock,
   IconPlugConnected,
 } from '@tabler/icons-react';
 import { useTranslation } from 'react-i18next';
@@ -44,7 +45,7 @@ import { DataTableColumnHeader } from '@/components/data-table-column-header';
 import { useChannels } from '../context/channels-context';
 import { useTestChannel, useUpdateChannel } from '../data/channels';
 import { CHANNEL_CONFIGS, getProvider } from '../data/config_channels';
-import { Channel } from '../data/schema';
+import { Channel, isActiveDonationOwnedByAnotherUser } from '../data/schema';
 import { ChannelHealthCell } from './channel-health-cell';
 import { ChannelLimiterCell } from './channel-limiter-cell';
 import { ChannelsStatusDialog } from './channels-status-dialog';
@@ -85,13 +86,15 @@ const ActionCell = memo(({ row }: { row: Row<Channel> }) => {
   const { t } = useTranslation();
   const channel = row.original;
   const { setOpen, setCurrentRow } = useChannels();
-  const { channelPermissions } = usePermissions();
+  const { isOwner, user } = usePermissions();
+  const canManageChannel = isOwner || !!user;
   const testChannel = useTestChannel();
   const isArchived = channel.status === 'archived';
   const hasError = !!channel.errorMessage;
-  const hasDisabledAPIKeys = channelPermissions.canWrite && (channel.disabledAPIKeys?.length ?? 0) > 0;
+  const hasDisabledAPIKeys = canManageChannel && (channel.disabledAPIKeys?.length ?? 0) > 0;
   const apiKeysCount = channel.credentials?.apiKeys?.filter((key) => key.trim().length > 0).length ?? 0;
-  const hasMultipleAPIKeys = channelPermissions.canWrite && apiKeysCount > 1;
+  const hasMultipleAPIKeys = canManageChannel && apiKeysCount > 1;
+  const ownerCannotDeleteChannel = isOwner && isActiveDonationOwnedByAnotherUser(channel, user?.id);
 
   const handleDefaultTest = async () => {
     try {
@@ -131,15 +134,17 @@ const ActionCell = memo(({ row }: { row: Row<Channel> }) => {
             <IconPlayerPlay size={16} className='mr-2' />
             {t('channels.actions.test')}
           </DropdownMenuItem>
-          <DropdownMenuItem
-            onClick={() => {
-              setCurrentRow(channel);
-              setOpen('testHistory');
-            }}
-          >
-            <IconHistory size={16} className='mr-2' />
-            {t('channels.actions.testHistory')}
-          </DropdownMenuItem>
+          {isOwner && (
+            <DropdownMenuItem
+              onClick={() => {
+                setCurrentRow(channel);
+                setOpen('testHistory');
+              }}
+            >
+              <IconHistory size={16} className='mr-2' />
+              {t('channels.actions.testHistory')}
+            </DropdownMenuItem>
+          )}
           <DropdownMenuSeparator />
 
           <DropdownMenuItem
@@ -160,15 +165,17 @@ const ActionCell = memo(({ row }: { row: Row<Channel> }) => {
             <IconRoute size={16} className='mr-2' />
             {t('channels.dialogs.settings.modelMapping.title')}
           </DropdownMenuItem>
-          <DropdownMenuItem
-            onClick={() => {
-              setCurrentRow(channel);
-              setOpen('price');
-            }}
-          >
-            <IconCoin size={16} className='mr-2' />
-            {t('channels.actions.modelPrice')}
-          </DropdownMenuItem>
+          {isOwner && (
+            <DropdownMenuItem
+              onClick={() => {
+                setCurrentRow(channel);
+                setOpen('price');
+              }}
+            >
+              <IconCoin size={16} className='mr-2' />
+              {t('channels.actions.modelPrice')}
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem
             onClick={() => {
               setCurrentRow(channel);
@@ -179,15 +186,17 @@ const ActionCell = memo(({ row }: { row: Row<Channel> }) => {
             {t('channels.dialogs.settings.overrides.action')}
           </DropdownMenuItem>
 
-          <DropdownMenuItem
-            onClick={() => {
-              setCurrentRow(channel);
-              setOpen('proxy');
-            }}
-          >
-            <IconNetwork size={16} className='mr-2' />
-            {t('channels.dialogs.proxy.action')}
-          </DropdownMenuItem>
+          {isOwner && (
+            <DropdownMenuItem
+              onClick={() => {
+                setCurrentRow(channel);
+                setOpen('proxy');
+              }}
+            >
+              <IconNetwork size={16} className='mr-2' />
+              {t('channels.dialogs.proxy.action')}
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem
             onClick={() => {
               setCurrentRow(channel);
@@ -261,16 +270,23 @@ const ActionCell = memo(({ row }: { row: Row<Channel> }) => {
             {isArchived ? <IconCheck size={16} className='mr-2' /> : <IconArchive size={16} className='mr-2' />}
             {t(isArchived ? 'common.buttons.restore' : 'common.buttons.archive')}
           </DropdownMenuItem>
-          <DropdownMenuItem
-            onClick={() => {
-              setCurrentRow(channel);
-              setOpen('delete');
-            }}
-            className='text-red-500!'
-          >
-            <IconTrash size={16} className='mr-2' />
-            {t('common.buttons.delete')}
-          </DropdownMenuItem>
+          {ownerCannotDeleteChannel ? (
+            <DropdownMenuItem disabled data-testid='channel-delete-restricted' className='text-muted-foreground'>
+              <IconLock size={16} className='mr-2' />
+              {t('channels.donation.deleteRestricted')}
+            </DropdownMenuItem>
+          ) : (
+            <DropdownMenuItem
+              onClick={() => {
+                setCurrentRow(channel);
+                setOpen('delete');
+              }}
+              className='text-red-500!'
+            >
+              <IconTrash size={16} className='mr-2' />
+              {t('common.buttons.delete')}
+            </DropdownMenuItem>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
@@ -294,8 +310,6 @@ const ExpandCell = ({ row }: { row: any }) => (
     </Button>
   </div>
 );
-
-// ExpandCell.displayName = 'ExpandCell'; // Removed since it's not memoized now, but can keep if desired
 
 function getChannelWebsiteURL(baseURL: string): string | null {
   try {
@@ -629,7 +643,66 @@ const CreatedAtCell = memo(({ row }: { row: Row<Channel> }) => {
 
 CreatedAtCell.displayName = 'CreatedAtCell';
 
-export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrite: boolean = true): ColumnDef<Channel>[] => {
+const ExpiresAtCell = memo(({ row }: { row: Row<Channel> }) => {
+  const { t } = useTranslation();
+  const raw = row.original.expiresAt;
+
+  if (!raw) {
+    return <div className='text-muted-foreground text-center text-xs'>{t('channels.donation.noExpiry')}</div>;
+  }
+
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) {
+    return <div className='text-muted-foreground text-center text-xs'>-</div>;
+  }
+
+  const isExpired = date.getTime() <= Date.now();
+  return (
+    <div className='flex justify-center'>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Badge variant={isExpired ? 'destructive' : 'outline'} className='cursor-help font-normal'>
+            {isExpired ? t('channels.donation.expired') : format(date, 'yyyy-MM-dd')}
+          </Badge>
+        </TooltipTrigger>
+        <TooltipContent>{format(date, 'yyyy-MM-dd HH:mm:ss')}</TooltipContent>
+      </Tooltip>
+    </div>
+  );
+});
+
+ExpiresAtCell.displayName = 'ExpiresAtCell';
+
+const DonorCell = memo(({ row }: { row: Row<Channel> }) => {
+  const { t } = useTranslation();
+  const channel = row.original;
+  const donor = channel.user;
+
+  if (!channel.userID && !donor) {
+    return <div className='text-muted-foreground text-center text-xs'>{t('channels.donation.ownerManaged')}</div>;
+  }
+
+  const fullName = [donor?.firstName, donor?.lastName].filter(Boolean).join(' ');
+  const label = fullName || donor?.email || channel.userID || '-';
+  const content = <div className='max-w-44 truncate text-center text-sm'>{label}</div>;
+
+  if (!donor?.email || donor.email === label) return content;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{content}</TooltipTrigger>
+      <TooltipContent>{donor.email}</TooltipContent>
+    </Tooltip>
+  );
+});
+
+DonorCell.displayName = 'DonorCell';
+
+export const createColumns = (
+  t: ReturnType<typeof useTranslation>['t'],
+  canWrite: boolean = true,
+  isOwner: boolean = false
+): ColumnDef<Channel>[] => {
   return [
     {
       id: 'expand',
@@ -641,7 +714,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
       enableSorting: false,
       enableHiding: false,
     },
-    ...(canWrite
+    ...(isOwner
       ? [
           {
             id: 'select',
@@ -683,6 +756,23 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
       enableHiding: false,
       enableSorting: true,
     },
+    ...(isOwner
+      ? [
+          {
+            id: 'donor',
+            accessorFn: (row: Channel) => row.user?.email ?? row.userID ?? '',
+            header: ({ column }: { column: any }) => (
+              <DataTableColumnHeader column={column} title={t('channels.columns.donor')} className='justify-center' />
+            ),
+            cell: DonorCell,
+            meta: {
+              className: 'min-w-36 text-center',
+            },
+            enableSorting: false,
+            enableHiding: true,
+          },
+        ]
+      : []),
     {
       id: 'provider',
       accessorKey: 'type',
@@ -707,6 +797,18 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
       enableSorting: true,
       enableHiding: false,
     },
+    {
+      accessorKey: 'expiresAt',
+      header: ({ column }) => (
+        <DataTableColumnHeader column={column} title={t('channels.columns.expiresAt')} className='justify-center' />
+      ),
+      cell: ExpiresAtCell,
+      meta: {
+        className: 'min-w-32 text-center',
+      },
+      enableSorting: false,
+      enableHiding: false,
+    },
 
     {
       accessorKey: 'tags',
@@ -723,17 +825,21 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
       enableSorting: false,
       enableHiding: true,
     },
-    {
-      id: 'model',
-      accessorFn: () => '', // Virtual column for filtering only
-      header: () => null,
-      cell: () => null,
-      filterFn: () => true, // Server-side filtering, always return true
-      enableSorting: false,
-      enableHiding: true,
-      enableColumnFilter: false,
-      enableGlobalFilter: false,
-    },
+    ...(isOwner
+      ? [
+          {
+            id: 'model',
+            accessorFn: () => '', // Virtual column for filtering only
+            header: () => null,
+            cell: () => null,
+            filterFn: () => true, // Server-side filtering, always return true
+            enableSorting: false,
+            enableHiding: true,
+            enableColumnFilter: false,
+            enableGlobalFilter: false,
+          },
+        ]
+      : []),
     {
       accessorKey: 'supportedModels',
       header: ({ column }) => (
@@ -756,39 +862,45 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
       enableSorting: false,
       enableHiding: true,
     },
-    {
-      id: 'health',
-      accessorKey: 'health',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('channels.columns.health')} className='justify-center' />,
-      cell: ({ row }: { row: Row<Channel> }) => {
-        const probePoints = (row.original as any).probePoints || [];
-        const limiterStats = row.original.liveLimiterStats;
-        return (
-          <div className='flex flex-col items-center gap-1'>
-            <ChannelHealthCell points={probePoints} />
-            {limiterStats ? <ChannelLimiterCell stats={limiterStats} /> : null}
-          </div>
-        );
-      },
-      meta: {
-        className: 'text-center',
-      },
-      enableSorting: false,
-      enableHiding: true,
-    },
-    {
-      accessorKey: 'orderingWeight',
-      header: ({ column }) => (
-        <DataTableColumnHeader column={column} title={t('channels.columns.orderingWeight')} className='justify-center' />
-      ),
-      cell: OrderingWeightCell,
-      meta: {
-        className: 'w-20 min-w-20 text-center',
-      },
-      sortingFn: 'alphanumeric',
-      enableSorting: true,
-      enableHiding: true,
-    },
+    ...(isOwner
+      ? [
+          {
+            id: 'health',
+            accessorKey: 'health',
+            header: ({ column }: { column: any }) => (
+              <DataTableColumnHeader column={column} title={t('channels.columns.health')} className='justify-center' />
+            ),
+            cell: ({ row }: { row: Row<Channel> }) => {
+              const probePoints = (row.original as any).probePoints || [];
+              const limiterStats = row.original.liveLimiterStats;
+              return (
+                <div className='flex flex-col items-center gap-1'>
+                  <ChannelHealthCell points={probePoints} />
+                  {limiterStats ? <ChannelLimiterCell stats={limiterStats} /> : null}
+                </div>
+              );
+            },
+            meta: {
+              className: 'text-center',
+            },
+            enableSorting: false,
+            enableHiding: true,
+          },
+          {
+            accessorKey: 'orderingWeight',
+            header: ({ column }: { column: any }) => (
+              <DataTableColumnHeader column={column} title={t('channels.columns.orderingWeight')} className='justify-center' />
+            ),
+            cell: OrderingWeightCell,
+            meta: {
+              className: 'w-20 min-w-20 text-center',
+            },
+            sortingFn: 'alphanumeric' as const,
+            enableSorting: true,
+            enableHiding: true,
+          },
+        ]
+      : []),
     {
       accessorKey: 'createdAt',
       header: ({ column }) => <DataTableColumnHeader column={column} title={t('common.columns.createdAt')} className='justify-center' />,

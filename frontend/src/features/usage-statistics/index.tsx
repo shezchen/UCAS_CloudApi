@@ -9,7 +9,9 @@ import { DateRangePicker, type DateTimeRangeValue } from '@/components/date-rang
 import { buildDateRangeWhereClause } from '@/utils/date-range';
 import { formatNumber } from '@/utils/format-number';
 import { useGeneralSettings } from '@/features/system/data/system';
+import { useRoutePermissions } from '@/hooks/useRoutePermissions';
 import { useUsageStatsByUser } from './data/usage-stats';
+import { CampusUsageLeaderboardPage } from './campus-leaderboard';
 import { Input } from '@/components/ui/input';
 import {
   Table,
@@ -21,6 +23,16 @@ import {
 } from '@/components/ui/table';
 
 export default function UsageStatisticsPage() {
+  const { isProjectOwner } = useRoutePermissions();
+
+  if (!isProjectOwner) {
+    return <CampusUsageLeaderboardPage />;
+  }
+
+  return <OwnerUsageStatisticsPage />;
+}
+
+function OwnerUsageStatisticsPage() {
   const { t, i18n } = useTranslation();
   const [dateRange, setDateRange] = useState<DateTimeRangeValue | undefined>();
   const [searchTerm, setSearchTerm] = useState('');
@@ -161,4 +173,3 @@ export default function UsageStatisticsPage() {
     </div>
   );
 }
-

@@ -5,11 +5,15 @@ import Playground from '@/features/playground';
 
 function ProtectedPlayground() {
   return (
-    <ProjectGuard>
-      <RouteGuard requiredScopes={['write_requests', 'read_channels']} scopeLevel="any">
+    <RouteGuard
+      requiredScopes={['write_requests', 'read_channels']}
+      scopeLevel="any"
+      requireOwner={true}
+    >
+      <ProjectGuard>
         <Playground />
-      </RouteGuard>
-    </ProjectGuard>
+      </ProjectGuard>
+    </RouteGuard>
   );
 }
 

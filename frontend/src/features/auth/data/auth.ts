@@ -1,11 +1,10 @@
 import { useEffect } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useRouter } from '@tanstack/react-router';
 import { graphqlRequest } from '@/gql/graphql';
 import { ME_QUERY } from '@/gql/users';
 import { toast } from 'sonner';
-import { useAuthStore, setTokenToStorage, removeTokenFromStorage } from '@/stores/authStore';
-import { AuthUser } from '@/stores/authStore';
+import { useAuthStore, setTokenToStorage, removeTokenFromStorage, type AuthUser } from '@/stores/authStore';
 import { authApi } from '@/lib/api-client';
 import i18n from '@/lib/i18n';
 
@@ -14,15 +13,23 @@ export interface SignInInput {
   password: string;
 }
 
+export type SignUpInput = SignInInput;
+
 interface MeResponse {
   me: AuthUser;
+}
+
+export const ME_QUERY_KEY = ['me'] as const;
+
+export function resetSessionQueryCache(queryClient: QueryClient) {
+  queryClient.clear();
 }
 
 export function useMe(enabled = true) {
   const { setUser } = useAuthStore((state) => state.auth);
 
   const query = useQuery({
-    queryKey: ['me'],
+    queryKey: ME_QUERY_KEY,
     queryFn: async () => {
       const data = await graphqlRequest<MeResponse>(ME_QUERY);
       return data.me;
@@ -50,6 +57,7 @@ export function useMe(enabled = true) {
 
 export function useSignIn() {
   const { setUser, setAccessToken } = useAuthStore((state) => state.auth);
+  const queryClient = useQueryClient();
   const router = useRouter();
 
   return useMutation({
@@ -57,6 +65,8 @@ export function useSignIn() {
       return await authApi.signIn(input);
     },
     onSuccess: (data) => {
+      resetSessionQueryCache(queryClient);
+
       // Store token in localStorage
       setTokenToStorage(data.token);
 
@@ -74,8 +84,8 @@ export function useSignIn() {
       toast.success(i18n.t('common.success.signedIn'));
 
       // Redirect based on user role
-      // Owner users go to dashboard, non-owner users go to requests page
-      const redirectPath = data.user.isOwner ? '/' : '/project/playground';
+      // Playground is owner-only; members land on their donation management page.
+      const redirectPath = data.user.isOwner ? '/' : '/channels';
       router.navigate({ to: redirectPath });
     },
     onError: (error: any) => {
@@ -85,8 +95,30 @@ export function useSignIn() {
   });
 }
 
+export function useSignUp() {
+  const { setUser, setAccessToken } = useAuthStore((state) => state.auth);
+  const queryClient = useQueryClient();
+  const router = useRouter();
+
+  return useMutation({
+    mutationFn: async (input: SignUpInput) => authApi.signUp(input),
+    onSuccess: (data) => {
+      resetSessionQueryCache(queryClient);
+      setTokenToStorage(data.token);
+      setAccessToken(data.token);
+      setUser(data.user);
+      toast.success(i18n.t('auth.signUp.success'));
+      router.navigate({ to: '/channels' });
+    },
+    onError: (error: any) => {
+      toast.error(error.message || i18n.t('auth.signUp.error'));
+    },
+  });
+}
+
 export function useSignOut() {
   const { reset } = useAuthStore((state) => state.auth);
+  const queryClient = useQueryClient();
   const router = useRouter();
 
   return () => {
@@ -95,6 +127,9 @@ export function useSignOut() {
 
     // Clear auth store
     reset();
+
+    // Remove every query and mutation result tied to the previous identity.
+    resetSessionQueryCache(queryClient);
 
     toast.success(i18n.t('common.success.signedOut'));
 
@@ -137,6 +172,7 @@ export function useOIDCAuthorize() {
 
 export function useOIDCExchange() {
   const { setUser, setAccessToken } = useAuthStore((state) => state.auth);
+  const queryClient = useQueryClient();
   const router = useRouter();
 
   return useMutation({
@@ -145,7 +181,9 @@ export function useOIDCExchange() {
     },
     onSuccess: (response) => {
       const data = response.data;
-      
+
+      resetSessionQueryCache(queryClient);
+
       // Store token in localStorage
       setTokenToStorage(data.token);
 
@@ -163,7 +201,7 @@ export function useOIDCExchange() {
       toast.success(i18n.t('common.success.signedIn'));
 
       // Redirect based on user role
-      const redirectPath = data.user.isOwner ? '/' : '/project/playground';
+      const redirectPath = data.user.isOwner ? '/' : '/channels';
       router.navigate({ to: redirectPath });
     },
     onError: (error: unknown) => {

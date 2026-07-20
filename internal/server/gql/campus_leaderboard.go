@@ -2,7 +2,6 @@ package gql
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"sort"
 
@@ -36,11 +35,6 @@ type rankedCampusUsage struct {
 	LimitPercent      float64
 }
 
-func campusPublicAlias(projectID, userID int) string {
-	digest := sha256.Sum256([]byte(fmt.Sprintf("axonhub-campus:%d:%d", projectID, userID)))
-	return fmt.Sprintf("同学-%x", digest[:4])
-}
-
 func campusLimitPercent(recordedTokens, dailyTokenLimit int64) float64 {
 	if dailyTokenLimit <= 0 {
 		if recordedTokens > 0 {
@@ -52,15 +46,6 @@ func campusLimitPercent(recordedTokens, dailyTokenLimit int64) float64 {
 	return float64(recordedTokens) / float64(dailyTokenLimit) * 100
 }
 
-func campusDisplayName(nickname, publicAlias string) string {
-	normalized, err := biz.NormalizeCampusNickname(nickname)
-	if err != nil || normalized == "" {
-		return publicAlias
-	}
-
-	return normalized
-}
-
 func rankCampusUsage(projectID, currentUserID int, currentNickname string, aggregates []campusUsageAggregate) []*CampusUsageLeaderboardEntry {
 	foundCurrentUser := false
 	ranked := make([]rankedCampusUsage, 0, len(aggregates)+1)
@@ -68,10 +53,10 @@ func rankCampusUsage(projectID, currentUserID int, currentNickname string, aggre
 		if aggregate.UserID == currentUserID {
 			foundCurrentUser = true
 		}
-		publicAlias := campusPublicAlias(projectID, aggregate.UserID)
+		publicAlias := biz.CampusPublicAlias(projectID, aggregate.UserID)
 		ranked = append(ranked, rankedCampusUsage{
 			UserID:            aggregate.UserID,
-			DisplayName:       campusDisplayName(aggregate.Nickname, publicAlias),
+			DisplayName:       biz.CampusDisplayName(aggregate.Nickname, publicAlias),
 			PublicAlias:       publicAlias,
 			RecordedTokens:    aggregate.RecordedTokens,
 			MeteredRequestCnt: aggregate.MeteredRequestCnt,
@@ -80,10 +65,10 @@ func rankCampusUsage(projectID, currentUserID int, currentNickname string, aggre
 	}
 
 	if !foundCurrentUser {
-		publicAlias := campusPublicAlias(projectID, currentUserID)
+		publicAlias := biz.CampusPublicAlias(projectID, currentUserID)
 		ranked = append(ranked, rankedCampusUsage{
 			UserID:      currentUserID,
-			DisplayName: campusDisplayName(currentNickname, publicAlias),
+			DisplayName: biz.CampusDisplayName(currentNickname, publicAlias),
 			PublicAlias: publicAlias,
 		})
 	}

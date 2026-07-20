@@ -2081,8 +2081,8 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                                   ownerEditingDonation
                                     ? 'channels.dialogs.fields.expiresAt.donatedOwnerDescription'
                                     : isOwner
-                                    ? 'channels.dialogs.fields.expiresAt.ownerDescription'
-                                    : 'channels.dialogs.fields.expiresAt.donorDescription'
+                                      ? 'channels.dialogs.fields.expiresAt.ownerDescription'
+                                      : 'channels.dialogs.fields.expiresAt.donorDescription'
                                 )}
                               </p>
                               <FormMessage />
@@ -2246,7 +2246,9 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                                 aria-invalid={!!fieldState.error}
                                 data-testid='channel-base-url-input'
                                 disabled={
-                                  (isCodexType && authMode !== 'third-party') || (isClaudeCodeType && authMode === 'official') || selectedProvider === 'antigravity'
+                                  (isCodexType && authMode !== 'third-party') ||
+                                  (isClaudeCodeType && authMode === 'official') ||
+                                  selectedProvider === 'antigravity'
                                 }
                                 {...field}
                               />
@@ -2868,16 +2870,31 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                         render={({ field }) => (
                           <FormItem className='grid grid-cols-1 items-start gap-x-6 gap-y-2 md:grid-cols-8'>
                             <FormLabel className='pt-2 font-medium md:col-span-2 md:text-right'>
-                              {t('channels.dialogs.fields.remark.label')}
+                              {t(
+                                !isOwner || ownerEditingDonation
+                                  ? 'channels.dialogs.fields.publicDescription.label'
+                                  : 'channels.dialogs.fields.remark.label'
+                              )}
                             </FormLabel>
                             <div className='space-y-1 md:col-span-6'>
                               <Textarea
-                                placeholder={t('channels.dialogs.fields.remark.placeholder')}
+                                placeholder={t(
+                                  !isOwner || ownerEditingDonation
+                                    ? 'channels.dialogs.fields.publicDescription.placeholder'
+                                    : 'channels.dialogs.fields.remark.placeholder'
+                                )}
                                 className='min-h-[80px] resize-y'
+                                maxLength={!isOwner || ownerEditingDonation ? 280 : undefined}
                                 {...field}
                                 value={field.value || ''}
                               />
-                              <p className='text-muted-foreground text-xs'>{t('channels.dialogs.fields.remark.description')}</p>
+                              <p className='text-muted-foreground text-xs'>
+                                {t(
+                                  !isOwner || ownerEditingDonation
+                                    ? 'channels.dialogs.fields.publicDescription.description'
+                                    : 'channels.dialogs.fields.remark.description'
+                                )}
+                              </p>
                               <FormMessage />
                             </div>
                           </FormItem>
@@ -3131,7 +3148,13 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                                     <Tooltip>
                                       <TooltipTrigger asChild>
                                         <span className='inline-flex'>
-                                          <Button type='button' variant='ghost' size='sm' className='text-muted-foreground h-7 w-7 p-0' disabled>
+                                          <Button
+                                            type='button'
+                                            variant='ghost'
+                                            size='sm'
+                                            className='text-muted-foreground h-7 w-7 p-0'
+                                            disabled
+                                          >
                                             <Ban className='h-4 w-4' />
                                           </Button>
                                         </span>
@@ -3146,7 +3169,13 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                                       onOpenChange={(isOpen) => setConfirmDisableKey(isOpen ? key : null)}
                                     >
                                       <PopoverTrigger asChild>
-                                        <Button type='button' variant='ghost' size='sm' className='text-orange-500 h-7 w-7 p-0' disabled={disableAPIKey.isPending || isFetchingDisabledKeys}>
+                                        <Button
+                                          type='button'
+                                          variant='ghost'
+                                          size='sm'
+                                          className='h-7 w-7 p-0 text-orange-500'
+                                          disabled={disableAPIKey.isPending || isFetchingDisabledKeys}
+                                        >
                                           <Ban className='h-4 w-4' />
                                         </Button>
                                       </PopoverTrigger>

@@ -13,6 +13,7 @@ import {
   IconAi,
   IconNote,
   IconChartBar,
+  IconBooks,
 } from '@tabler/icons-react';
 import { Command } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -114,6 +115,11 @@ export function useSidebarData(): SidebarData {
     {
       title: t('sidebar.groups.project'),
       items: [
+        {
+          title: t('sidebar.items.resources'),
+          url: '/project/resources',
+          icon: IconBooks,
+        } as NavLink,
         {
           title: t('sidebar.items.apiKeys'),
           url: '/project/api-keys',

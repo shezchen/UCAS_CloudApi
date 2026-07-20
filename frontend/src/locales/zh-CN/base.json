@@ -15,6 +15,7 @@
   "sidebar.items.threads": "线程",
   "sidebar.items.usageLogs": "用量日志",
   "sidebar.items.apiKeys": "API 密钥",
+  "sidebar.items.resources": "可用资源",
   "sidebar.items.usageStats": "用量统计",
   "usageStats.description": "项目内各用户的 Token 消耗与成本分布。",
   "usageStats.leaderboard.title": "今日已记录用量排名",

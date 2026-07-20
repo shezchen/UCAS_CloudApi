@@ -47,6 +47,7 @@ import { Route as AuthenticatedProjectUsageStatsIndexRouteImport } from './route
 import { Route as AuthenticatedProjectTracesIndexRouteImport } from './routes/_authenticated/project/traces/index'
 import { Route as AuthenticatedProjectThreadsIndexRouteImport } from './routes/_authenticated/project/threads/index'
 import { Route as AuthenticatedProjectRolesIndexRouteImport } from './routes/_authenticated/project/roles/index'
+import { Route as AuthenticatedProjectResourcesIndexRouteImport } from './routes/_authenticated/project/resources/index'
 import { Route as AuthenticatedProjectRequestsIndexRouteImport } from './routes/_authenticated/project/requests/index'
 import { Route as AuthenticatedProjectPromptsIndexRouteImport } from './routes/_authenticated/project/prompts/index'
 import { Route as AuthenticatedProjectPlaygroundIndexRouteImport } from './routes/_authenticated/project/playground/index'
@@ -266,6 +267,12 @@ const AuthenticatedProjectRolesIndexRoute =
     path: '/project/roles/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedProjectResourcesIndexRoute =
+  AuthenticatedProjectResourcesIndexRouteImport.update({
+    id: '/project/resources/',
+    path: '/project/resources/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedProjectRequestsIndexRoute =
   AuthenticatedProjectRequestsIndexRouteImport.update({
     id: '/project/requests/',
@@ -349,6 +356,7 @@ export interface FileRoutesByFullPath {
   '/project/playground/': typeof AuthenticatedProjectPlaygroundIndexRoute
   '/project/prompts/': typeof AuthenticatedProjectPromptsIndexRoute
   '/project/requests/': typeof AuthenticatedProjectRequestsIndexRoute
+  '/project/resources/': typeof AuthenticatedProjectResourcesIndexRoute
   '/project/roles/': typeof AuthenticatedProjectRolesIndexRoute
   '/project/threads/': typeof AuthenticatedProjectThreadsIndexRoute
   '/project/traces/': typeof AuthenticatedProjectTracesIndexRoute
@@ -394,6 +402,7 @@ export interface FileRoutesByTo {
   '/project/playground': typeof AuthenticatedProjectPlaygroundIndexRoute
   '/project/prompts': typeof AuthenticatedProjectPromptsIndexRoute
   '/project/requests': typeof AuthenticatedProjectRequestsIndexRoute
+  '/project/resources': typeof AuthenticatedProjectResourcesIndexRoute
   '/project/roles': typeof AuthenticatedProjectRolesIndexRoute
   '/project/threads': typeof AuthenticatedProjectThreadsIndexRoute
   '/project/traces': typeof AuthenticatedProjectTracesIndexRoute
@@ -442,6 +451,7 @@ export interface FileRoutesById {
   '/_authenticated/project/playground/': typeof AuthenticatedProjectPlaygroundIndexRoute
   '/_authenticated/project/prompts/': typeof AuthenticatedProjectPromptsIndexRoute
   '/_authenticated/project/requests/': typeof AuthenticatedProjectRequestsIndexRoute
+  '/_authenticated/project/resources/': typeof AuthenticatedProjectResourcesIndexRoute
   '/_authenticated/project/roles/': typeof AuthenticatedProjectRolesIndexRoute
   '/_authenticated/project/threads/': typeof AuthenticatedProjectThreadsIndexRoute
   '/_authenticated/project/traces/': typeof AuthenticatedProjectTracesIndexRoute
@@ -490,6 +500,7 @@ export interface FileRouteTypes {
     | '/project/playground/'
     | '/project/prompts/'
     | '/project/requests/'
+    | '/project/resources/'
     | '/project/roles/'
     | '/project/threads/'
     | '/project/traces/'
@@ -535,6 +546,7 @@ export interface FileRouteTypes {
     | '/project/playground'
     | '/project/prompts'
     | '/project/requests'
+    | '/project/resources'
     | '/project/roles'
     | '/project/threads'
     | '/project/traces'
@@ -582,6 +594,7 @@ export interface FileRouteTypes {
     | '/_authenticated/project/playground/'
     | '/_authenticated/project/prompts/'
     | '/_authenticated/project/requests/'
+    | '/_authenticated/project/resources/'
     | '/_authenticated/project/roles/'
     | '/_authenticated/project/threads/'
     | '/_authenticated/project/traces/'
@@ -871,6 +884,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedProjectRolesIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/project/resources/': {
+      id: '/_authenticated/project/resources/'
+      path: '/project/resources'
+      fullPath: '/project/resources/'
+      preLoaderRoute: typeof AuthenticatedProjectResourcesIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/project/requests/': {
       id: '/_authenticated/project/requests/'
       path: '/project/requests'
@@ -971,6 +991,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedProjectPlaygroundIndexRoute: typeof AuthenticatedProjectPlaygroundIndexRoute
   AuthenticatedProjectPromptsIndexRoute: typeof AuthenticatedProjectPromptsIndexRoute
   AuthenticatedProjectRequestsIndexRoute: typeof AuthenticatedProjectRequestsIndexRoute
+  AuthenticatedProjectResourcesIndexRoute: typeof AuthenticatedProjectResourcesIndexRoute
   AuthenticatedProjectRolesIndexRoute: typeof AuthenticatedProjectRolesIndexRoute
   AuthenticatedProjectThreadsIndexRoute: typeof AuthenticatedProjectThreadsIndexRoute
   AuthenticatedProjectTracesIndexRoute: typeof AuthenticatedProjectTracesIndexRoute
@@ -1010,6 +1031,8 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedProjectPromptsIndexRoute: AuthenticatedProjectPromptsIndexRoute,
   AuthenticatedProjectRequestsIndexRoute:
     AuthenticatedProjectRequestsIndexRoute,
+  AuthenticatedProjectResourcesIndexRoute:
+    AuthenticatedProjectResourcesIndexRoute,
   AuthenticatedProjectRolesIndexRoute: AuthenticatedProjectRolesIndexRoute,
   AuthenticatedProjectThreadsIndexRoute: AuthenticatedProjectThreadsIndexRoute,
   AuthenticatedProjectTracesIndexRoute: AuthenticatedProjectTracesIndexRoute,

@@ -15,6 +15,7 @@
   "sidebar.items.threads": "Threads",
   "sidebar.items.usageLogs": "Usage Logs",
   "sidebar.items.apiKeys": "API Keys",
+  "sidebar.items.resources": "Available Resources",
   "sidebar.items.usageStats": "Usage Statistics",
   "usageStats.description": "Token usage and cost distribution across users in the project.",
   "usageStats.leaderboard.title": "Today's recorded usage ranking",

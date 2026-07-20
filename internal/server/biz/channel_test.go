@@ -2,6 +2,8 @@ package biz
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -16,6 +18,7 @@ import (
 	"github.com/looplj/axonhub/internal/ent/schema/schematype"
 	"github.com/looplj/axonhub/internal/ent/user"
 	"github.com/looplj/axonhub/internal/objects"
+	"github.com/looplj/axonhub/llm/httpclient"
 )
 
 func TestChannelService_ListModels(t *testing.T) {
@@ -222,7 +225,7 @@ func TestChannelService_CreateChannel_PersistsAutoSyncModelPatternAndManualModel
 
 	ch, err := svc.CreateChannel(ctx, ent.CreateChannelInput{
 		Type:                    channel.TypeOpenai,
-		BaseURL:                 new("https://api.openai.com/v1"),
+		BaseURL:                 new("http://127.0.0.1:1/v1"),
 		Name:                    "Create Persist Fields",
 		Credentials:             objects.ChannelCredentials{APIKey: "key"},
 		SupportedModels:         []string{"gpt-4"},
@@ -324,8 +327,12 @@ func TestChannelService_CreateChannel(t *testing.T) {
 		Save(ctx)
 	require.NoError(t, err)
 
+	explicitAutoSyncFalse := false
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.input.AutoSyncSupportedModels == nil {
+				tt.input.AutoSyncSupportedModels = &explicitAutoSyncFalse
+			}
 			result, err := svc.CreateChannel(ctx, tt.input)
 
 			if tt.wantErr {
@@ -653,6 +660,11 @@ func TestChannelService_BulkImportChannels(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			for _, item := range tt.items {
+				if item.BaseURL != nil {
+					item.BaseURL = new("http://127.0.0.1:1/v1")
+				}
+			}
 			result, err := svc.BulkImportChannels(ctx, tt.items)
 
 			require.NoError(t, err)
@@ -662,8 +674,42 @@ func TestChannelService_BulkImportChannels(t *testing.T) {
 			require.Equal(t, tt.wantFailed, result.Failed)
 			require.Len(t, result.Errors, tt.wantErrorsLen)
 			require.Len(t, result.Channels, tt.wantCreated)
+			for _, imported := range result.Channels {
+				require.True(t, imported.AutoSyncSupportedModels, "bulk imports must use zero-maintenance discovery")
+			}
 		})
 	}
+}
+
+func TestChannelService_BulkImportChannels_DefaultAutoSyncPreservesImportedModels(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	defer server.Close()
+
+	svc, client := setupTestChannelService(t)
+	defer svc.Stop()
+	defer client.Close()
+	svc.httpClient = httpclient.NewHttpClientWithClient(server.Client())
+	ctx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+
+	result, err := svc.BulkImportChannels(ctx, []*BulkImportChannelItem{{
+		Type:             "openai",
+		Name:             "Imported Automatic Channel",
+		BaseURL:          new(server.URL + "/v1"),
+		APIKey:           new("test-key"),
+		SupportedModels:  []string{"imported-manual-model"},
+		DefaultTestModel: "imported-manual-model",
+	}})
+
+	require.NoError(t, err)
+	require.True(t, result.Success)
+	require.Len(t, result.Channels, 1)
+	imported := result.Channels[0]
+	require.True(t, imported.AutoSyncSupportedModels)
+	require.Equal(t, []string{"imported-manual-model"}, imported.ManualModels)
+	require.Equal(t, []string{"imported-manual-model"}, imported.SupportedModels, "an empty discovered catalog must not erase imported models")
 }
 
 func TestChannelService_BulkUpdateChannelOrdering(t *testing.T) {
@@ -761,6 +807,7 @@ func TestChannelService_BulkCreateChannels(t *testing.T) {
 	ctx = authz.WithTestBypass(ctx)
 
 	baseURL := "https://api.openai.com/v1"
+	explicitAutoSyncFalse := false
 
 	tests := []struct {
 		name             string
@@ -975,14 +1022,15 @@ func TestChannelService_BulkCreateChannels(t *testing.T) {
 
 			// Call BulkCreateChannels
 			channels, err := svc.BulkCreateChannels(ctx, BulkCreateChannelsInput{
-				Type:             tt.channelType,
-				Name:             tt.baseName,
-				Tags:             nil,
-				BaseURL:          tt.baseURL,
-				APIKeys:          tt.apiKeys,
-				SupportedModels:  tt.supportedModels,
-				DefaultTestModel: tt.defaultTestModel,
-				Settings:         nil,
+				Type:                    tt.channelType,
+				Name:                    tt.baseName,
+				Tags:                    nil,
+				BaseURL:                 tt.baseURL,
+				APIKeys:                 tt.apiKeys,
+				SupportedModels:         tt.supportedModels,
+				AutoSyncSupportedModels: &explicitAutoSyncFalse,
+				DefaultTestModel:        tt.defaultTestModel,
+				Settings:                nil,
 			})
 
 			if tt.wantErr {
@@ -1011,6 +1059,7 @@ func TestChannelService_BulkCreateChannels(t *testing.T) {
 					require.Equal(t, tt.channelType, ch.Type)
 					require.Equal(t, tt.supportedModels, ch.SupportedModels)
 					require.Equal(t, tt.defaultTestModel, ch.DefaultTestModel)
+					require.False(t, ch.AutoSyncSupportedModels, "bulk create must preserve explicit false")
 					require.NotNil(t, ch.Credentials)
 				}
 			}
@@ -1019,6 +1068,31 @@ func TestChannelService_BulkCreateChannels(t *testing.T) {
 			_, err = client.Channel.Delete().Exec(ctx)
 			require.NoError(t, err)
 		})
+	}
+}
+
+func TestChannelService_BulkCreateChannels_DefaultAutoSyncFailureDoesNotBlockCreation(t *testing.T) {
+	svc, client := setupTestChannelService(t)
+	defer svc.Stop()
+	defer client.Close()
+
+	ctx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+	unreachableBaseURL := "http://127.0.0.1:1/v1"
+	channels, err := svc.BulkCreateChannels(ctx, BulkCreateChannelsInput{
+		Type:             channel.TypeOpenai,
+		Name:             "Best Effort Bulk",
+		BaseURL:          &unreachableBaseURL,
+		APIKeys:          []string{"key1", "key2"},
+		SupportedModels:  []string{"submitted-model"},
+		DefaultTestModel: "submitted-model",
+	})
+
+	require.NoError(t, err)
+	require.Len(t, channels, 2)
+	for _, ch := range channels {
+		require.True(t, ch.AutoSyncSupportedModels)
+		require.Equal(t, []string{"submitted-model"}, ch.SupportedModels, "failed discovery must preserve submitted models")
+		require.Equal(t, "submitted-model", ch.DefaultTestModel)
 	}
 }
 

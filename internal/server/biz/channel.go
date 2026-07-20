@@ -2,6 +2,7 @@ package biz
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -40,6 +41,8 @@ type ChannelModelEntry struct {
 	// Source indicates how this model is supported
 	Source string // "direct", "prefix", "auto_trim", "mapping"
 }
+
+var ErrChannelModelMetadataTargetUnavailable = errors.New("channel model metadata target is unavailable")
 
 type Channel struct {
 	*ent.Channel
@@ -288,6 +291,11 @@ type ChannelService struct {
 	// channelID -> apiKey -> statusCode -> count
 	apiKeyErrorCounts     map[int]map[string]map[int]int
 	apiKeyErrorCountsLock sync.Mutex
+
+	// settingsMutationMu serializes read-modify-write updates to ChannelSettings.
+	// In particular, generic channel edits must not overwrite contributor-owned
+	// model metadata overrides written through the narrow mutation below.
+	settingsMutationMu sync.Mutex
 
 	modelSyncMu sync.Mutex
 
@@ -646,9 +654,9 @@ func (svc *ChannelService) ListModels(ctx context.Context, input ListModelsInput
 func (svc *ChannelService) createChannel(ctx context.Context, input ent.CreateChannelInput) (*ent.Channel, error) {
 	currentUser, hasCurrentUser := contexts.GetUser(ctx)
 	isDonatedChannel := hasCurrentUser && currentUser != nil && !currentUser.IsOwner
-	if isDonatedChannel && input.AutoSyncSupportedModels == nil {
-		// Campus donations opt into model discovery by default. Donors may still
-		// turn it off for providers without a catalog endpoint.
+	if input.AutoSyncSupportedModels == nil {
+		// Every new channel opts into zero-maintenance model discovery. Callers
+		// may still explicitly turn it off for providers without a catalog.
 		input.AutoSyncSupportedModels = new(true)
 	}
 	if err := validateFutureChannelExpiry(input.ExpiresAt, isDonatedChannel, time.Now()); err != nil {
@@ -748,7 +756,7 @@ func (svc *ChannelService) CreateChannel(ctx context.Context, input ent.CreateCh
 	if err != nil {
 		return nil, err
 	}
-	channel = svc.syncDonatedChannelModelsBestEffort(ctx, channel)
+	channel = svc.syncChannelModelsBestEffort(ctx, channel)
 
 	svc.asyncReloadChannels()
 
@@ -813,6 +821,11 @@ func NormalizeRetryableErrorPatterns(settings *objects.ChannelSettings) error {
 
 // UpdateChannel updates an existing channel with the provided input.
 func (svc *ChannelService) UpdateChannel(ctx context.Context, id int, input *ent.UpdateChannelInput) (*ent.Channel, error) {
+	if input.Settings != nil {
+		svc.settingsMutationMu.Lock()
+		defer svc.settingsMutationMu.Unlock()
+	}
+
 	existingChannel, err := svc.entFromContext(ctx).Channel.Get(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get channel: %w", err)
@@ -820,6 +833,16 @@ func (svc *ChannelService) UpdateChannel(ctx context.Context, id int, input *ent
 
 	if err := rejectExpiredChannel(existingChannel, time.Now()); err != nil {
 		return nil, err
+	}
+
+	// Model metadata overrides are intentionally absent from generic settings
+	// inputs. Preserve the latest stored value while holding settingsMutationMu;
+	// only UpdateChannelModelMetadataOverride may change this hidden field.
+	if input.Settings != nil {
+		input.Settings.ModelMetadataOverrides = nil
+		if existingChannel.Settings != nil {
+			input.Settings.ModelMetadataOverrides = cloneModelMetadataOverrides(existingChannel.Settings.ModelMetadataOverrides)
+		}
 	}
 
 	currentUser, hasCurrentUser := contexts.GetUser(ctx)
@@ -974,7 +997,9 @@ func (svc *ChannelService) UpdateChannel(ctx context.Context, id int, input *ent
 	if err != nil {
 		return nil, fmt.Errorf("failed to update channel: %w", err)
 	}
-	channel = svc.syncDonatedChannelModelsBestEffort(ctx, channel)
+	if channelModelDiscoveryConfigChanged(existingChannel, channel) {
+		channel = svc.syncChannelModelsBestEffort(ctx, channel)
+	}
 
 	// Intentionally NO forgetLimiter call: ChannelLimiterManager.GetOrCreate
 	// already detects rate-limit changes via cfg equality and rebuilds on the
@@ -984,6 +1009,78 @@ func (svc *ChannelService) UpdateChannel(ctx context.Context, id int, input *ent
 	svc.asyncReloadChannels()
 
 	return channel, nil
+}
+
+func cloneModelMetadataOverrides(source map[string]*objects.ModelMetadataPatch) map[string]*objects.ModelMetadataPatch {
+	if source == nil {
+		return nil
+	}
+	result := make(map[string]*objects.ModelMetadataPatch, len(source))
+	for modelID, metadata := range source {
+		result[modelID] = cloneModelMetadataPatch(metadata)
+	}
+	return result
+}
+
+// UpdateChannelModelMetadataOverride atomically changes one contributor-owned,
+// active channel model card override without touching routing, credentials, or
+// other settings. The ownership/liveness/model checks happen under the same
+// lock as the settings mutation so a validated campus update cannot race a
+// concurrent channel edit. A nil patch restores automatic resolution.
+func (svc *ChannelService) UpdateChannelModelMetadataOverride(
+	ctx context.Context,
+	id int,
+	expectedUserID int,
+	modelID string,
+	metadata *objects.ModelMetadataPatch,
+) (*ent.Channel, error) {
+	svc.settingsMutationMu.Lock()
+	defer svc.settingsMutationMu.Unlock()
+
+	existingChannel, err := svc.entFromContext(ctx).Channel.Get(ctx, id)
+	if err != nil {
+		if ent.IsNotFound(err) {
+			return nil, ErrChannelModelMetadataTargetUnavailable
+		}
+		return nil, fmt.Errorf("failed to get channel: %w", err)
+	}
+	if existingChannel.UserID == nil ||
+		*existingChannel.UserID != expectedUserID ||
+		(existingChannel.Status != channel.StatusEnabled && existingChannel.Status != channel.StatusDisabled) ||
+		channelExpiredAt(existingChannel, time.Now()) {
+		return nil, ErrChannelModelMetadataTargetUnavailable
+	}
+	if _, ok := (&Channel{Channel: existingChannel}).GetModelEntries()[modelID]; !ok {
+		return nil, ErrChannelModelMetadataTargetUnavailable
+	}
+
+	settings := &objects.ChannelSettings{}
+	if existingChannel.Settings != nil {
+		copied := *existingChannel.Settings
+		settings = &copied
+	}
+	settings.ModelMetadataOverrides = cloneModelMetadataOverrides(settings.ModelMetadataOverrides)
+	if metadata == nil {
+		delete(settings.ModelMetadataOverrides, modelID)
+		if len(settings.ModelMetadataOverrides) == 0 {
+			settings.ModelMetadataOverrides = nil
+		}
+	} else {
+		if settings.ModelMetadataOverrides == nil {
+			settings.ModelMetadataOverrides = make(map[string]*objects.ModelMetadataPatch)
+		}
+		settings.ModelMetadataOverrides[modelID] = cloneModelMetadataPatch(metadata)
+	}
+
+	updatedChannel, err := svc.entFromContext(ctx).Channel.UpdateOneID(id).
+		SetSettings(settings).
+		Save(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update channel model metadata override: %w", err)
+	}
+
+	svc.asyncReloadChannels()
+	return updatedChannel, nil
 }
 
 // UpdateChannelStatus updates the status of a channel.
@@ -1009,7 +1106,7 @@ func (svc *ChannelService) UpdateChannelStatus(ctx context.Context, id int, stat
 				return nil, fmt.Errorf("invalid donated channel network configuration: %w", err)
 			}
 		}
-		existingChannel = svc.syncDonatedChannelModelsBestEffort(ctx, existingChannel)
+		existingChannel = svc.syncChannelModelsBestEffort(ctx, existingChannel)
 	}
 
 	updatedChannel, err := svc.entFromContext(ctx).Channel.UpdateOne(existingChannel).

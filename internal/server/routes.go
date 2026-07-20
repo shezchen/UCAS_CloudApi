@@ -119,6 +119,16 @@ func SetupRoutes(server *Server, handlers Handlers, client *ent.Client, services
 			middleware.WithTimeout(server.Config.RequestTimeout),
 			handlers.CampusCatalog.GetResources,
 		)
+		adminGroup.GET(
+			"/campus/channel-model-capabilities",
+			middleware.WithTimeout(server.Config.RequestTimeout),
+			handlers.CampusCatalog.GetChannelModelCapabilities,
+		)
+		adminGroup.PATCH(
+			"/campus/channel-model-capabilities",
+			middleware.WithTimeout(server.Config.RequestTimeout),
+			handlers.CampusCatalog.PatchChannelModelCapabilities,
+		)
 
 		adminGroup.POST("/codex/oauth/start", handlers.Codex.StartOAuth)
 		adminGroup.POST("/codex/oauth/exchange", handlers.Codex.Exchange)

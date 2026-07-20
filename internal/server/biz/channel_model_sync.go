@@ -3,6 +3,9 @@ package biz
 import (
 	"context"
 	"fmt"
+	"reflect"
+	"slices"
+	"sync"
 	"time"
 
 	"github.com/samber/lo"
@@ -11,6 +14,11 @@ import (
 	"github.com/looplj/axonhub/internal/ent/channel"
 	"github.com/looplj/axonhub/internal/log"
 	"github.com/looplj/axonhub/internal/pkg/xregexp"
+)
+
+const (
+	immediateChannelModelSyncTimeout     = 5 * time.Second
+	immediateChannelModelSyncConcurrency = 8
 )
 
 // syncChannelModels syncs supported models for all channels with auto_sync_supported_models enabled.
@@ -158,19 +166,21 @@ func (svc *ChannelService) syncChannelModelsForChannel(ctx context.Context, ch *
 	return updatedCh, nil
 }
 
-// syncDonatedChannelModelsBestEffort performs an immediate catalog refresh for
-// a donation. Providers that do not expose a model-list endpoint must not make
-// an otherwise valid custom/Coding Plan donation impossible, so failures leave
-// the donor's submitted model list intact and are retried by an explicit or
-// scheduled sync.
-func (svc *ChannelService) syncDonatedChannelModelsBestEffort(ctx context.Context, ch *ent.Channel) *ent.Channel {
-	if ch == nil || ch.UserID == nil || !ch.AutoSyncSupportedModels || channelExpiredAt(ch, time.Now()) {
+// syncChannelModelsBestEffort performs an immediate catalog refresh after a
+// channel is created, updated, duplicated, or enabled. Providers that do not
+// expose a model-list endpoint must not make an otherwise valid custom/Coding
+// Plan channel impossible, so failures leave the submitted model list intact
+// and are retried by an explicit or scheduled sync.
+func (svc *ChannelService) syncChannelModelsBestEffort(ctx context.Context, ch *ent.Channel) *ent.Channel {
+	if ch == nil || !ch.AutoSyncSupportedModels || channelExpiredAt(ch, time.Now()) {
 		return ch
 	}
 
-	updated, err := svc.syncChannelModelsForChannel(ctx, ch, nil)
+	syncCtx, cancel := context.WithTimeout(ctx, immediateChannelModelSyncTimeout)
+	defer cancel()
+	updated, err := svc.syncChannelModelsForChannel(syncCtx, ch, nil)
 	if err != nil {
-		log.Warn(ctx, "immediate donated channel model sync failed; preserving submitted models",
+		log.Warn(ctx, "immediate channel model sync failed; preserving submitted models",
 			log.Int("channel_id", ch.ID),
 			log.String("channel_name", ch.Name),
 			log.Cause(err))
@@ -179,6 +189,62 @@ func (svc *ChannelService) syncDonatedChannelModelsBestEffort(ctx context.Contex
 	}
 
 	return updated
+}
+
+// channelModelDiscoveryConfigChanged reports whether an update changed data
+// used by model discovery. Comparing the saved entities avoids turning a
+// no-op form submission into a provider request.
+func channelModelDiscoveryConfigChanged(before, after *ent.Channel) bool {
+	if before == nil || after == nil || !after.AutoSyncSupportedModels {
+		return false
+	}
+	if !before.AutoSyncSupportedModels {
+		return true
+	}
+
+	return before.Type != after.Type ||
+		before.BaseURL != after.BaseURL ||
+		!reflect.DeepEqual(before.Credentials, after.Credentials) ||
+		!slices.Equal(before.SupportedModels, after.SupportedModels) ||
+		!slices.Equal(before.ManualModels, after.ManualModels) ||
+		before.AutoSyncModelPattern != after.AutoSyncModelPattern ||
+		!reflect.DeepEqual(before.Endpoints, after.Endpoints) ||
+		!reflect.DeepEqual(before.Settings, after.Settings)
+}
+
+// syncChannelsBestEffort bounds both total latency and outbound concurrency for
+// bulk mutations. Each channel retains the same best-effort failure semantics
+// as the single-channel helper, while independent catalog endpoints are fetched
+// in parallel instead of accumulating timeout delays row by row.
+func (svc *ChannelService) syncChannelsBestEffort(ctx context.Context, channels []*ent.Channel) []*ent.Channel {
+	result := make([]*ent.Channel, len(channels))
+	copy(result, channels)
+	if len(result) == 0 {
+		return result
+	}
+
+	batchCtx, cancel := context.WithTimeout(ctx, immediateChannelModelSyncTimeout)
+	defer cancel()
+
+	workerCount := min(len(result), immediateChannelModelSyncConcurrency)
+	jobs := make(chan int)
+	var workers sync.WaitGroup
+	workers.Add(workerCount)
+	for range workerCount {
+		go func() {
+			defer workers.Done()
+			for index := range jobs {
+				result[index] = svc.syncChannelModelsBestEffort(batchCtx, result[index])
+			}
+		}()
+	}
+	for index := range result {
+		jobs <- index
+	}
+	close(jobs)
+	workers.Wait()
+
+	return result
 }
 
 func (svc *ChannelService) SyncChannelModels(ctx context.Context, channelID int, patternOverride *string) (*ent.Channel, error) {

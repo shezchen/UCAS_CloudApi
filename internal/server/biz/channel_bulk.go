@@ -115,6 +115,7 @@ func (svc *ChannelService) BulkCreateChannels(ctx context.Context, input BulkCre
 			Name:                    channelName,
 			Credentials:             objects.ChannelCredentials{APIKeys: []string{apiKey}},
 			SupportedModels:         input.SupportedModels,
+			ManualModels:            input.SupportedModels,
 			AutoSyncSupportedModels: input.AutoSyncSupportedModels,
 			Tags:                    tagsToUse,
 			DefaultTestModel:        input.DefaultTestModel,
@@ -133,9 +134,7 @@ func (svc *ChannelService) BulkCreateChannels(ctx context.Context, input BulkCre
 		createdChannels = append(createdChannels, ch)
 	}
 
-	for i, ch := range createdChannels {
-		createdChannels[i] = svc.syncDonatedChannelModelsBestEffort(ctx, ch)
-	}
+	createdChannels = svc.syncChannelsBestEffort(ctx, createdChannels)
 
 	// Reload channels once after all successful creations
 	svc.asyncReloadChannels()
@@ -179,9 +178,9 @@ func (svc *ChannelService) bulkUpdateChannelStatus(ctx context.Context, ids []in
 				); err != nil {
 					return fmt.Errorf("invalid donated channel network configuration: %w", err)
 				}
-				_ = svc.syncDonatedChannelModelsBestEffort(ctx, ch)
 			}
 		}
+		_ = svc.syncChannelsBestEffort(ctx, channels)
 	}
 
 	updater := client.Channel.Update().
@@ -325,6 +324,8 @@ func (svc *ChannelService) BulkImportChannels(ctx context.Context, items []*Bulk
 			SetBaseURL(*item.BaseURL).
 			SetCredentials(credentials).
 			SetSupportedModels(item.SupportedModels).
+			SetManualModels(item.SupportedModels).
+			SetAutoSyncSupportedModels(true).
 			SetDefaultTestModel(item.DefaultTestModel)
 
 		ch, err := channelBuilder.Save(ctx)
@@ -338,6 +339,7 @@ func (svc *ChannelService) BulkImportChannels(ctx context.Context, items []*Bulk
 		createdChannels = append(createdChannels, ch)
 		created++
 	}
+	createdChannels = svc.syncChannelsBestEffort(ctx, createdChannels)
 
 	success := failed == 0
 	result := &BulkImportChannelsResult{

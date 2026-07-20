@@ -248,15 +248,18 @@ func TestChannelService_DuplicateChannelCopiesModelPrices(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, sourcePrices, 1)
 
+	explicitAutoSyncFalse := false
 	duplicated, err := svc.DuplicateChannel(ctx, source.ID, ent.CreateChannelInput{
-		Type:             channel.TypeOpenai,
-		BaseURL:          lo.ToPtr("https://api.openai.com/v1"),
-		Name:             "Source Channel (1)",
-		Credentials:      objects.ChannelCredentials{APIKey: "key2"},
-		SupportedModels:  []string{"gpt-4", "gpt-4o"},
-		DefaultTestModel: "gpt-4",
+		Type:                    channel.TypeOpenai,
+		BaseURL:                 lo.ToPtr("https://api.openai.com/v1"),
+		Name:                    "Source Channel (1)",
+		Credentials:             objects.ChannelCredentials{APIKey: "key2"},
+		SupportedModels:         []string{"gpt-4", "gpt-4o"},
+		AutoSyncSupportedModels: &explicitAutoSyncFalse,
+		DefaultTestModel:        "gpt-4",
 	})
 	require.NoError(t, err)
+	require.False(t, duplicated.AutoSyncSupportedModels, "duplicate must preserve explicit false")
 
 	copiedPrices, err := client.ChannelModelPrice.Query().
 		Where(channelmodelprice.ChannelID(duplicated.ID)).
@@ -280,6 +283,31 @@ func TestChannelService_DuplicateChannelCopiesModelPrices(t *testing.T) {
 	require.Equal(t, channelmodelpriceversion.StatusActive, copiedVersion.Status)
 	require.Nil(t, copiedVersion.EffectiveEndAt)
 	require.Equal(t, copiedPrice.ReferenceID, copiedVersion.ReferenceID)
+
+	inheritedDuplicate, err := svc.DuplicateChannel(ctx, source.ID, ent.CreateChannelInput{
+		Type:             channel.TypeOpenai,
+		BaseURL:          lo.ToPtr("https://api.openai.com/v1"),
+		Name:             "Source Channel (2)",
+		Credentials:      objects.ChannelCredentials{APIKey: "key3"},
+		SupportedModels:  []string{"submitted-model"},
+		DefaultTestModel: "submitted-model",
+	})
+	require.NoError(t, err)
+	require.False(t, inheritedDuplicate.AutoSyncSupportedModels, "an omitted duplicate setting must inherit the source's explicit false")
+
+	explicitAutoSyncTrue := true
+	bestEffortDuplicate, err := svc.DuplicateChannel(ctx, source.ID, ent.CreateChannelInput{
+		Type:                    channel.TypeOpenai,
+		BaseURL:                 lo.ToPtr("http://127.0.0.1:1/v1"),
+		Name:                    "Source Channel (3)",
+		Credentials:             objects.ChannelCredentials{APIKey: "key4"},
+		SupportedModels:         []string{"submitted-model"},
+		AutoSyncSupportedModels: &explicitAutoSyncTrue,
+		DefaultTestModel:        "submitted-model",
+	})
+	require.NoError(t, err, "best-effort discovery failures must not block duplication")
+	require.True(t, bestEffortDuplicate.AutoSyncSupportedModels)
+	require.Equal(t, []string{"submitted-model"}, bestEffortDuplicate.SupportedModels)
 }
 
 func TestCalculatePriceChanges(t *testing.T) {

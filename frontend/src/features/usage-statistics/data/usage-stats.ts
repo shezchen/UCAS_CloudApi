@@ -20,6 +20,7 @@ const CAMPUS_USAGE_LEADERBOARD_QUERY = `
   query GetCampusUsageLeaderboard {
     campusUsageLeaderboard {
       rank
+      displayName
       publicAlias
       isMe
       recordedTokens
@@ -31,6 +32,7 @@ const CAMPUS_USAGE_LEADERBOARD_QUERY = `
 
 export const campusUsageLeaderboardEntrySchema = z.object({
   rank: z.number().int().positive(),
+  displayName: z.string(),
   publicAlias: z.string(),
   isMe: z.boolean(),
   recordedTokens: z.number().nonnegative(),

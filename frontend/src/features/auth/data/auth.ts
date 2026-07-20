@@ -13,7 +13,10 @@ export interface SignInInput {
   password: string;
 }
 
-export type SignUpInput = SignInInput;
+export interface SignUpInput extends SignInInput {
+  nickname?: string;
+  verificationCode: string;
+}
 
 interface MeResponse {
   me: AuthUser;

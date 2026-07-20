@@ -17,6 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useMe } from '@/features/auth/data/auth';
 
 type ProfileFormValues = {
+  nickname: string;
   firstName: string;
   lastName: string;
   email: string;
@@ -31,22 +32,24 @@ export default function ProfileForm() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const profileFormSchema = z.object({
-    firstName: z
+    nickname: z
       .string()
-      .min(1, {
-        message: t('profile.form.validation.firstNameRequired'),
-      })
-      .max(50, {
-        message: t('profile.form.validation.firstNameTooLong'),
-      }),
-    lastName: z
-      .string()
-      .min(1, {
-        message: t('profile.form.validation.lastNameRequired'),
-      })
-      .max(50, {
-        message: t('profile.form.validation.lastNameTooLong'),
-      }),
+      .trim()
+      .refine(
+        (nickname) => {
+          const length = Array.from(nickname).length;
+          return length === 0 || (length >= 2 && length <= 24);
+        },
+        {
+          message: t('profile.form.validation.nicknameLength'),
+        }
+      ),
+    firstName: z.string().max(50, {
+      message: t('profile.form.validation.firstNameTooLong'),
+    }),
+    lastName: z.string().max(50, {
+      message: t('profile.form.validation.lastNameTooLong'),
+    }),
     email: z.email(t('profile.form.validation.emailInvalid')),
     preferLanguage: z.string().min(1, {
       message: t('profile.form.validation.languageRequired'),
@@ -60,6 +63,7 @@ export default function ProfileForm() {
   const form = useForm<ProfileFormValues>({
     resolver: zodResolver(profileFormSchema),
     values: {
+      nickname: currentUser?.nickname || '',
       firstName: currentUser?.firstName || '',
       lastName: currentUser?.lastName || '',
       email: currentUser?.email || '',
@@ -74,6 +78,7 @@ export default function ProfileForm() {
     mutationFn: async (data: ProfileFormValues) => {
       const response = (await graphqlRequest(UPDATE_ME_MUTATION, {
         input: {
+          nickname: data.nickname,
           firstName: data.firstName,
           lastName: data.lastName,
           preferLanguage: data.preferLanguage,
@@ -86,6 +91,7 @@ export default function ProfileForm() {
       // Update the auth store with new user data
       auth.setUser({
         ...auth.user!,
+        nickname: updatedUser.nickname,
         firstName: updatedUser.firstName,
         lastName: updatedUser.lastName,
         preferLanguage: updatedUser.preferLanguage,
@@ -97,8 +103,8 @@ export default function ProfileForm() {
 
       toast.success(t('profile.form.messages.updateSuccess'));
     },
-    onError: () => {
-      toast.error(t('common.errors.internalServerError'));
+    onError: (error: unknown) => {
+      toast.error(error instanceof Error ? error.message : t('common.errors.internalServerError'));
     },
   });
 
@@ -152,6 +158,25 @@ export default function ProfileForm() {
                 </div>
               </FormControl>
               <FormDescription>{t('profile.form.fields.avatar.description')}</FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={form.control}
+          name='nickname'
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>{t('profile.form.fields.nickname.label')}</FormLabel>
+              <FormControl>
+                <Input
+                  autoComplete='nickname'
+                  placeholder={t('profile.form.fields.nickname.placeholder')}
+                  {...field}
+                />
+              </FormControl>
+              <FormDescription>{t('profile.form.fields.nickname.description')}</FormDescription>
               <FormMessage />
             </FormItem>
           )}

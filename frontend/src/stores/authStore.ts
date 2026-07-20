@@ -20,6 +20,7 @@ export interface AuthUser {
   email: string;
   firstName: string;
   lastName: string;
+  nickname?: string;
   isOwner: boolean;
   preferLanguage: string;
   avatar?: string;

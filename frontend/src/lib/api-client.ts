@@ -136,11 +136,19 @@ export const authApi = {
   signUp: (data: {
     email: string;
     password: string;
+    nickname?: string;
+    verificationCode: string;
   }): Promise<{
     user: AuthUser;
     token: string;
   }> =>
     apiRequest('/admin/auth/signup', {
+      method: 'POST',
+      body: data,
+    }),
+
+  sendSignUpVerification: (data: { email: string }): Promise<{ message?: string }> =>
+    apiRequest('/admin/auth/signup/verification', {
       method: 'POST',
       body: data,
     }),

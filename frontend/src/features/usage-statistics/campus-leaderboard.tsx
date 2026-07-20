@@ -88,7 +88,14 @@ export function CampusUsageLeaderboardPage() {
                     </TableCell>
                     <TableCell className='border-0 bg-inherit px-4 py-3 font-medium'>
                       <div className='flex items-center gap-2'>
-                        <span>{entry.publicAlias}</span>
+                        <div className='min-w-0'>
+                          <span className='block truncate'>{entry.displayName}</span>
+                          {entry.displayName !== entry.publicAlias && (
+                            <span className='block truncate text-xs font-normal text-muted-foreground'>
+                              {entry.publicAlias}
+                            </span>
+                          )}
+                        </div>
                         {entry.isMe && (
                           <span className='rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary'>
                             {t('usageStats.leaderboard.me')}

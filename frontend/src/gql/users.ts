@@ -5,6 +5,7 @@ export const ME_QUERY = `
       email
       firstName
       lastName
+      nickname
       isOwner
       scopes
       preferLanguage
@@ -188,6 +189,7 @@ export const SIGN_IN_MUTATION = `
         email
         firstName
         lastName
+        nickname
         isOwner
         preferLanguage
         scopes
@@ -219,6 +221,7 @@ export const UPDATE_ME_MUTATION = `
       email
       firstName
       lastName
+      nickname
       isOwner
       preferLanguage
       avatar

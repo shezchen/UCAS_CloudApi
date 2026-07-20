@@ -100,6 +100,8 @@ var schemaGraph = func() *sqlgraph.Schema {
 			channel.FieldBaseURL:                 {Type: field.TypeString, Column: channel.FieldBaseURL},
 			channel.FieldName:                    {Type: field.TypeString, Column: channel.FieldName},
 			channel.FieldStatus:                  {Type: field.TypeEnum, Column: channel.FieldStatus},
+			channel.FieldUserID:                  {Type: field.TypeInt, Column: channel.FieldUserID},
+			channel.FieldExpiresAt:               {Type: field.TypeTime, Column: channel.FieldExpiresAt},
 			channel.FieldCredentials:             {Type: field.TypeJSON, Column: channel.FieldCredentials},
 			channel.FieldDisabledAPIKeys:         {Type: field.TypeJSON, Column: channel.FieldDisabledAPIKeys},
 			channel.FieldSupportedModels:         {Type: field.TypeJSON, Column: channel.FieldSupportedModels},
@@ -554,18 +556,19 @@ var schemaGraph = func() *sqlgraph.Schema {
 		},
 		Type: "User",
 		Fields: map[string]*sqlgraph.FieldSpec{
-			user.FieldCreatedAt:      {Type: field.TypeTime, Column: user.FieldCreatedAt},
-			user.FieldUpdatedAt:      {Type: field.TypeTime, Column: user.FieldUpdatedAt},
-			user.FieldDeletedAt:      {Type: field.TypeInt, Column: user.FieldDeletedAt},
-			user.FieldEmail:          {Type: field.TypeString, Column: user.FieldEmail},
-			user.FieldStatus:         {Type: field.TypeEnum, Column: user.FieldStatus},
-			user.FieldPreferLanguage: {Type: field.TypeString, Column: user.FieldPreferLanguage},
-			user.FieldPassword:       {Type: field.TypeString, Column: user.FieldPassword},
-			user.FieldFirstName:      {Type: field.TypeString, Column: user.FieldFirstName},
-			user.FieldLastName:       {Type: field.TypeString, Column: user.FieldLastName},
-			user.FieldAvatar:         {Type: field.TypeString, Column: user.FieldAvatar},
-			user.FieldIsOwner:        {Type: field.TypeBool, Column: user.FieldIsOwner},
-			user.FieldScopes:         {Type: field.TypeJSON, Column: user.FieldScopes},
+			user.FieldCreatedAt:       {Type: field.TypeTime, Column: user.FieldCreatedAt},
+			user.FieldUpdatedAt:       {Type: field.TypeTime, Column: user.FieldUpdatedAt},
+			user.FieldDeletedAt:       {Type: field.TypeInt, Column: user.FieldDeletedAt},
+			user.FieldEmail:           {Type: field.TypeString, Column: user.FieldEmail},
+			user.FieldStatus:          {Type: field.TypeEnum, Column: user.FieldStatus},
+			user.FieldPreferLanguage:  {Type: field.TypeString, Column: user.FieldPreferLanguage},
+			user.FieldPassword:        {Type: field.TypeString, Column: user.FieldPassword},
+			user.FieldFirstName:       {Type: field.TypeString, Column: user.FieldFirstName},
+			user.FieldLastName:        {Type: field.TypeString, Column: user.FieldLastName},
+			user.FieldAvatar:          {Type: field.TypeString, Column: user.FieldAvatar},
+			user.FieldIsOwner:         {Type: field.TypeBool, Column: user.FieldIsOwner},
+			user.FieldDailyTokenLimit: {Type: field.TypeInt64, Column: user.FieldDailyTokenLimit},
+			user.FieldScopes:          {Type: field.TypeJSON, Column: user.FieldScopes},
 		},
 	}
 	graph.Nodes[22] = &sqlgraph.Node{
@@ -651,6 +654,18 @@ var schemaGraph = func() *sqlgraph.Schema {
 		},
 		"APIKeyProfileTemplate",
 		"Project",
+	)
+	graph.MustAddE(
+		"user",
+		&sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   channel.UserTable,
+			Columns: []string{channel.UserColumn},
+			Bidi:    false,
+		},
+		"Channel",
+		"User",
 	)
 	graph.MustAddE(
 		"requests",
@@ -1241,6 +1256,18 @@ var schemaGraph = func() *sqlgraph.Schema {
 		"APIKey",
 	)
 	graph.MustAddE(
+		"donated_channels",
+		&sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.DonatedChannelsTable,
+			Columns: []string{user.DonatedChannelsColumn},
+			Bidi:    false,
+		},
+		"User",
+		"Channel",
+	)
+	graph.MustAddE(
 		"roles",
 		&sqlgraph.EdgeSpec{
 			Rel:     sqlgraph.M2M,
@@ -1658,6 +1685,16 @@ func (f *ChannelFilter) WhereStatus(p entql.StringP) {
 	f.Where(p.Field(channel.FieldStatus))
 }
 
+// WhereUserID applies the entql int predicate on the user_id field.
+func (f *ChannelFilter) WhereUserID(p entql.IntP) {
+	f.Where(p.Field(channel.FieldUserID))
+}
+
+// WhereExpiresAt applies the entql time.Time predicate on the expires_at field.
+func (f *ChannelFilter) WhereExpiresAt(p entql.TimeP) {
+	f.Where(p.Field(channel.FieldExpiresAt))
+}
+
 // WhereCredentials applies the entql json.RawMessage predicate on the credentials field.
 func (f *ChannelFilter) WhereCredentials(p entql.BytesP) {
 	f.Where(p.Field(channel.FieldCredentials))
@@ -1726,6 +1763,20 @@ func (f *ChannelFilter) WhereRemark(p entql.StringP) {
 // WhereEndpoints applies the entql json.RawMessage predicate on the endpoints field.
 func (f *ChannelFilter) WhereEndpoints(p entql.BytesP) {
 	f.Where(p.Field(channel.FieldEndpoints))
+}
+
+// WhereHasUser applies a predicate to check if query has an edge user.
+func (f *ChannelFilter) WhereHasUser() {
+	f.Where(entql.HasEdge("user"))
+}
+
+// WhereHasUserWith applies a predicate to check if query has an edge user with a given conditions (other predicates).
+func (f *ChannelFilter) WhereHasUserWith(preds ...predicate.User) {
+	f.Where(entql.HasEdgeWith("user", sqlgraph.WrapFunc(func(s *sql.Selector) {
+		for _, p := range preds {
+			p(s)
+		}
+	})))
 }
 
 // WhereHasRequests applies a predicate to check if query has an edge requests.
@@ -4166,6 +4217,11 @@ func (f *UserFilter) WhereIsOwner(p entql.BoolP) {
 	f.Where(p.Field(user.FieldIsOwner))
 }
 
+// WhereDailyTokenLimit applies the entql int64 predicate on the daily_token_limit field.
+func (f *UserFilter) WhereDailyTokenLimit(p entql.Int64P) {
+	f.Where(p.Field(user.FieldDailyTokenLimit))
+}
+
 // WhereScopes applies the entql json.RawMessage predicate on the scopes field.
 func (f *UserFilter) WhereScopes(p entql.BytesP) {
 	f.Where(p.Field(user.FieldScopes))
@@ -4193,6 +4249,20 @@ func (f *UserFilter) WhereHasAPIKeys() {
 // WhereHasAPIKeysWith applies a predicate to check if query has an edge api_keys with a given conditions (other predicates).
 func (f *UserFilter) WhereHasAPIKeysWith(preds ...predicate.APIKey) {
 	f.Where(entql.HasEdgeWith("api_keys", sqlgraph.WrapFunc(func(s *sql.Selector) {
+		for _, p := range preds {
+			p(s)
+		}
+	})))
+}
+
+// WhereHasDonatedChannels applies a predicate to check if query has an edge donated_channels.
+func (f *UserFilter) WhereHasDonatedChannels() {
+	f.Where(entql.HasEdge("donated_channels"))
+}
+
+// WhereHasDonatedChannelsWith applies a predicate to check if query has an edge donated_channels with a given conditions (other predicates).
+func (f *UserFilter) WhereHasDonatedChannelsWith(preds ...predicate.Channel) {
+	f.Where(entql.HasEdgeWith("donated_channels", sqlgraph.WrapFunc(func(s *sql.Selector) {
 		for _, p := range preds {
 			p(s)
 		}

@@ -105,6 +105,11 @@ func IsOwner(v bool) predicate.User {
 	return predicate.User(sql.FieldEQ(FieldIsOwner, v))
 }
 
+// DailyTokenLimit applies equality check predicate on the "daily_token_limit" field. It's identical to DailyTokenLimitEQ.
+func DailyTokenLimit(v int64) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldDailyTokenLimit, v))
+}
+
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.
 func CreatedAtEQ(v time.Time) predicate.User {
 	return predicate.User(sql.FieldEQ(FieldCreatedAt, v))
@@ -655,6 +660,46 @@ func IsOwnerNEQ(v bool) predicate.User {
 	return predicate.User(sql.FieldNEQ(FieldIsOwner, v))
 }
 
+// DailyTokenLimitEQ applies the EQ predicate on the "daily_token_limit" field.
+func DailyTokenLimitEQ(v int64) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldDailyTokenLimit, v))
+}
+
+// DailyTokenLimitNEQ applies the NEQ predicate on the "daily_token_limit" field.
+func DailyTokenLimitNEQ(v int64) predicate.User {
+	return predicate.User(sql.FieldNEQ(FieldDailyTokenLimit, v))
+}
+
+// DailyTokenLimitIn applies the In predicate on the "daily_token_limit" field.
+func DailyTokenLimitIn(vs ...int64) predicate.User {
+	return predicate.User(sql.FieldIn(FieldDailyTokenLimit, vs...))
+}
+
+// DailyTokenLimitNotIn applies the NotIn predicate on the "daily_token_limit" field.
+func DailyTokenLimitNotIn(vs ...int64) predicate.User {
+	return predicate.User(sql.FieldNotIn(FieldDailyTokenLimit, vs...))
+}
+
+// DailyTokenLimitGT applies the GT predicate on the "daily_token_limit" field.
+func DailyTokenLimitGT(v int64) predicate.User {
+	return predicate.User(sql.FieldGT(FieldDailyTokenLimit, v))
+}
+
+// DailyTokenLimitGTE applies the GTE predicate on the "daily_token_limit" field.
+func DailyTokenLimitGTE(v int64) predicate.User {
+	return predicate.User(sql.FieldGTE(FieldDailyTokenLimit, v))
+}
+
+// DailyTokenLimitLT applies the LT predicate on the "daily_token_limit" field.
+func DailyTokenLimitLT(v int64) predicate.User {
+	return predicate.User(sql.FieldLT(FieldDailyTokenLimit, v))
+}
+
+// DailyTokenLimitLTE applies the LTE predicate on the "daily_token_limit" field.
+func DailyTokenLimitLTE(v int64) predicate.User {
+	return predicate.User(sql.FieldLTE(FieldDailyTokenLimit, v))
+}
+
 // ScopesIsNil applies the IsNil predicate on the "scopes" field.
 func ScopesIsNil() predicate.User {
 	return predicate.User(sql.FieldIsNull(FieldScopes))
@@ -703,6 +748,29 @@ func HasAPIKeys() predicate.User {
 func HasAPIKeysWith(preds ...predicate.APIKey) predicate.User {
 	return predicate.User(func(s *sql.Selector) {
 		step := newAPIKeysStep()
+		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
+			for _, p := range preds {
+				p(s)
+			}
+		})
+	})
+}
+
+// HasDonatedChannels applies the HasEdge predicate on the "donated_channels" edge.
+func HasDonatedChannels() predicate.User {
+	return predicate.User(func(s *sql.Selector) {
+		step := sqlgraph.NewStep(
+			sqlgraph.From(Table, FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, false, DonatedChannelsTable, DonatedChannelsColumn),
+		)
+		sqlgraph.HasNeighbors(s, step)
+	})
+}
+
+// HasDonatedChannelsWith applies the HasEdge predicate on the "donated_channels" edge with a given conditions (other predicates).
+func HasDonatedChannelsWith(preds ...predicate.Channel) predicate.User {
+	return predicate.User(func(s *sql.Selector) {
+		step := newDonatedChannelsStep()
 		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
 			for _, p := range preds {
 				p(s)

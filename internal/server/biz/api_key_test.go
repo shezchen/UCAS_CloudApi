@@ -267,6 +267,7 @@ func TestAPIKeyService_UpdateAPIKeyProfiles(t *testing.T) {
 		SetPassword(hashedPassword).
 		SetFirstName("Test").
 		SetLastName("User").
+		SetIsOwner(true).
 		SetStatus(user.StatusActivated).
 		Save(ctx)
 	require.NoError(t, err)
@@ -525,6 +526,7 @@ func TestAPIKeyService_BulkEnableAPIKeys(t *testing.T) {
 		SetPassword(hashedPassword).
 		SetFirstName("Test").
 		SetLastName("User").
+		SetIsOwner(true).
 		SetStatus(user.StatusActivated).
 		Save(ctx)
 	require.NoError(t, err)
@@ -644,6 +646,7 @@ func TestAPIKeyService_BulkDisableAPIKeys(t *testing.T) {
 		SetPassword(hashedPassword).
 		SetFirstName("Test").
 		SetLastName("User").
+		SetIsOwner(true).
 		SetStatus(user.StatusActivated).
 		Save(ctx)
 	require.NoError(t, err)
@@ -754,6 +757,7 @@ func TestAPIKeyService_BulkArchiveAPIKeys(t *testing.T) {
 		SetPassword(hashedPassword).
 		SetFirstName("Test").
 		SetLastName("User").
+		SetIsOwner(true).
 		SetStatus(user.StatusActivated).
 		Save(ctx)
 	require.NoError(t, err)
@@ -867,6 +871,7 @@ func TestAPIKeyService_CreateAPIKey_Type(t *testing.T) {
 		SetPassword(hashedPassword).
 		SetFirstName("Test").
 		SetLastName("User").
+		SetIsOwner(true).
 		SetStatus(user.StatusActivated).
 		Save(ctx)
 	require.NoError(t, err)
@@ -951,6 +956,19 @@ func TestAPIKeyService_CreateAPIKey_Type(t *testing.T) {
 		require.Contains(t, apiKey.Scopes, "read_channels")
 	})
 
+	t.Run("Owner creates personal API key with fixed scopes", func(t *testing.T) {
+		personalType := apikey.TypePersonal
+		apiKey, err := apiKeyService.CreateAPIKey(ctxWithUser, ent.CreateAPIKeyInput{
+			Name:      "Owner-created Personal Key",
+			ProjectID: testProject.ID,
+			Type:      &personalType,
+		})
+		require.NoError(t, err)
+		require.Equal(t, apikey.TypePersonal, apiKey.Type)
+		require.Equal(t, testUser.ID, apiKey.UserID)
+		require.ElementsMatch(t, personalAPIKeyScopes(), apiKey.Scopes)
+	})
+
 	t.Run("Create user type API key ignores provided scopes", func(t *testing.T) {
 		userType := apikey.TypeUser
 		ignoredScopes := []string{"read_users", "write_channels"}
@@ -1017,6 +1035,317 @@ func TestAPIKeyService_CreateAPIKey_Type(t *testing.T) {
 		require.True(t, len(serviceAPIKey.Key) > 3)
 		require.Equal(t, "ah-", serviceAPIKey.Key[:3])
 		require.NotEqual(t, userAPIKey.Key, serviceAPIKey.Key)
+	})
+}
+
+func TestAPIKeyService_PersonalAPIKeyIsolation(t *testing.T) {
+	apiKeyService, client := setupTestAPIKeyService(t, xcache.Config{Mode: xcache.ModeMemory})
+	defer apiKeyService.Stop()
+	defer client.Close()
+
+	setupCtx := ent.NewContext(context.Background(), client)
+	setupCtx = authz.WithTestBypass(setupCtx)
+
+	hashedPassword, err := HashPassword("test-password")
+	require.NoError(t, err)
+
+	testProject, err := client.Project.Create().
+		SetName(uuid.NewString()).
+		SetDescription("personal API key isolation").
+		SetStatus(project.StatusActive).
+		Save(setupCtx)
+	require.NoError(t, err)
+
+	createMember := func(label string) *ent.User {
+		t.Helper()
+
+		member, err := client.User.Create().
+			SetEmail(fmt.Sprintf("%s-%s@example.com", label, uuid.NewString())).
+			SetPassword(hashedPassword).
+			SetFirstName(label).
+			SetLastName("Student").
+			SetStatus(user.StatusActivated).
+			Save(setupCtx)
+		require.NoError(t, err)
+
+		_, err = client.UserProject.Create().
+			SetUserID(member.ID).
+			SetProjectID(testProject.ID).
+			SetScopes([]string{
+				string(scopes.ScopeReadAPIKeys),
+				string(scopes.ScopeWriteAPIKeys),
+			}).
+			Save(setupCtx)
+		require.NoError(t, err)
+
+		member, err = client.User.Query().
+			Where(user.IDEQ(member.ID)).
+			WithProjectUsers().
+			Only(setupCtx)
+		require.NoError(t, err)
+
+		return member
+	}
+
+	creator := createMember("creator")
+	other := createMember("other")
+	owner, err := client.User.Create().
+		SetEmail(fmt.Sprintf("owner-%s@example.com", uuid.NewString())).
+		SetPassword(hashedPassword).
+		SetFirstName("Owner").
+		SetLastName("Admin").
+		SetIsOwner(true).
+		SetStatus(user.StatusActivated).
+		Save(setupCtx)
+	require.NoError(t, err)
+
+	createLegacyKey := func(name string, keyType apikey.Type, userID int, keyScopes []string) *ent.APIKey {
+		t.Helper()
+
+		apiKey, err := client.APIKey.Create().
+			SetName(name).
+			SetKey("ah-legacy-" + uuid.NewString()).
+			SetUserID(userID).
+			SetProjectID(testProject.ID).
+			SetType(keyType).
+			SetScopes(keyScopes).
+			Save(setupCtx)
+		require.NoError(t, err)
+
+		return apiKey
+	}
+
+	legacyUserKey := createLegacyKey("legacy-user", apikey.TypeUser, other.ID, personalAPIKeyScopes())
+	legacyServiceKey := createLegacyKey("legacy-service", apikey.TypeServiceAccount, owner.ID, []string{
+		string(scopes.ScopeReadAPIKeys),
+		string(scopes.ScopeWriteAPIKeys),
+	})
+	legacyNoauthKey := createLegacyKey("legacy-noauth", apikey.TypeNoauth, owner.ID, personalAPIKeyScopes())
+
+	userCtx := func(currentUser *ent.User) context.Context {
+		ctx := ent.NewContext(context.Background(), client)
+		ctx = contexts.WithUser(ctx, currentUser)
+
+		return contexts.WithProjectID(ctx, testProject.ID)
+	}
+
+	creatorCtx := userCtx(creator)
+	otherCtx := userCtx(other)
+	ownerCtx := userCtx(owner)
+
+	creatorKey, err := apiKeyService.CreateAPIKey(creatorCtx, ent.CreateAPIKeyInput{
+		Name:      "creator-personal",
+		ProjectID: testProject.ID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, apikey.TypePersonal, creatorKey.Type)
+	require.Equal(t, creator.ID, creatorKey.UserID)
+	require.ElementsMatch(t, personalAPIKeyScopes(), creatorKey.Scopes)
+
+	personalType := apikey.TypePersonal
+	otherKey, err := apiKeyService.CreateAPIKey(otherCtx, ent.CreateAPIKeyInput{
+		Name:      "other-personal",
+		ProjectID: testProject.ID,
+		Type:      &personalType,
+	})
+	require.NoError(t, err)
+	require.Equal(t, apikey.TypePersonal, otherKey.Type)
+	require.Equal(t, other.ID, otherKey.UserID)
+	require.ElementsMatch(t, personalAPIKeyScopes(), otherKey.Scopes)
+
+	t.Run("personal key names remain unique across users in one project", func(t *testing.T) {
+		_, err := apiKeyService.CreateAPIKey(otherCtx, ent.CreateAPIKeyInput{
+			Name:      creatorKey.Name,
+			ProjectID: testProject.ID,
+		})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "already exists")
+
+		duplicateName := creatorKey.Name
+		_, err = apiKeyService.UpdateAPIKey(otherCtx, otherKey.ID, ent.UpdateAPIKeyInput{
+			Name: &duplicateName,
+		})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "already exists")
+
+		persisted, err := client.APIKey.Get(setupCtx, otherKey.ID)
+		require.NoError(t, err)
+		require.Equal(t, "other-personal", persisted.Name)
+	})
+
+	t.Run("non-owner cannot choose privileged key types", func(t *testing.T) {
+		for _, keyType := range []apikey.Type{
+			apikey.TypeUser,
+			apikey.TypeServiceAccount,
+		} {
+			keyType := keyType
+			t.Run(string(keyType), func(t *testing.T) {
+				_, err := apiKeyService.CreateAPIKey(creatorCtx, ent.CreateAPIKeyInput{
+					Name:      "forbidden-" + string(keyType),
+					ProjectID: testProject.ID,
+					Type:      &keyType,
+				})
+				require.Error(t, err)
+				require.Contains(t, err.Error(), "only create personal API keys")
+			})
+		}
+	})
+
+	t.Run("non-owner cannot inject personal scopes", func(t *testing.T) {
+		_, err := apiKeyService.CreateAPIKey(creatorCtx, ent.CreateAPIKeyInput{
+			Name:      "forbidden-scopes",
+			ProjectID: testProject.ID,
+			Type:      &personalType,
+			Scopes:    []string{string(scopes.ScopeWriteChannels)},
+		})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "scopes are managed by the system")
+	})
+
+	profiles := func(name string) objects.APIKeyProfiles {
+		return objects.APIKeyProfiles{
+			ActiveProfile: name,
+			Profiles: []objects.APIKeyProfile{
+				{Name: name},
+			},
+		}
+	}
+
+	t.Run("another member cannot manage a personal key", func(t *testing.T) {
+		// Bypass Ent privacy here so every assertion reaches the service-level
+		// creator check instead of merely failing at the query filter.
+		otherBypassCtx := authz.WithTestBypass(otherCtx)
+		newName := "stolen-name"
+
+		_, err := apiKeyService.UpdateAPIKey(otherBypassCtx, creatorKey.ID, ent.UpdateAPIKeyInput{Name: &newName})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "own personal API keys")
+
+		_, err = apiKeyService.UpdateAPIKeyStatus(otherBypassCtx, creatorKey.ID, apikey.StatusDisabled)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "own personal API keys")
+
+		_, err = apiKeyService.UpdateAPIKeyProfiles(otherBypassCtx, creatorKey.ID, profiles("other"))
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "own personal API keys")
+
+		_, err = apiKeyService.RotateAPIKey(otherBypassCtx, creatorKey.ID)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "own personal API keys")
+
+		err = apiKeyService.BulkDisableAPIKeys(otherBypassCtx, []int{creatorKey.ID})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "own personal API keys")
+	})
+
+	t.Run("non-owner cannot manage their own legacy non-personal key", func(t *testing.T) {
+		// The bypass isolates the service-layer defense from the query policy.
+		otherBypassCtx := authz.WithTestBypass(otherCtx)
+		newName := "legacy-stolen-name"
+
+		_, err := apiKeyService.UpdateAPIKey(otherBypassCtx, legacyUserKey.ID, ent.UpdateAPIKeyInput{Name: &newName})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "own personal API keys")
+
+		_, err = apiKeyService.UpdateAPIKeyStatus(otherBypassCtx, legacyUserKey.ID, apikey.StatusDisabled)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "own personal API keys")
+
+		_, err = apiKeyService.UpdateAPIKeyProfiles(otherBypassCtx, legacyUserKey.ID, profiles("legacy"))
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "own personal API keys")
+
+		_, err = apiKeyService.RotateAPIKey(otherBypassCtx, legacyUserKey.ID)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "own personal API keys")
+
+		err = apiKeyService.BulkDisableAPIKeys(otherBypassCtx, []int{legacyUserKey.ID})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "own personal API keys")
+
+		_, err = apiKeyService.UpdateAPIKey(otherBypassCtx, legacyServiceKey.ID, ent.UpdateAPIKeyInput{
+			Scopes: []string{string(scopes.ScopeWriteChannels)},
+		})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "own personal API keys")
+
+		_, err = apiKeyService.UpdateAPIKeyStatus(otherBypassCtx, legacyNoauthKey.ID, apikey.StatusDisabled)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "noauth type API key status cannot be updated")
+	})
+
+	t.Run("creator manages their personal key", func(t *testing.T) {
+		newName := "creator-renamed"
+		updated, err := apiKeyService.UpdateAPIKey(creatorCtx, creatorKey.ID, ent.UpdateAPIKeyInput{Name: &newName})
+		require.NoError(t, err)
+		require.Equal(t, newName, updated.Name)
+
+		updated, err = apiKeyService.UpdateAPIKeyProfiles(creatorCtx, creatorKey.ID, profiles("creator"))
+		require.NoError(t, err)
+		require.Equal(t, "creator", updated.Profiles.ActiveProfile)
+
+		updated, err = apiKeyService.UpdateAPIKeyStatus(creatorCtx, creatorKey.ID, apikey.StatusDisabled)
+		require.NoError(t, err)
+		require.Equal(t, apikey.StatusDisabled, updated.Status)
+
+		oldKey := updated.Key
+		updated, err = apiKeyService.RotateAPIKey(creatorCtx, creatorKey.ID)
+		require.NoError(t, err)
+		require.NotEqual(t, oldKey, updated.Key)
+
+		err = apiKeyService.BulkEnableAPIKeys(creatorCtx, []int{creatorKey.ID})
+		require.NoError(t, err)
+	})
+
+	t.Run("API-key principal remains governed by Ent scopes", func(t *testing.T) {
+		openAPICtx := ent.NewContext(context.Background(), client)
+		openAPICtx = contexts.WithAPIKey(openAPICtx, legacyServiceKey)
+
+		updated, err := apiKeyService.UpdateAPIKeyStatus(openAPICtx, legacyUserKey.ID, apikey.StatusDisabled)
+		require.NoError(t, err)
+		require.Equal(t, apikey.StatusDisabled, updated.Status)
+	})
+
+	t.Run("owner sees and manages every API key", func(t *testing.T) {
+		allKeys, err := client.APIKey.Query().All(ownerCtx)
+		require.NoError(t, err)
+		require.Len(t, allKeys, 5)
+
+		newName := "owner-renamed"
+		updated, err := apiKeyService.UpdateAPIKey(ownerCtx, creatorKey.ID, ent.UpdateAPIKeyInput{Name: &newName})
+		require.NoError(t, err)
+		require.Equal(t, newName, updated.Name)
+
+		updated, err = apiKeyService.UpdateAPIKeyProfiles(ownerCtx, creatorKey.ID, profiles("owner"))
+		require.NoError(t, err)
+		require.Equal(t, "owner", updated.Profiles.ActiveProfile)
+
+		updated, err = apiKeyService.UpdateAPIKeyStatus(ownerCtx, creatorKey.ID, apikey.StatusDisabled)
+		require.NoError(t, err)
+		require.Equal(t, apikey.StatusDisabled, updated.Status)
+
+		oldKey := updated.Key
+		updated, err = apiKeyService.RotateAPIKey(ownerCtx, creatorKey.ID)
+		require.NoError(t, err)
+		require.NotEqual(t, oldKey, updated.Key)
+
+		err = apiKeyService.BulkEnableAPIKeys(ownerCtx, []int{creatorKey.ID, otherKey.ID})
+		require.NoError(t, err)
+
+		legacyName := "owner-renamed-legacy"
+		updated, err = apiKeyService.UpdateAPIKey(ownerCtx, legacyUserKey.ID, ent.UpdateAPIKeyInput{Name: &legacyName})
+		require.NoError(t, err)
+		require.Equal(t, legacyName, updated.Name)
+
+		err = apiKeyService.BulkEnableAPIKeys(ownerCtx, []int{legacyUserKey.ID, legacyServiceKey.ID})
+		require.NoError(t, err)
+	})
+
+	t.Run("regular member query only returns their own personal keys", func(t *testing.T) {
+		personalKeys, err := client.APIKey.Query().All(otherCtx)
+		require.NoError(t, err)
+		require.Len(t, personalKeys, 1)
+		require.Equal(t, otherKey.ID, personalKeys[0].ID)
 	})
 }
 
@@ -1220,6 +1549,7 @@ func TestAPIKeyService_RotateAPIKey(t *testing.T) {
 		SetPassword(hashedPassword).
 		SetFirstName("Test").
 		SetLastName("User").
+		SetIsOwner(true).
 		SetStatus(user.StatusActivated).
 		Save(setupCtx)
 	require.NoError(t, err)

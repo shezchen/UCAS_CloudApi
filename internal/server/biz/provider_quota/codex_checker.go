@@ -116,12 +116,7 @@ func (c *CodexQuotaChecker) listResetCredits(ctx context.Context, ch *ent.Channe
 		WithHeader("Content-Type", "application/json").
 		Build()
 
-	hc := c.httpClient
-	if ch.Settings != nil && ch.Settings.Proxy != nil {
-		hc = c.httpClient.WithProxy(ch.Settings.Proxy)
-	}
-
-	resp, err := hc.Do(ctx, httpRequest)
+	resp, err := httpClientForChannel(c.httpClient, ch).Do(ctx, httpRequest)
 	if err != nil {
 		return nil, fmt.Errorf("list codex reset credits failed: %w", err)
 	}
@@ -152,12 +147,7 @@ func (c *CodexQuotaChecker) consumeResetCredit(ctx context.Context, ch *ent.Chan
 		}).
 		Build()
 
-	hc := c.httpClient
-	if ch.Settings != nil && ch.Settings.Proxy != nil {
-		hc = c.httpClient.WithProxy(ch.Settings.Proxy)
-	}
-
-	resp, err := hc.Do(ctx, httpRequest)
+	resp, err := httpClientForChannel(c.httpClient, ch).Do(ctx, httpRequest)
 	if err != nil {
 		return nil, fmt.Errorf("consume codex reset credit failed: %w", err)
 	}
@@ -211,13 +201,7 @@ func (c *CodexQuotaChecker) CheckQuota(ctx context.Context, ch *ent.Channel) (Qu
 		WithHeader("Content-Type", "application/json").
 		Build()
 
-	// Use proxy-configured HTTP client if available
-	hc := c.httpClient
-	if ch.Settings != nil && ch.Settings.Proxy != nil {
-		hc = c.httpClient.WithProxy(ch.Settings.Proxy)
-	}
-
-	resp, err := hc.Do(ctx, httpRequest)
+	resp, err := httpClientForChannel(c.httpClient, ch).Do(ctx, httpRequest)
 	if err != nil {
 		return QuotaData{}, fmt.Errorf("quota request failed: %w", err)
 	}

@@ -39,6 +39,28 @@ const (
 	NoAuthAPIKeyName = "No Auth System Key"
 )
 
+func personalAPIKeyScopes() []string {
+	return []string{
+		string(scopes.ScopeReadChannels),
+		string(scopes.ScopeWriteRequests),
+	}
+}
+
+func authorizeUserAPIKeyManagement(ctx context.Context, apiKey *ent.APIKey) error {
+	currentUser, hasUser := contexts.GetUser(ctx)
+	if !hasUser || currentUser == nil {
+		// API-key principals (including the OpenAPI service-account path) have no
+		// user in context. Leave those callers to the APIKey Ent scope policy.
+		return nil
+	}
+
+	if currentUser.IsOwner || (apiKey.Type == apikey.TypePersonal && apiKey.UserID == currentUser.ID) {
+		return nil
+	}
+
+	return fmt.Errorf("non-owner users can only manage their own personal API keys")
+}
+
 type APIKeyServiceParams struct {
 	fx.In
 
@@ -307,18 +329,30 @@ func (s *APIKeyService) CreateLLMAPIKey(ctx context.Context, owner *ent.APIKey, 
 
 // CreateAPIKey creates a new API key for a user.
 func (s *APIKeyService) CreateAPIKey(ctx context.Context, input ent.CreateAPIKeyInput) (*ent.APIKey, error) {
-	user, ok := contexts.GetUser(ctx)
-	if !ok {
+	currentUser, ok := contexts.GetUser(ctx)
+	if !ok || currentUser == nil {
 		return nil, fmt.Errorf("user not found in context")
 	}
 
-	apiKeyType := apikey.TypeUser // default (schema applies it when unset)
-	if input.Type != nil {
-		if *input.Type == apikey.TypeNoauth {
-			return nil, fmt.Errorf("noauth type API key is reserved")
+	if input.Type != nil && *input.Type == apikey.TypeNoauth {
+		return nil, fmt.Errorf("noauth type API key is reserved")
+	}
+
+	apiKeyType := apikey.TypeUser
+	if currentUser.IsOwner {
+		if input.Type != nil {
+			apiKeyType = *input.Type
+		}
+	} else {
+		if input.Type != nil && *input.Type != apikey.TypePersonal {
+			return nil, fmt.Errorf("non-owner users can only create personal API keys")
 		}
 
-		apiKeyType = *input.Type
+		apiKeyType = apikey.TypePersonal
+	}
+
+	if apiKeyType == apikey.TypePersonal && input.Scopes != nil {
+		return nil, fmt.Errorf("personal API key scopes are managed by the system")
 	}
 
 	// Generate API key with configured prefix
@@ -334,41 +368,24 @@ func (s *APIKeyService) CreateAPIKey(ctx context.Context, input ent.CreateAPIKey
 
 		// API key names are unique per project at the application level (there is no
 		// DB unique constraint). The project row lock serializes same-project name
-		// operations so the live-only check (the soft-delete interceptor filters
-		// deleted_at, so a name is reusable after a soft delete) and the insert are
-		// atomic across concurrent writers (PostgreSQL, MySQL, TiDB); no-op on the
-		// single-writer SQLite default.
+		// operations so the insert and the live-only duplicate check are atomic across
+		// concurrent writers (PostgreSQL, MySQL, TiDB); no-op on the single-writer
+		// SQLite default.
 		if err := s.lockProjectForAPIKeyName(ctx, input.ProjectID); err != nil {
 			return err
-		}
-
-		exists, err := client.APIKey.Query().
-			Where(
-				apikey.NameEQ(input.Name),
-				apikey.ProjectIDEQ(input.ProjectID),
-			).
-			Exist(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to check API key name uniqueness: %w", err)
-		}
-
-		if exists {
-			return xerrors.DuplicateNameError("API Key", input.Name)
 		}
 
 		create := client.APIKey.Create().
 			SetName(input.Name).
 			SetKey(generatedKey).
-			SetUserID(user.ID).
-			SetProjectID(input.ProjectID)
+			SetUserID(currentUser.ID).
+			SetProjectID(input.ProjectID).
+			SetType(apiKeyType)
 
-		if input.Type != nil {
-			create.SetType(*input.Type)
-		}
-
-		// User type uses the schema default scopes; service account uses provided
-		// scopes (or empty array).
-		if apiKeyType == apikey.TypeServiceAccount {
+		switch apiKeyType {
+		case apikey.TypePersonal:
+			create.SetScopes(personalAPIKeyScopes())
+		case apikey.TypeServiceAccount:
 			if input.Scopes != nil {
 				create.SetScopes(input.Scopes)
 			} else {
@@ -379,6 +396,25 @@ func (s *APIKeyService) CreateAPIKey(ctx context.Context, input ent.CreateAPIKey
 		created, err := create.Save(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to create API key: %w", err)
+		}
+
+		// The create above first proves that the caller is authorized. Count with a
+		// system bypass afterwards so the personal-key read filter cannot hide another
+		// user's same-name key. Returning an error rolls this transaction back, and
+		// therefore does not leave the just-created duplicate behind.
+		dupCount, err := authz.RunWithSystemBypass(ctx, "api key name uniqueness", func(bypassCtx context.Context) (int, error) {
+			return client.APIKey.Query().
+				Where(
+					apikey.NameEQ(input.Name),
+					apikey.ProjectIDEQ(input.ProjectID),
+				).
+				Count(bypassCtx)
+		})
+		if err != nil {
+			return fmt.Errorf("failed to check API key name uniqueness: %w", err)
+		}
+		if dupCount > 1 {
+			return xerrors.DuplicateNameError("API Key", input.Name)
 		}
 
 		apiKey = created
@@ -414,14 +450,8 @@ func (s *APIKeyService) UpdateAPIKey(ctx context.Context, id int, input ent.Upda
 			return fmt.Errorf("noauth type API key cannot be updated")
 		}
 
-		if apiKey.Type == apikey.TypePersonal {
-			user, ok := contexts.GetUser(ctx)
-			if !ok {
-				return fmt.Errorf("user not found in context")
-			}
-			if apiKey.UserID != user.ID {
-				return fmt.Errorf("personal API key can only be modified by its creator")
-			}
+		if err := authorizeUserAPIKeyManagement(ctx, apiKey); err != nil {
+			return err
 		}
 
 		// Renaming: serialize same-project name operations and reject a duplicate
@@ -433,13 +463,18 @@ func (s *APIKeyService) UpdateAPIKey(ctx context.Context, id int, input ent.Upda
 				return err
 			}
 
-			exists, err := client.APIKey.Query().
-				Where(
-					apikey.NameEQ(*input.Name),
-					apikey.ProjectIDEQ(apiKey.ProjectID),
-					apikey.IDNEQ(id),
-				).
-				Exist(ctx)
+			// Ownership was established by Get and the service-level guard above. Use a
+			// system bypass for the duplicate lookup so another user's personal key is
+			// not hidden by the query privacy filter.
+			exists, err := authz.RunWithSystemBypass(ctx, "api key name uniqueness", func(bypassCtx context.Context) (bool, error) {
+				return client.APIKey.Query().
+					Where(
+						apikey.NameEQ(*input.Name),
+						apikey.ProjectIDEQ(apiKey.ProjectID),
+						apikey.IDNEQ(id),
+					).
+					Exist(bypassCtx)
+			})
 			if err != nil {
 				return fmt.Errorf("failed to check API key name uniqueness: %w", err)
 			}
@@ -496,14 +531,8 @@ func (s *APIKeyService) UpdateAPIKeyStatus(ctx context.Context, id int, status a
 		return nil, fmt.Errorf("noauth type API key status cannot be updated")
 	}
 
-	if existing.Type == apikey.TypePersonal {
-		user, ok := contexts.GetUser(ctx)
-		if !ok {
-			return nil, fmt.Errorf("user not found in context")
-		}
-		if existing.UserID != user.ID {
-			return nil, fmt.Errorf("personal API key can only be modified by its creator")
-		}
+	if err := authorizeUserAPIKeyManagement(ctx, existing); err != nil {
+		return nil, err
 	}
 
 	apiKey, err := client.APIKey.UpdateOneID(id).
@@ -532,14 +561,8 @@ func (s *APIKeyService) UpdateAPIKeyProfiles(ctx context.Context, id int, profil
 		return nil, fmt.Errorf("noauth type API key profiles cannot be updated")
 	}
 
-	if existing.Type == apikey.TypePersonal {
-		user, ok := contexts.GetUser(ctx)
-		if !ok {
-			return nil, fmt.Errorf("user not found in context")
-		}
-		if existing.UserID != user.ID {
-			return nil, fmt.Errorf("personal API key can only be modified by its creator")
-		}
+	if err := authorizeUserAPIKeyManagement(ctx, existing); err != nil {
+		return nil, err
 	}
 
 	// Validate that profile names are unique (case-insensitive)
@@ -785,54 +808,25 @@ func (s *APIKeyService) bulkUpdateAPIKeyStatus(ctx context.Context, ids []int, s
 
 	client := s.entFromContext(ctx)
 
-	// Verify all API keys exist
-	count, err := client.APIKey.Query().
-		Where(apikey.IDIn(ids...)).
-		Count(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to query API keys: %w", err)
-	}
-
-	if count != len(ids) {
-		return fmt.Errorf("expected to find %d API keys, but found %d", len(ids), count)
-	}
-
-	noAuthExists, err := client.APIKey.Query().
-		Where(apikey.IDIn(ids...), apikey.TypeEQ(apikey.TypeNoauth)).
-		Exist(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to validate API keys for bulk %s: %w", action, err)
-	}
-
-	if noAuthExists {
-		return fmt.Errorf("noauth type API key cannot be bulk %sd", action)
-	}
-
-	// Personal API keys can only be managed by their creator
-	personalKeys, err := client.APIKey.Query().
-		Where(apikey.IDIn(ids...), apikey.TypeEQ(apikey.TypePersonal)).
-		All(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to query personal API keys: %w", err)
-	}
-
-	if len(personalKeys) > 0 {
-		user, ok := contexts.GetUser(ctx)
-		if !ok {
-			return fmt.Errorf("user not found in context")
-		}
-		for _, k := range personalKeys {
-			if k.UserID != user.ID {
-				return fmt.Errorf("personal API key %q can only be %sd by its creator", k.Name, action)
-			}
-		}
-	}
-
 	apiKeys, err := client.APIKey.Query().
 		Where(apikey.IDIn(ids...)).
 		All(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to query API keys for cache invalidation: %w", err)
+		return fmt.Errorf("failed to query API keys: %w", err)
+	}
+
+	if len(apiKeys) != len(ids) {
+		return fmt.Errorf("expected to find %d API keys, but found %d", len(ids), len(apiKeys))
+	}
+
+	for _, apiKey := range apiKeys {
+		if apiKey.Type == apikey.TypeNoauth {
+			return fmt.Errorf("noauth type API key cannot be bulk %sd", action)
+		}
+
+		if err := authorizeUserAPIKeyManagement(ctx, apiKey); err != nil {
+			return fmt.Errorf("cannot %s API key %q: %w", action, apiKey.Name, err)
+		}
 	}
 
 	// Update all API keys status
@@ -876,14 +870,8 @@ func (s *APIKeyService) RotateAPIKey(ctx context.Context, id int) (*ent.APIKey, 
 		return nil, fmt.Errorf("noauth type API key cannot be rotated")
 	}
 
-	if existing.Type == apikey.TypePersonal {
-		user, ok := contexts.GetUser(ctx)
-		if !ok {
-			return nil, fmt.Errorf("user not found in context")
-		}
-		if existing.UserID != user.ID {
-			return nil, fmt.Errorf("personal API key can only be rotated by its creator")
-		}
+	if err := authorizeUserAPIKeyManagement(ctx, existing); err != nil {
+		return nil, err
 	}
 
 	// Generate a new API key

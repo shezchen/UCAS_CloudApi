@@ -39,6 +39,8 @@ func TestResolveUser_AccountFirstAndMultipleOIDC(t *testing.T) {
 	ctx := context.Background()
 	ctx = ent.NewContext(ctx, client)
 	ctx = authz.WithTestBypass(ctx)
+	_, err := client.Project.Create().SetName("Default").Save(ctx)
+	require.NoError(t, err)
 
 	p := &oidcProvider{
 		config: OIDCProvider{
@@ -50,7 +52,7 @@ func TestResolveUser_AccountFirstAndMultipleOIDC(t *testing.T) {
 	}
 
 	// 1. Test JIT Creation: Create user then link
-	email := "new-user@example.com"
+	email := "new-user@mails.ucas.ac.cn"
 	subject := "sub-1"
 	u1, err := svc.resolveUser(ctx, p, subject, email, true, "New User", "", "", "", nil)
 	require.NoError(t, err)
@@ -94,6 +96,10 @@ func TestResolveUser_AccountFirstAndMultipleOIDC(t *testing.T) {
 	_, err = svc.resolveUser(ctx, p3, "sub-3", "unknown@example.com", true, "", "", "", "", nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "account not found")
+
+	p4 := &oidcProvider{config: OIDCProvider{ID: "external", Name: "external", JITEnabled: true}}
+	_, err = svc.resolveUser(ctx, p4, "sub-4", "outsider@example.com", true, "", "", "", "", nil)
+	require.ErrorIs(t, err, ErrCampusEmailRequired)
 }
 
 func TestResolveUser_CascadeDelete(t *testing.T) {

@@ -3,6 +3,7 @@ package biz
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/samber/lo"
 
@@ -21,6 +22,7 @@ func (svc *ChannelService) syncChannelModels(ctx context.Context) {
 		Where(
 			channel.StatusEQ(channel.StatusEnabled),
 			channel.AutoSyncSupportedModelsEQ(true),
+			channelAvailableAtPredicate(time.Now()),
 		).
 		All(ctx)
 	if err != nil {
@@ -51,6 +53,13 @@ func (svc *ChannelService) syncChannelModels(ctx context.Context) {
 		}
 	}
 
+	if successCount > 0 {
+		// Model changes affect both the public model catalog and routing
+		// candidates. Notify the enabled-channel cache immediately instead of
+		// waiting for its periodic refresh.
+		svc.asyncReloadChannels()
+	}
+
 	log.Info(ctx, "completed model sync for channels",
 		log.Int("success", successCount),
 		log.Int("failure", failureCount))
@@ -58,6 +67,10 @@ func (svc *ChannelService) syncChannelModels(ctx context.Context) {
 
 // syncChannelModelsForChannel syncs supported models for a single channel.
 func (svc *ChannelService) syncChannelModelsForChannel(ctx context.Context, ch *ent.Channel, patternOverride *string) (*ent.Channel, error) {
+	if err := rejectExpiredChannel(ch, time.Now()); err != nil {
+		return nil, err
+	}
+
 	modelFetcher := NewModelFetcher(svc.httpClient, svc)
 
 	result, err := modelFetcher.FetchModels(ctx, FetchModelsInput{
@@ -107,24 +120,30 @@ func (svc *ChannelService) syncChannelModelsForChannel(ctx context.Context, ch *
 	if manualModels == nil {
 		manualModels = []string{}
 	}
+	// Volcengine does not expose a usable catalog through this integration.
+	// Its empty result means "discovery unsupported", not "all models were
+	// removed", so keep an explicitly submitted list intact.
+	if ch.Type == channel.TypeVolcengine && len(fetchedModelIDs) == 0 && len(manualModels) == 0 {
+		return ch, nil
+	}
 
 	// Merge fetched models with manual models, removing duplicates
 	mergedModels := lo.Uniq(append(manualModels, fetchedModelIDs...))
 
-	if len(mergedModels) == 0 {
-		log.Warn(ctx, "no models to sync for channel (both fetched and manual are empty)",
-			log.Int("channel_id", ch.ID),
-			log.String("channel_name", ch.Name))
-
-		return ch, nil
-	}
-
 	// Update channel's supported models with merged list
 	// Keep manual_models unchanged (preserve user's manually added models)
-	updatedCh, err := svc.entFromContext(ctx).Channel.
+	update := svc.entFromContext(ctx).Channel.
 		UpdateOneID(ch.ID).
-		SetSupportedModels(mergedModels).
-		Save(ctx)
+		SetSupportedModels(mergedModels)
+	if !lo.Contains(mergedModels, ch.DefaultTestModel) {
+		defaultTestModel := ""
+		if len(mergedModels) > 0 {
+			defaultTestModel = mergedModels[0]
+		}
+		update.SetDefaultTestModel(defaultTestModel)
+	}
+
+	updatedCh, err := update.Save(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update channel supported models: %w", err)
 	}
@@ -139,11 +158,41 @@ func (svc *ChannelService) syncChannelModelsForChannel(ctx context.Context, ch *
 	return updatedCh, nil
 }
 
+// syncDonatedChannelModelsBestEffort performs an immediate catalog refresh for
+// a donation. Providers that do not expose a model-list endpoint must not make
+// an otherwise valid custom/Coding Plan donation impossible, so failures leave
+// the donor's submitted model list intact and are retried by an explicit or
+// scheduled sync.
+func (svc *ChannelService) syncDonatedChannelModelsBestEffort(ctx context.Context, ch *ent.Channel) *ent.Channel {
+	if ch == nil || ch.UserID == nil || !ch.AutoSyncSupportedModels || channelExpiredAt(ch, time.Now()) {
+		return ch
+	}
+
+	updated, err := svc.syncChannelModelsForChannel(ctx, ch, nil)
+	if err != nil {
+		log.Warn(ctx, "immediate donated channel model sync failed; preserving submitted models",
+			log.Int("channel_id", ch.ID),
+			log.String("channel_name", ch.Name),
+			log.Cause(err))
+
+		return ch
+	}
+
+	return updated
+}
+
 func (svc *ChannelService) SyncChannelModels(ctx context.Context, channelID int, patternOverride *string) (*ent.Channel, error) {
 	ch, err := svc.entFromContext(ctx).Channel.Get(ctx, channelID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get channel: %w", err)
 	}
 
-	return svc.syncChannelModelsForChannel(ctx, ch, patternOverride)
+	updated, err := svc.syncChannelModelsForChannel(ctx, ch, patternOverride)
+	if err != nil {
+		return nil, err
+	}
+
+	svc.asyncReloadChannels()
+
+	return updated, nil
 }

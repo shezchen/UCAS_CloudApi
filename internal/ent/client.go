@@ -843,6 +843,22 @@ func (c *ChannelClient) GetX(ctx context.Context, id int) *Channel {
 	return obj
 }
 
+// QueryUser queries the user edge of a Channel.
+func (c *ChannelClient) QueryUser(_m *Channel) *UserQuery {
+	query := (&UserClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(channel.Table, channel.FieldID, id),
+			sqlgraph.To(user.Table, user.FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, true, channel.UserTable, channel.UserColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
 // QueryRequests queries the requests edge of a Channel.
 func (c *ChannelClient) QueryRequests(_m *Channel) *RequestQuery {
 	query := (&RequestClient{config: c.config}).Query()
@@ -4176,6 +4192,22 @@ func (c *UserClient) QueryAPIKeys(_m *User) *APIKeyQuery {
 			sqlgraph.From(user.Table, user.FieldID, id),
 			sqlgraph.To(apikey.Table, apikey.FieldID),
 			sqlgraph.Edge(sqlgraph.O2M, false, user.APIKeysTable, user.APIKeysColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
+// QueryDonatedChannels queries the donated_channels edge of a User.
+func (c *UserClient) QueryDonatedChannels(_m *User) *ChannelQuery {
+	query := (&ChannelClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(user.Table, user.FieldID, id),
+			sqlgraph.To(channel.Table, channel.FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, false, user.DonatedChannelsTable, user.DonatedChannelsColumn),
 		)
 		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
 		return fromV, nil

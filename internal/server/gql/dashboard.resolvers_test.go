@@ -1,10 +1,22 @@
 package gql
 
 import (
+	"context"
+	"reflect"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/looplj/axonhub/internal/authz"
+	"github.com/looplj/axonhub/internal/contexts"
+	"github.com/looplj/axonhub/internal/ent"
+	"github.com/looplj/axonhub/internal/ent/enttest"
+	"github.com/looplj/axonhub/internal/ent/project"
+	"github.com/looplj/axonhub/internal/ent/user"
+	"github.com/looplj/axonhub/internal/pkg/xtime"
+	"github.com/looplj/axonhub/internal/server/biz"
 )
 
 // testStats is a test struct that implements the statsItem constraint
@@ -328,4 +340,154 @@ func TestCalculateConfidenceAndSort_LargeDataset(t *testing.T) {
 				"items should be sorted by confidence score descending")
 		}
 	}
+}
+
+func TestRankCampusUsageReturnsTop50PlusSelf(t *testing.T) {
+	aggregates := make([]campusUsageAggregate, 0, 51)
+	for i := 1; i <= 51; i++ {
+		aggregates = append(aggregates, campusUsageAggregate{
+			UserID:            i,
+			DailyTokenLimit:   1_000,
+			RecordedTokens:    int64(1_000 - i),
+			MeteredRequestCnt: i,
+		})
+	}
+
+	entries := rankCampusUsage(7, 999, aggregates)
+	require.Len(t, entries, 51)
+	require.True(t, entries[50].IsMe)
+	require.Equal(t, 52, entries[50].Rank)
+	require.Equal(t, campusPublicAlias(7, 999), entries[50].PublicAlias)
+	require.NotEqual(t, campusPublicAlias(7, 999), campusPublicAlias(8, 999))
+}
+
+func TestQueryResolverCampusUsageLeaderboardPrivacyAndDeletedKeys(t *testing.T) {
+	client := enttest.NewEntClient(t, "sqlite3", "file:ent?mode=memory&_fk=0")
+	defer client.Close()
+
+	setupCtx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+	projectRow, err := client.Project.Create().
+		SetName("campus").
+		SetStatus(project.StatusActive).
+		Save(setupCtx)
+	require.NoError(t, err)
+
+	member, err := client.User.Create().
+		SetEmail("member@mails.ucas.ac.cn").
+		SetPassword("password").
+		SetStatus(user.StatusActivated).
+		SetDailyTokenLimit(100).
+		Save(setupCtx)
+	require.NoError(t, err)
+	_, err = client.UserProject.Create().
+		SetUserID(member.ID).
+		SetProjectID(projectRow.ID).
+		Save(setupCtx)
+	require.NoError(t, err)
+
+	leader, err := client.User.Create().
+		SetEmail("leader@mails.ucas.ac.cn").
+		SetPassword("password").
+		SetStatus(user.StatusActivated).
+		SetDailyTokenLimit(200).
+		Save(setupCtx)
+	require.NoError(t, err)
+
+	memberKey, err := client.APIKey.Create().
+		SetName("member-key").
+		SetKey("sk-member-leaderboard").
+		SetUserID(member.ID).
+		SetProjectID(projectRow.ID).
+		Save(setupCtx)
+	require.NoError(t, err)
+	leaderKey, err := client.APIKey.Create().
+		SetName("leader-key").
+		SetKey("sk-leader-leaderboard").
+		SetUserID(leader.ID).
+		SetProjectID(projectRow.ID).
+		Save(setupCtx)
+	require.NoError(t, err)
+
+	now := xtime.UTCNow()
+	createUsage := func(requestID, apiKeyID int, totalTokens int64, createdAt time.Time) {
+		t.Helper()
+		_, createErr := client.UsageLog.Create().
+			SetRequestID(requestID).
+			SetAPIKeyID(apiKeyID).
+			SetProjectID(projectRow.ID).
+			SetChannelID(1).
+			SetModelID("private-model-name").
+			SetFormat("openai/chat_completions").
+			SetTotalTokens(totalTokens).
+			SetCreatedAt(createdAt).
+			Save(setupCtx)
+		require.NoError(t, createErr)
+	}
+	createUsage(1, memberKey.ID, 25, now.Add(-time.Minute))
+	createUsage(2, memberKey.ID, 500, now.Add(-25*time.Hour))
+	createUsage(3, leaderKey.ID, 100, now.Add(-time.Minute))
+
+	// The already-recorded usage must remain after the member rotates/deletes a key.
+	require.NoError(t, client.APIKey.DeleteOne(memberKey).Exec(setupCtx))
+
+	systemService := biz.NewSystemService(biz.SystemServiceParams{Ent: client})
+	resolver := &queryResolver{&Resolver{client: client, systemService: systemService}}
+	memberCtx := authz.NewUserContext(context.Background(), member.ID)
+	memberCtx = contexts.WithUser(memberCtx, member)
+	memberCtx = contexts.WithProjectID(memberCtx, projectRow.ID)
+
+	entries, err := resolver.CampusUsageLeaderboard(memberCtx)
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+	require.Equal(t, 1, entries[0].Rank)
+	require.Equal(t, campusPublicAlias(projectRow.ID, leader.ID), entries[0].PublicAlias)
+	require.False(t, entries[0].IsMe)
+	require.Equal(t, float64(100), entries[0].RecordedTokens)
+	require.Equal(t, 1, entries[0].MeteredRequestCount)
+
+	require.Equal(t, 2, entries[1].Rank)
+	require.Equal(t, campusPublicAlias(projectRow.ID, member.ID), entries[1].PublicAlias)
+	require.True(t, entries[1].IsMe)
+	require.Equal(t, float64(25), entries[1].RecordedTokens)
+	require.Equal(t, 1, entries[1].MeteredRequestCount)
+	require.InDelta(t, 25, entries[1].LimitPercent, 0.001)
+	_, err = resolver.UsageStatsByUser(memberCtx, nil)
+	require.ErrorContains(t, err, "only project owners")
+
+	nonMember, err := client.User.Create().
+		SetEmail("outsider@mails.ucas.ac.cn").
+		SetPassword("password").
+		SetStatus(user.StatusActivated).
+		Save(setupCtx)
+	require.NoError(t, err)
+	nonMemberCtx := authz.NewUserContext(context.Background(), nonMember.ID)
+	nonMemberCtx = contexts.WithUser(nonMemberCtx, nonMember)
+	nonMemberCtx = contexts.WithProjectID(nonMemberCtx, projectRow.ID)
+	_, err = resolver.CampusUsageLeaderboard(nonMemberCtx)
+	require.ErrorContains(t, err, "not a project member")
+
+	owner, err := client.User.Create().
+		SetEmail("owner@example.com").
+		SetPassword("password").
+		SetStatus(user.StatusActivated).
+		SetIsOwner(true).
+		Save(setupCtx)
+	require.NoError(t, err)
+	ownerCtx := authz.NewUserContext(context.Background(), owner.ID)
+	ownerCtx = contexts.WithUser(ownerCtx, owner)
+	ownerCtx = contexts.WithProjectID(ownerCtx, projectRow.ID)
+	ownerEntries, err := resolver.CampusUsageLeaderboard(ownerCtx)
+	require.NoError(t, err)
+	require.Len(t, ownerEntries, 3)
+	require.True(t, ownerEntries[2].IsMe)
+	require.Equal(t, float64(0), ownerEntries[2].RecordedTokens)
+
+	entryType := reflect.TypeOf(CampusUsageLeaderboardEntry{})
+	fieldNames := make([]string, 0, entryType.NumField())
+	for i := range entryType.NumField() {
+		fieldNames = append(fieldNames, entryType.Field(i).Name)
+	}
+	require.Equal(t, []string{
+		"Rank", "PublicAlias", "IsMe", "RecordedTokens", "MeteredRequestCount", "LimitPercent",
+	}, fieldNames)
 }

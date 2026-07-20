@@ -77,7 +77,6 @@ func (Model) Policy() ent.Policy {
 		},
 		Mutation: scopes.MutationPolicy{
 			scopes.OwnerRule(),
-			scopes.UserWriteScopeRule(scopes.ScopeWriteChannels),
 		},
 	}
 }

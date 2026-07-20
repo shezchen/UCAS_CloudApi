@@ -88,17 +88,17 @@ func TestChatCompletionOrchestrator_Process_MinuteQuotaExceeded(t *testing.T) {
 	channelSelector := &staticChannelSelector{candidates: channelsToTestCandidates([]*biz.Channel{bizChannel}, "gpt-4")}
 
 	orchestrator := &ChatCompletionOrchestrator{
-		channelSelector:   channelSelector,
-		Inbound:           openai.NewInboundTransformer(),
-		RequestService:    requestService,
-		ChannelService:    channelService,
-		PromptProvider:    &stubPromptProvider{},
-		SystemService:     systemService,
-		UsageLogService:   usageLogService,
-		QuotaService:      quotaService,
-		PipelineFactory:   pipeline.NewFactory(executor),
-		ModelMapper:       NewModelMapper(),
-		channelLimiterManager:      NewChannelLimiterManager(),
+		channelSelector:       channelSelector,
+		Inbound:               openai.NewInboundTransformer(),
+		RequestService:        requestService,
+		ChannelService:        channelService,
+		PromptProvider:        &stubPromptProvider{},
+		SystemService:         systemService,
+		UsageLogService:       usageLogService,
+		QuotaService:          quotaService,
+		PipelineFactory:       pipeline.NewFactory(executor),
+		ModelMapper:           NewModelMapper(),
+		channelLimiterManager: NewChannelLimiterManager(),
 		Middlewares: []pipeline.Middleware{
 			stream.EnsureUsage(),
 		},
@@ -120,4 +120,52 @@ func TestChatCompletionOrchestrator_Process_MinuteQuotaExceeded(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, respErr.StatusCode)
 	require.Equal(t, "quota_exceeded", respErr.Detail.Code)
 	require.Equal(t, "quota_exceeded_error", respErr.Detail.Type)
+}
+
+func TestEnforceQuota_UserDailyLimitAppliesWithoutAPIKeyQuota(t *testing.T) {
+	ctx := authz.WithTestBypass(context.Background())
+	client := enttest.NewEntClient(t, "sqlite3", "file:ent?mode=memory&_fk=0")
+	defer client.Close()
+	ctx = ent.NewContext(ctx, client)
+
+	projectRow := createTestProject(t, ctx, client)
+	member, err := client.User.Create().
+		SetEmail("daily-quota@example.edu").
+		SetPassword("password").
+		SetDailyTokenLimit(10).
+		Save(ctx)
+	require.NoError(t, err)
+
+	apiKey, err := client.APIKey.Create().
+		SetName("Daily Quota Key").
+		SetKey("ah-daily-quota-key").
+		SetProjectID(projectRow.ID).
+		SetUserID(member.ID).
+		Save(ctx)
+	require.NoError(t, err)
+
+	_, err = client.UsageLog.Create().
+		SetRequestID(1).
+		SetAPIKeyID(apiKey.ID).
+		SetProjectID(projectRow.ID).
+		SetChannelID(1).
+		SetModelID("gpt-4").
+		SetTotalTokens(10).
+		Save(ctx)
+	require.NoError(t, err)
+
+	quotaService := biz.NewQuotaService(client, biz.NewSystemService(biz.SystemServiceParams{Ent: client}))
+	inbound, _ := NewPersistentTransformers(
+		&PersistenceState{APIKey: apiKey},
+		openai.NewInboundTransformer(),
+	)
+
+	_, err = enforceQuota(inbound, quotaService).OnInboundLlmRequest(ctx, &llm.Request{})
+	require.Error(t, err)
+
+	var responseErr *llm.ResponseError
+	require.ErrorAs(t, err, &responseErr)
+	require.Equal(t, http.StatusForbidden, responseErr.StatusCode)
+	require.Equal(t, "quota_exceeded", responseErr.Detail.Code)
+	require.Contains(t, responseErr.Detail.Message, "user daily")
 }

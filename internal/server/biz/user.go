@@ -3,6 +3,7 @@ package biz
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/samber/lo"
 	"go.uber.org/fx"
@@ -11,6 +12,7 @@ import (
 	"github.com/looplj/axonhub/internal/authz"
 	"github.com/looplj/axonhub/internal/contexts"
 	"github.com/looplj/axonhub/internal/ent"
+	"github.com/looplj/axonhub/internal/ent/project"
 	"github.com/looplj/axonhub/internal/ent/role"
 	"github.com/looplj/axonhub/internal/ent/user"
 	"github.com/looplj/axonhub/internal/ent/userproject"
@@ -18,7 +20,56 @@ import (
 	"github.com/looplj/axonhub/internal/log"
 	"github.com/looplj/axonhub/internal/objects"
 	"github.com/looplj/axonhub/internal/pkg/xcache"
+	"github.com/looplj/axonhub/internal/scopes"
 )
+
+var campusRegistrationEmailDomains = map[string]struct{}{
+	"mails.ucas.ac.cn":  {},
+	"ucas.ac.cn":        {},
+	"mails.ucas.edu.cn": {},
+	"ucas.edu.cn":       {},
+}
+
+func normalizeCampusRegistrationEmail(email string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(email))
+	local, domain, ok := strings.Cut(normalized, "@")
+	if !ok || local == "" || domain == "" || strings.Contains(domain, "@") || strings.ContainsAny(normalized, " \t\r\n") {
+		return "", fmt.Errorf("%w; allowed domains: @mails.ucas.ac.cn, @ucas.ac.cn, @mails.ucas.edu.cn, @ucas.edu.cn", ErrCampusEmailRequired)
+	}
+	if _, ok := campusRegistrationEmailDomains[domain]; !ok {
+		return "", fmt.Errorf("%w; allowed domains: @mails.ucas.ac.cn, @ucas.ac.cn, @mails.ucas.edu.cn, @ucas.edu.cn", ErrCampusEmailRequired)
+	}
+
+	return normalized, nil
+}
+
+func campusMemberProjectScopes() []string {
+	return []string{
+		string(scopes.ScopeReadAPIKeys),
+		string(scopes.ScopeWriteAPIKeys),
+	}
+}
+
+func assignCampusMemberToDefaultProject(ctx context.Context, client *ent.Client, userID int) error {
+	defaultProject, err := client.Project.Query().
+		Where(project.StatusEQ(project.StatusActive)).
+		Order(ent.Asc(project.FieldID)).
+		First(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to find the campus sharing project: %w", err)
+	}
+
+	_, err = client.UserProject.Create().
+		SetUserID(userID).
+		SetProjectID(defaultProject.ID).
+		SetScopes(campusMemberProjectScopes()).
+		Save(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to add user to the campus sharing project: %w", err)
+	}
+
+	return nil
+}
 
 type UserServiceParams struct {
 	fx.In
@@ -44,44 +95,123 @@ func NewUserService(params UserServiceParams) *UserService {
 	}
 }
 
+func requireSystemOwnerForDailyTokenLimit(ctx context.Context, dailyTokenLimit *int64) error {
+	if dailyTokenLimit == nil {
+		return nil
+	}
+
+	currentUser, ok := contexts.GetUser(ctx)
+	if !ok || currentUser == nil || !currentUser.IsOwner {
+		return fmt.Errorf("daily token limit can only be changed by the system owner")
+	}
+
+	return nil
+}
+
+func requireSystemOwnerForOwnershipChange(ctx context.Context, isOwner *bool) error {
+	if isOwner == nil {
+		return nil
+	}
+
+	currentUser, ok := contexts.GetUser(ctx)
+	if ok && currentUser != nil {
+		if currentUser.IsOwner {
+			return nil
+		}
+
+		return fmt.Errorf("system ownership can only be changed by the system owner")
+	}
+
+	principal, ok := authz.GetPrincipal(ctx)
+	if ok && (principal.IsSystem() || principal.IsTest()) {
+		return nil
+	}
+
+	return fmt.Errorf("system ownership can only be changed by the system owner")
+}
+
 // CreateUser creates a new user with hashed password.
 func (s *UserService) CreateUser(ctx context.Context, input ent.CreateUserInput) (*ent.User, error) {
-	client := s.entFromContext(ctx)
+	if err := requireSystemOwnerForDailyTokenLimit(ctx, input.DailyTokenLimit); err != nil {
+		return nil, err
+	}
+	if err := requireSystemOwnerForOwnershipChange(ctx, input.IsOwner); err != nil {
+		return nil, err
+	}
+
+	normalizedEmail, err := normalizeCampusRegistrationEmail(input.Email)
+	if err != nil {
+		return nil, err
+	}
+	input.Email = normalizedEmail
 
 	// Hash the password
 	var hashedPassword string
 	if input.Password == OIDC_ONLY_PLACEHOLDER {
 		hashedPassword = OIDC_ONLY_PLACEHOLDER
 	} else {
-		var err error
-
 		hashedPassword, err = HashPassword(input.Password)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	mut := client.User.Create().
-		SetNillableFirstName(input.FirstName).
-		SetNillableLastName(input.LastName).
-		SetEmail(input.Email).
-		SetPassword(hashedPassword).
-		SetScopes(input.Scopes)
+	var createdUser *ent.User
+	err = s.RunInTransaction(ctx, func(txCtx context.Context) error {
+		client := s.entFromContext(txCtx)
+		mut := client.User.Create().
+			SetNillableFirstName(input.FirstName).
+			SetNillableLastName(input.LastName).
+			SetEmail(input.Email).
+			SetPassword(hashedPassword).
+			SetNillableIsOwner(input.IsOwner).
+			SetNillableDailyTokenLimit(input.DailyTokenLimit).
+			SetScopes(input.Scopes)
 
-	if input.RoleIDs != nil {
-		mut.AddRoleIDs(input.RoleIDs...)
-	}
+		if input.RoleIDs != nil {
+			mut.AddRoleIDs(input.RoleIDs...)
+		}
 
-	user, err := mut.Save(ctx)
+		createdUser, err = mut.Save(txCtx)
+		if err != nil {
+			if ent.IsConstraintError(err) {
+				return fmt.Errorf("%w: %v", ErrEmailAlreadyRegistered, err)
+			}
+
+			return fmt.Errorf("failed to create user: %w", err)
+		}
+
+		if !createdUser.IsOwner {
+			if err := assignCampusMemberToDefaultProject(txCtx, client, createdUser.ID); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create user: %w", err)
+		return nil, err
 	}
 
-	return user, nil
+	return createdUser, nil
 }
 
 // UpdateUser updates an existing user.
 func (s *UserService) UpdateUser(ctx context.Context, id int, input ent.UpdateUserInput) (*ent.User, error) {
+	if err := requireSystemOwnerForDailyTokenLimit(ctx, input.DailyTokenLimit); err != nil {
+		return nil, err
+	}
+	if err := requireSystemOwnerForOwnershipChange(ctx, input.IsOwner); err != nil {
+		return nil, err
+	}
+	if input.Email != nil {
+		normalizedEmail, err := normalizeCampusRegistrationEmail(*input.Email)
+		if err != nil {
+			return nil, err
+		}
+		input.Email = &normalizedEmail
+	}
+
 	// Validate permissions before updating
 	if err := s.permissionValidator.CanEditUserPermissions(ctx, id, nil); err != nil {
 		return nil, fmt.Errorf("permission denied: %w", err)
@@ -90,6 +220,11 @@ func (s *UserService) UpdateUser(ctx context.Context, id int, input ent.UpdateUs
 	// Validate scope grants if scopes are being updated
 	if input.Scopes != nil {
 		if err := s.permissionValidator.CanGrantScopes(ctx, input.Scopes, nil); err != nil {
+			return nil, fmt.Errorf("permission denied: %w", err)
+		}
+	}
+	if input.AppendScopes != nil {
+		if err := s.permissionValidator.CanGrantScopes(ctx, input.AppendScopes, nil); err != nil {
 			return nil, fmt.Errorf("permission denied: %w", err)
 		}
 	}
@@ -110,6 +245,7 @@ func (s *UserService) UpdateUser(ctx context.Context, id int, input ent.UpdateUs
 		SetNillableFirstName(input.FirstName).
 		SetNillableLastName(input.LastName).
 		SetNillableIsOwner(input.IsOwner).
+		SetNillableDailyTokenLimit(input.DailyTokenLimit).
 		SetNillablePreferLanguage(input.PreferLanguage)
 
 	if input.ClearAvatar {

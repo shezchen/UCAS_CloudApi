@@ -58,7 +58,6 @@ func (System) Policy() ent.Policy {
 		},
 		Mutation: scopes.MutationPolicy{
 			scopes.OwnerRule(), // owner 用户可以修改所有系统设置
-			scopes.UserWriteScopeRule(scopes.ScopeWriteSettings), // 需要 settings 写入权限
 		},
 	}
 }

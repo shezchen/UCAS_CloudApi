@@ -10,6 +10,8 @@ import (
 
 	"github.com/looplj/axonhub/internal/authz"
 	"github.com/looplj/axonhub/internal/ent"
+	"github.com/looplj/axonhub/internal/ent/apikey"
+	"github.com/looplj/axonhub/internal/ent/schema/schematype"
 	"github.com/looplj/axonhub/internal/ent/usagelog"
 	"github.com/looplj/axonhub/internal/objects"
 	"github.com/looplj/axonhub/internal/pkg/xtime"
@@ -110,6 +112,77 @@ func (s *QuotaService) CheckAPIKeyQuota(ctx context.Context, apiKeyID int, quota
 		Allowed: true,
 		Window:  window,
 	}, nil
+}
+
+// CheckUserDailyTokenQuota enforces the account-wide daily token limit across
+// every API key created by the same user. Soft-deleted keys remain part of the
+// aggregate so rotating or deleting a key cannot reset the account's usage.
+func (s *QuotaService) CheckUserDailyTokenQuota(ctx context.Context, userID int) (QuotaCheckResult, error) {
+	if userID <= 0 {
+		return QuotaCheckResult{Allowed: true}, nil
+	}
+
+	loc := s.system.TimeLocation(ctx)
+	window, err := quotaWindow(xtime.UTCNow(), objects.APIKeyQuotaPeriod{
+		Type: objects.APIKeyQuotaPeriodTypeCalendarDuration,
+		CalendarDuration: &objects.APIKeyQuotaCalendarDuration{
+			Unit: objects.APIKeyQuotaCalendarDurationUnitDay,
+		},
+	}, loc)
+	if err != nil {
+		return QuotaCheckResult{}, err
+	}
+
+	type userQuota struct {
+		DailyTokenLimit int64 `json:"daily_token_limit"`
+	}
+
+	var quota userQuota
+	err = authz.RunWithSystemBypassVoid(ctx, "user-daily-quota", func(bypassCtx context.Context) error {
+		u, err := s.ent.User.Get(bypassCtx, userID)
+		if err != nil {
+			return err
+		}
+
+		quota.DailyTokenLimit = u.DailyTokenLimit
+		return nil
+	})
+	if err != nil {
+		return QuotaCheckResult{}, fmt.Errorf("failed to load user daily quota: %w", err)
+	}
+
+	var apiKeyIDs []int
+	err = authz.RunWithSystemBypassVoid(ctx, "user-daily-quota-api-keys", func(bypassCtx context.Context) error {
+		var err error
+		apiKeyIDs, err = s.ent.APIKey.Query().
+			Where(apikey.UserIDEQ(userID)).
+			IDs(schematype.SkipSoftDelete(bypassCtx))
+		return err
+	})
+	if err != nil {
+		return QuotaCheckResult{}, fmt.Errorf("failed to list user API keys for daily quota: %w", err)
+	}
+
+	usage, err := authz.RunWithSystemBypass(ctx, "user-daily-quota-usage", func(bypassCtx context.Context) (usageAggResult, error) {
+		return s.usageAggForAPIKeys(bypassCtx, apiKeyIDs, window, true, false)
+	})
+	if err != nil {
+		return QuotaCheckResult{}, err
+	}
+
+	if usage.TotalTokens >= quota.DailyTokenLimit {
+		return QuotaCheckResult{
+			Allowed: false,
+			Message: fmt.Sprintf(
+				"user daily total_tokens quota exceeded: %d/%d",
+				usage.TotalTokens,
+				quota.DailyTokenLimit,
+			),
+			Window: window,
+		}, nil
+	}
+
+	return QuotaCheckResult{Allowed: true, Window: window}, nil
 }
 
 // ProfileQuotaUsage is the per-profile quota usage of an API key, shared by the
@@ -284,8 +357,21 @@ type usageAggResult struct {
 }
 
 func (s *QuotaService) usageAgg(ctx context.Context, apiKeyID int, window QuotaWindow, needTokens bool, needCost bool) (usageAggResult, error) {
+	return s.usageAggForAPIKeys(ctx, []int{apiKeyID}, window, needTokens, needCost)
+}
+
+func (s *QuotaService) usageAggForAPIKeys(
+	ctx context.Context,
+	apiKeyIDs []int,
+	window QuotaWindow,
+	needTokens bool,
+	needCost bool,
+) (usageAggResult, error) {
 	if !needTokens && !needCost {
 		return usageAggResult{}, nil
+	}
+	if len(apiKeyIDs) == 0 {
+		return usageAggResult{TotalCost: decimal.Zero}, nil
 	}
 
 	queryAgg := func(q *ent.UsageLogQuery) (usageAggResult, error) {
@@ -373,7 +459,7 @@ func (s *QuotaService) usageAgg(ctx context.Context, apiKeyID int, window QuotaW
 		}
 	}
 
-	agg1, err := queryAgg(s.ent.UsageLog.Query().Where(usagelog.APIKeyIDEQ(apiKeyID)))
+	agg1, err := queryAgg(s.ent.UsageLog.Query().Where(usagelog.APIKeyIDIn(apiKeyIDs...)))
 	if err != nil {
 		return usageAggResult{}, err
 	}

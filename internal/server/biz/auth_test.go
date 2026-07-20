@@ -17,6 +17,7 @@ import (
 	"github.com/looplj/axonhub/internal/ent/enttest"
 	"github.com/looplj/axonhub/internal/ent/project"
 	"github.com/looplj/axonhub/internal/ent/user"
+	"github.com/looplj/axonhub/internal/ent/userproject"
 	"github.com/looplj/axonhub/internal/pkg/xcache"
 	"github.com/looplj/axonhub/internal/pkg/xredis"
 )
@@ -125,6 +126,131 @@ func setupTestAuthService(t *testing.T, cacheConfig xcache.Config) (*AuthService
 	}
 
 	return authService, client, cleanup
+}
+
+func setupCampusRegistrationAuthService(t *testing.T) (*AuthService, *ent.Client, context.Context) {
+	t.Helper()
+
+	client := setupTestDB(t)
+	cacheConfig := xcache.Config{Mode: xcache.ModeMemory}
+	userService := NewUserService(UserServiceParams{
+		CacheConfig: cacheConfig,
+		Ent:         client,
+	})
+	systemService := NewSystemService(SystemServiceParams{
+		CacheConfig: cacheConfig,
+		Ent:         client,
+	})
+	authService := NewAuthService(AuthServiceParams{
+		SystemService: systemService,
+		UserService:   userService,
+		Ent:           client,
+	})
+	setupCtx := ent.NewContext(authz.WithTestBypass(t.Context()), client)
+
+	return authService, client, setupCtx
+}
+
+func TestAuthService_RegisterCampusUser_AllUCASDomains(t *testing.T) {
+	authService, client, setupCtx := setupCampusRegistrationAuthService(t)
+	defer client.Close()
+
+	archivedProject, err := client.Project.Create().
+		SetName("Archived").
+		SetStatus(project.StatusArchived).
+		Save(setupCtx)
+	require.NoError(t, err)
+
+	defaultProject, err := client.Project.Create().
+		SetName("Campus Sharing").
+		SetStatus(project.StatusActive).
+		Save(setupCtx)
+	require.NoError(t, err)
+	require.Greater(t, defaultProject.ID, archivedProject.ID)
+
+	testCases := []struct {
+		name            string
+		email           string
+		normalizedEmail string
+	}{
+		{name: "student ac cn", email: "student@mails.ucas.ac.cn", normalizedEmail: "student@mails.ucas.ac.cn"},
+		{name: "staff ac cn", email: "staff@UCAS.AC.CN", normalizedEmail: "staff@ucas.ac.cn"},
+		{name: "student edu cn", email: "student@mails.ucas.edu.cn", normalizedEmail: "student@mails.ucas.edu.cn"},
+		{name: "staff edu cn", email: "staff@ucas.edu.cn", normalizedEmail: "staff@ucas.edu.cn"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			created, err := authService.RegisterCampusUser(t.Context(), tc.email, "password-123")
+			require.NoError(t, err)
+			require.Equal(t, tc.normalizedEmail, created.Email)
+			require.False(t, created.IsOwner)
+			require.Equal(t, int64(200_000_000), created.DailyTokenLimit)
+			require.Empty(t, created.Scopes)
+
+			membership, err := client.UserProject.Query().
+				Where(userproject.UserIDEQ(created.ID)).
+				Only(setupCtx)
+			require.NoError(t, err)
+			require.Equal(t, defaultProject.ID, membership.ProjectID)
+			require.False(t, membership.IsOwner)
+			require.ElementsMatch(t, []string{"read_api_keys", "write_api_keys"}, membership.Scopes)
+		})
+	}
+}
+
+func TestAuthService_RegisterCampusUser_RejectsNonUCASDomains(t *testing.T) {
+	authService, client, setupCtx := setupCampusRegistrationAuthService(t)
+	defer client.Close()
+
+	_, err := client.Project.Create().SetName("Campus Sharing").Save(setupCtx)
+	require.NoError(t, err)
+
+	for _, email := range []string{
+		"student@example.com",
+		"student@evilucas.ac.cn",
+		"student@department.ucas.ac.cn",
+	} {
+		t.Run(email, func(t *testing.T) {
+			_, err := authService.RegisterCampusUser(t.Context(), email, "password-123")
+			require.ErrorIs(t, err, ErrCampusEmailRequired)
+		})
+	}
+}
+
+func TestAuthService_RegisterCampusUser_DuplicateEmail(t *testing.T) {
+	authService, client, setupCtx := setupCampusRegistrationAuthService(t)
+	defer client.Close()
+
+	_, err := client.Project.Create().SetName("Campus Sharing").Save(setupCtx)
+	require.NoError(t, err)
+
+	_, err = authService.RegisterCampusUser(t.Context(), "duplicate@mails.ucas.ac.cn", "password-123")
+	require.NoError(t, err)
+
+	_, err = authService.RegisterCampusUser(t.Context(), "DUPLICATE@MAILS.UCAS.AC.CN", "password-456")
+	require.ErrorIs(t, err, ErrEmailAlreadyRegistered)
+}
+
+func TestAuthService_RegisterCampusUser_RequiresActiveProject(t *testing.T) {
+	authService, client, setupCtx := setupCampusRegistrationAuthService(t)
+	defer client.Close()
+
+	_, err := client.Project.Create().
+		SetName("Archived").
+		SetStatus(project.StatusArchived).
+		Save(setupCtx)
+	require.NoError(t, err)
+
+	_, err = authService.RegisterCampusUser(t.Context(), "no-project@ucas.edu.cn", "password-123")
+	require.Error(t, err)
+	require.ErrorContains(t, err, "failed to find the campus sharing project")
+
+	count, queryErr := client.User.Query().
+		Where(user.EmailEQ("no-project@ucas.edu.cn")).
+		Count(setupCtx)
+	require.NoError(t, queryErr)
+	require.Zero(t, count, "the user insert must roll back when project assignment fails")
 }
 
 func TestAuthService_GenerateJWTToken(t *testing.T) {

@@ -74,6 +74,54 @@ func TestUsageLogService_CreateUsageLog_PromptWriteCachedTokens(t *testing.T) {
 	require.Equal(t, int64(3), created.PromptWriteCachedTokens)
 }
 
+func TestUsageLogService_CreateUsageLog_ClampsNegativeTotalTokens(t *testing.T) {
+	client := enttest.NewEntClient(t, "sqlite3", "file:ent?mode=memory&_fk=0")
+	defer client.Close()
+
+	ctx := ent.NewContext(context.Background(), client)
+	ctx = authz.WithTestBypass(ctx)
+
+	p, err := client.Project.Create().
+		SetName("negative-usage-project").
+		SetStatus(project.StatusActive).
+		Save(ctx)
+	require.NoError(t, err)
+
+	req, err := client.Request.Create().
+		SetProjectID(p.ID).
+		SetModelID("test-model").
+		SetStatus(request.StatusCompleted).
+		SetRequestBody(objects.JSONRawMessage([]byte(`{}`))).
+		Save(ctx)
+	require.NoError(t, err)
+
+	systemService := NewSystemService(SystemServiceParams{
+		CacheConfig: xcache.Config{},
+		Ent:         client,
+	})
+	svc := NewUsageLogService(client, systemService, NewChannelServiceForTest(client))
+
+	created, err := svc.CreateUsageLog(ctx, CreateUsageLogParams{
+		RequestID:     req.ID,
+		ProjectID:     p.ID,
+		ChannelID:     0,
+		ActualModelID: "test-model",
+		Usage: &llm.Usage{
+			PromptTokens:     10,
+			CompletionTokens: 20,
+			TotalTokens:      -100,
+		},
+		Source: usagelog.SourceAPI,
+		Format: "openai/chat_completions",
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(0), created.TotalTokens)
+
+	persisted, err := client.UsageLog.Get(ctx, created.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), persisted.TotalTokens)
+}
+
 func TestUsageLogService_CreateUsageLog_WithPriceReferenceID(t *testing.T) {
 	client := enttest.NewEntClient(t, "sqlite3", "file:ent?mode=memory&_fk=0")
 	defer client.Close()

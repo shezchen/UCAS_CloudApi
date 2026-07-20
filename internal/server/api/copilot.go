@@ -165,16 +165,16 @@ func (h *CopilotHandlers) StartOAuth(c *gin.Context) {
 		}
 	}
 
+	httpClient, err := oauthHTTPClientForCaller(ctx, h.httpClient, req.Proxy)
+	if err != nil {
+		JSONError(c, http.StatusForbidden, err)
+		return
+	}
+
 	sessionID, err := generateCopilotSessionID()
 	if err != nil {
 		JSONError(c, http.StatusInternalServerError, fmt.Errorf("failed to generate session ID: %w", err))
 		return
-	}
-
-	// Create HTTP client with proxy if provided
-	httpClient := h.httpClient
-	if req.Proxy != nil && req.Proxy.Type == httpclient.ProxyTypeURL && req.Proxy.URL != "" {
-		httpClient = h.httpClient.WithProxy(req.Proxy)
 	}
 
 	// Step 1: Request device code from GitHub
@@ -276,6 +276,12 @@ func (h *CopilotHandlers) PollOAuth(c *gin.Context) {
 		return
 	}
 
+	httpClient, err := oauthHTTPClientForCaller(ctx, h.httpClient, req.Proxy)
+	if err != nil {
+		JSONError(c, http.StatusForbidden, err)
+		return
+	}
+
 	cacheKey := copilotOAuthCacheKey(req.SessionID)
 
 	state, err := h.deviceCodeCache.Get(ctx, cacheKey)
@@ -289,12 +295,6 @@ func (h *CopilotHandlers) PollOAuth(c *gin.Context) {
 		_ = h.deviceCodeCache.Delete(ctx, cacheKey)
 		JSONError(c, http.StatusBadRequest, errors.New("device code expired"))
 		return
-	}
-
-	// Create HTTP client with proxy if provided
-	httpClient := h.httpClient
-	if req.Proxy != nil && req.Proxy.Type == httpclient.ProxyTypeURL && req.Proxy.URL != "" {
-		httpClient = h.httpClient.WithProxy(req.Proxy)
 	}
 
 	// Step 2: Poll for access token

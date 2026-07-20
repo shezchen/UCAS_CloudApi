@@ -83,6 +83,7 @@ func Run(opts ...fx.Option) {
 		openapi.NewGraphqlHandlers,
 		gql.NewGraphqlHandlers,
 		gc.NewWorker,
+		middleware.NewUserConcurrencyLimiter,
 		New,
 	}
 

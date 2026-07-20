@@ -5,7 +5,20 @@ import (
 	"time"
 
 	"github.com/looplj/axonhub/internal/ent"
+	"github.com/looplj/axonhub/llm/httpclient"
 )
+
+func httpClientForChannel(base *httpclient.HttpClient, ch *ent.Channel) *httpclient.HttpClient {
+	hc := base
+	if ch != nil && ch.Settings != nil && ch.Settings.Proxy != nil {
+		hc = hc.WithProxy(ch.Settings.Proxy)
+	}
+	if ch != nil && ch.UserID != nil {
+		hc = hc.WithPublicNetworkOnly()
+	}
+
+	return hc
+}
 
 // QuotaChecker checks quota status for a provider.
 type QuotaChecker interface {

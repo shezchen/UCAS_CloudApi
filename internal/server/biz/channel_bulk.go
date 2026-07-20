@@ -3,6 +3,7 @@ package biz
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/samber/lo"
 
@@ -20,6 +21,10 @@ type ChannelOrderingItem struct {
 
 // BulkUpdateChannelOrdering updates the ordering weight for multiple channels in a single transaction.
 func (svc *ChannelService) BulkUpdateChannelOrdering(ctx context.Context, items []*ChannelOrderingItem) ([]*ent.Channel, error) {
+	if !canManageChannelOrdering(ctx) {
+		return nil, fmt.Errorf("channel ordering can only be changed by the system owner")
+	}
+
 	client := svc.entFromContext(ctx)
 
 	updatedChannels := make([]*ent.Channel, 0, len(items))
@@ -128,6 +133,10 @@ func (svc *ChannelService) BulkCreateChannels(ctx context.Context, input BulkCre
 		createdChannels = append(createdChannels, ch)
 	}
 
+	for i, ch := range createdChannels {
+		createdChannels[i] = svc.syncDonatedChannelModelsBestEffort(ctx, ch)
+	}
+
 	// Reload channels once after all successful creations
 	svc.asyncReloadChannels()
 
@@ -142,15 +151,37 @@ func (svc *ChannelService) bulkUpdateChannelStatus(ctx context.Context, ids []in
 	client := svc.entFromContext(ctx)
 
 	// Verify all channels exist
-	count, err := client.Channel.Query().
+	channels, err := client.Channel.Query().
 		Where(channel.IDIn(ids...)).
-		Count(ctx)
+		All(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to query channels: %w", err)
 	}
 
-	if count != len(ids) {
-		return fmt.Errorf("expected to find %d channels, but found %d", len(ids), count)
+	if len(channels) != len(ids) {
+		return fmt.Errorf("expected to find %d channels, but found %d", len(ids), len(channels))
+	}
+
+	if status == channel.StatusEnabled {
+		now := time.Now()
+		for _, ch := range channels {
+			if err := rejectExpiredChannel(ch, now); err != nil {
+				return err
+			}
+			if ch.UserID != nil {
+				if err := ValidateDonationChannelConfiguration(
+					ctx,
+					ch.Type,
+					&ch.BaseURL,
+					&ch.Credentials,
+					ch.Settings,
+					ch.Endpoints,
+				); err != nil {
+					return fmt.Errorf("invalid donated channel network configuration: %w", err)
+				}
+				_ = svc.syncDonatedChannelModelsBestEffort(ctx, ch)
+			}
+		}
 	}
 
 	updater := client.Channel.Update().
@@ -196,7 +227,24 @@ func (svc *ChannelService) BulkDeleteChannels(ctx context.Context, ids []int) er
 		return nil
 	}
 
-	deleted, err := svc.entFromContext(ctx).Channel.Delete().Where(channel.IDIn(ids...)).Exec(ctx)
+	client := svc.entFromContext(ctx)
+	channels, err := client.Channel.Query().Where(channel.IDIn(ids...)).All(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to query channels: %w", err)
+	}
+
+	if len(channels) != len(ids) {
+		return fmt.Errorf("expected to find %d channels, but found %d", len(ids), len(channels))
+	}
+
+	now := time.Now()
+	for _, ch := range channels {
+		if err := validateChannelDeletion(ctx, ch, now); err != nil {
+			return err
+		}
+	}
+
+	deleted, err := svc.scrubAndSoftDeleteChannels(ctx, ids)
 	if err != nil {
 		return fmt.Errorf("failed to bulk delete channels: %w", err)
 	}

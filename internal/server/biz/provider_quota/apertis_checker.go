@@ -95,7 +95,7 @@ func (c *ApertisQuotaChecker) CheckQuota(ctx context.Context, ch *ent.Channel) (
 		WithHeader("Content-Type", "application/json").
 		Build()
 
-	resp, err := c.httpClient.Do(ctx, httpRequest)
+	resp, err := httpClientForChannel(c.httpClient, ch).Do(ctx, httpRequest)
 	if err != nil {
 		return QuotaData{
 			Status:       "unknown",

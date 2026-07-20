@@ -8,9 +8,12 @@ package gql
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/looplj/axonhub/internal/authz"
+	"github.com/looplj/axonhub/internal/contexts"
 	"github.com/looplj/axonhub/internal/ent"
+	"github.com/looplj/axonhub/internal/ent/channel"
 	"github.com/looplj/axonhub/internal/ent/model"
 	"github.com/looplj/axonhub/internal/objects"
 	"github.com/looplj/axonhub/internal/scopes"
@@ -103,8 +106,25 @@ func (r *mutationResolver) BulkDeleteModels(ctx context.Context, ids []*objects.
 
 // FetchModels is the resolver for the fetchModels field.
 func (r *queryResolver) FetchModels(ctx context.Context, input biz.FetchModelsInput) (*FetchModelsPayload, error) {
-	if err := authz.RequireScope(ctx, scopes.ScopeWriteChannels); err != nil {
-		return nil, err
+	currentUser, hasCurrentUser := contexts.GetUser(ctx)
+	if !hasCurrentUser || currentUser == nil || currentUser.IsOwner {
+		if err := authz.RequireScope(ctx, scopes.ScopeWriteChannels); err != nil {
+			return nil, err
+		}
+	} else {
+		if input.ChannelID != nil {
+			ownedChannel, getErr := r.client.Channel.Get(ctx, *input.ChannelID)
+			if getErr != nil {
+				return nil, fmt.Errorf("failed to get donated channel: %w", getErr)
+			}
+			if ownedChannel.ExpiresAt != nil && !ownedChannel.ExpiresAt.After(time.Now()) {
+				return nil, fmt.Errorf("donated channel expired")
+			}
+		}
+
+		if validateErr := biz.ValidateDonationChannelConfiguration(ctx, channel.Type(input.ChannelType), &input.BaseURL, nil, nil, nil); validateErr != nil {
+			return nil, fmt.Errorf("invalid donated channel network configuration: %w", validateErr)
+		}
 	}
 
 	// Call the model fetcher service

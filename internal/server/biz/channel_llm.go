@@ -103,14 +103,20 @@ func getProxyConfig(channelSettings *objects.ChannelSettings) *httpclient.ProxyC
 	return channelSettings.Proxy
 }
 
-// getHttpClient returns the injected default HTTP client when no custom proxy is configured,
-// or creates a new one with proxy support (inheriting TLS settings from the default client).
-func (svc *ChannelService) getHttpClient(channelSettings *objects.ChannelSettings) *httpclient.HttpClient {
-	if channelSettings == nil || channelSettings.Proxy == nil {
-		return svc.httpClient
+// getHttpClient returns the channel-specific client. Donated channels keep an
+// explicit URL proxy, but both its dial and the provider target are constrained
+// to public addresses; environment proxies are ignored.
+func (svc *ChannelService) getHttpClient(c *ent.Channel) *httpclient.HttpClient {
+	httpClient := svc.httpClient
+	if c.Settings != nil && c.Settings.Proxy != nil {
+		httpClient = httpClient.WithProxy(c.Settings.Proxy)
 	}
 
-	return svc.httpClient.WithProxy(channelSettings.Proxy)
+	if c.UserID != nil {
+		return httpClient.WithPublicNetworkOnly()
+	}
+
+	return httpClient
 }
 
 // buildChannel creates a Channel with precomputed caches (transformer is set separately).
@@ -450,6 +456,19 @@ func (svc *ChannelService) buildNonDefaultEndpointOutbound(
 
 //nolint:maintidx // Checked.
 func (svc *ChannelService) buildChannelWithTransformer(c *ent.Channel, apiKeyOverride ...string) (*Channel, error) {
+	if c.UserID != nil {
+		// Base and endpoint destinations are enforced by the public-only dialer at
+		// connection time. Keep cache reload non-blocking by validating only the
+		// non-DNS configuration here.
+		if err := validateDonationRuntimeConfiguration(
+			c.Type,
+			&c.Credentials,
+			c.Settings,
+		); err != nil {
+			return nil, fmt.Errorf("invalid donated channel network configuration: %w", err)
+		}
+	}
+
 	// Validate credentials early so we can fail fast without constructing HTTP clients/transformers.
 	//
 	// NOTE: "enabled" keys excludes keys that were explicitly disabled for this channel.
@@ -481,7 +500,7 @@ func (svc *ChannelService) buildChannelWithTransformer(c *ent.Channel, apiKeyOve
 		}
 	}
 
-	httpClient := svc.getHttpClient(c.Settings)
+	httpClient := svc.getHttpClient(c)
 	ch := buildChannel(c, httpClient)
 	if len(apiKeyOverride) > 0 {
 		ch.apiKeyOverride = apiKeyOverride[0]

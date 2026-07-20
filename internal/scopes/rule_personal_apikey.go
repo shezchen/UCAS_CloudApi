@@ -16,14 +16,22 @@ type PersonalKeyProjectFilter interface {
 	Where(entql.P)
 }
 
-// UserPersonalAPIKeyReadRule allows users to view API keys within their project,
-// with the additional restriction that personal keys are only visible to their creator.
-// It replaces UserProjectScopeReadRule for the APIKey schema.
+// UserPersonalAPIKeyReadRule allows the owner to view every API key and limits
+// non-owner users to personal keys they created in the current project. It
+// replaces UserProjectScopeReadRule for the APIKey schema.
 func UserPersonalAPIKeyReadRule(requiredScope ScopeSlug) privacy.QueryRule {
 	return privacy.FilterFunc(func(ctx context.Context, q privacy.Filter) error {
 		currentUser, err := getUserFromContext(ctx)
 		if err != nil {
 			return privacy.Skipf("User not found in context")
+		}
+
+		// The system owner is the global administrator. Allow the query before
+		// applying either the project boundary or the personal-key creator filter;
+		// returning Allow after adding those predicates would make the later
+		// OwnerRule unreachable and hide other users' personal keys from the owner.
+		if currentUser.IsOwner {
+			return privacy.Allowf("Owner user %d can query all API keys", currentUser.ID)
 		}
 
 		projectID, hasProjectID := contexts.GetProjectID(ctx)
@@ -43,9 +51,10 @@ func UserPersonalAPIKeyReadRule(requiredScope ScopeSlug) privacy.QueryRule {
 
 		pf.WhereProjectID(entql.IntEQ(projectID))
 
-		// Personal keys are only visible to their creator, regardless of the user's role
-		pf.Where(entql.Or(
-			entql.FieldNEQ("type", "personal"),
+		// Non-owner users must not see legacy user, service-account, or noauth
+		// keys, even when those keys belong to the same project.
+		pf.Where(entql.And(
+			entql.FieldEQ("type", "personal"),
 			entql.FieldEQ("user_id", currentUser.ID),
 		))
 

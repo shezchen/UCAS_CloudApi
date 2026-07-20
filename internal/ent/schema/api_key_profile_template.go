@@ -78,12 +78,16 @@ func (APIKeyProfileTemplate) Annotations() []schema.Annotation {
 func (APIKeyProfileTemplate) Policy() ent.Policy {
 	return scopes.Policy{
 		Query: scopes.QueryPolicy{
-			scopes.UserProjectScopeReadRule(scopes.ScopeReadAPIKeys),
+			// Profile templates are shared project-wide routing assets. Ordinary
+			// campus members manage only quotas on their personal API keys; project
+			// administrators (or explicitly delegated project writers) manage the
+			// shared templates.
+			scopes.UserProjectScopeReadRule(scopes.ScopeWriteProjects),
 			scopes.APIKeyProjectScopeReadRule(scopes.ScopeReadAPIKeys), // OpenAPI service account 加载模板
 			scopes.OwnerRule(),
 		},
 		Mutation: scopes.MutationPolicy{
-			scopes.UserProjectScopeWriteRule(scopes.ScopeWriteAPIKeys),
+			scopes.UserProjectScopeWriteRule(scopes.ScopeWriteProjects),
 			scopes.OwnerRule(),
 		},
 	}

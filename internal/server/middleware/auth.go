@@ -109,6 +109,25 @@ func WithJWTAuth(auth *biz.AuthService) gin.HandlerFunc {
 	}
 }
 
+// WithOwnerOnly restricts a JWT-authenticated route to the system owner.
+// It must be registered after WithJWTAuth so the current user is available.
+func WithOwnerOnly() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		currentUser, ok := contexts.GetUser(c.Request.Context())
+		if !ok || currentUser == nil {
+			AbortWithError(c, http.StatusUnauthorized, errors.New("Authentication required"))
+			return
+		}
+
+		if !currentUser.IsOwner {
+			AbortWithError(c, http.StatusForbidden, errors.New("Owner access required"))
+			return
+		}
+
+		c.Next()
+	}
+}
+
 var apiKeyAuthConfig = &APIKeyConfig{
 	Headers:       []string{"Authorization"},
 	RequireBearer: true,

@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/looplj/axonhub/internal/authz"
+	"github.com/looplj/axonhub/internal/contexts"
 	"github.com/looplj/axonhub/internal/ent"
 	"github.com/looplj/axonhub/internal/ent/apikey"
 	"github.com/looplj/axonhub/internal/ent/apikeyprofiletemplate"
@@ -28,6 +29,78 @@ func setupTestTemplateService(t *testing.T) (*APIKeyProfileTemplateService, *ent
 	})
 
 	return svc, client
+}
+
+func TestAPIKeyProfileTemplate_ProjectAdministrationBoundary(t *testing.T) {
+	client := enttest.NewEntClient(t, "sqlite3", "file:ent?mode=memory&_fk=1")
+	t.Cleanup(func() { client.Close() })
+
+	setupCtx := ent.NewContext(context.Background(), client)
+	setupCtx = authz.WithTestBypass(setupCtx)
+	password, err := HashPassword("test-password")
+	require.NoError(t, err)
+
+	projectEntity, err := client.Project.Create().
+		SetName(fmt.Sprintf("template-boundary-%d", time.Now().UnixNano())).
+		SetDescription("template boundary test").
+		SetStatus(project.StatusActive).
+		Save(setupCtx)
+	require.NoError(t, err)
+
+	createMember := func(email string, projectOwner bool) *ent.User {
+		member, createErr := client.User.Create().
+			SetEmail(email).
+			SetPassword(password).
+			SetFirstName("Campus").
+			SetLastName("Member").
+			SetStatus(user.StatusActivated).
+			Save(setupCtx)
+		require.NoError(t, createErr)
+
+		_, createErr = client.UserProject.Create().
+			SetUserID(member.ID).
+			SetProjectID(projectEntity.ID).
+			SetIsOwner(projectOwner).
+			SetScopes([]string{"read_api_keys", "write_api_keys"}).
+			Save(setupCtx)
+		require.NoError(t, createErr)
+
+		member, createErr = client.User.Query().
+			Where(user.IDEQ(member.ID)).
+			WithProjectUsers().
+			Only(setupCtx)
+		require.NoError(t, createErr)
+
+		return member
+	}
+
+	ordinary := createMember(fmt.Sprintf("ordinary-%d@mails.ucas.ac.cn", time.Now().UnixNano()), false)
+	projectOwner := createMember(fmt.Sprintf("project-owner-%d@mails.ucas.ac.cn", time.Now().UnixNano()), true)
+
+	template, err := client.APIKeyProfileTemplate.Create().
+		SetName("owner-template").
+		SetProjectID(projectEntity.ID).
+		SetProfile(&objects.APIKeyProfile{Name: "Default"}).
+		Save(setupCtx)
+	require.NoError(t, err)
+
+	userCtx := func(member *ent.User) context.Context {
+		ctx := ent.NewContext(context.Background(), client)
+		ctx = contexts.WithUser(ctx, member)
+		return contexts.WithProjectID(ctx, projectEntity.ID)
+	}
+
+	_, err = client.APIKeyProfileTemplate.Query().All(userCtx(ordinary))
+	require.Error(t, err, "ordinary members must not read project-wide routing templates")
+	_, err = client.APIKeyProfileTemplate.UpdateOneID(template.ID).SetName("hijacked").Save(userCtx(ordinary))
+	require.Error(t, err, "ordinary members must not modify project-wide routing templates")
+
+	visible, err := client.APIKeyProfileTemplate.Query().All(userCtx(projectOwner))
+	require.NoError(t, err)
+	require.Len(t, visible, 1)
+	updated, err := client.APIKeyProfileTemplate.UpdateOneID(template.ID).SetName("managed-by-project-owner").Save(userCtx(projectOwner))
+	require.NoError(t, err)
+	require.Equal(t, "managed-by-project-owner", updated.Name)
 }
 
 func TestAPIKeyProfileTemplate(t *testing.T) {

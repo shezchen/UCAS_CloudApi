@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/looplj/axonhub/internal/contexts"
 	"github.com/looplj/axonhub/internal/ent"
 	"github.com/looplj/axonhub/internal/ent/channel"
 	"github.com/looplj/axonhub/internal/ent/channelmodelprice"
@@ -40,13 +41,17 @@ func (svc *ChannelService) DuplicateChannel(ctx context.Context, sourceID int, i
 			return err
 		}
 
-		prices, err := db.ChannelModelPrice.Query().
-			Where(
-				channelmodelprice.ChannelID(sourceID),
-			).
-			All(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to query source channel model prices: %w", err)
+		var prices []*ent.ChannelModelPrice
+		currentUser, hasCurrentUser := contexts.GetUser(ctx)
+		if !hasCurrentUser || currentUser == nil || currentUser.IsOwner {
+			prices, err = db.ChannelModelPrice.Query().
+				Where(
+					channelmodelprice.ChannelID(sourceID),
+				).
+				All(ctx)
+			if err != nil {
+				return fmt.Errorf("failed to query source channel model prices: %w", err)
+			}
 		}
 
 		now := time.Now()
@@ -84,6 +89,7 @@ func (svc *ChannelService) DuplicateChannel(ctx context.Context, sourceID int, i
 	if err != nil {
 		return nil, err
 	}
+	duplicated = svc.syncDonatedChannelModelsBestEffort(ctx, duplicated)
 
 	svc.asyncReloadChannels()
 

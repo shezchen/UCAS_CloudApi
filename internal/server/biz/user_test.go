@@ -2,6 +2,7 @@ package biz
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -1167,7 +1168,7 @@ func TestUpdateUser_CacheInvalidation(t *testing.T) {
 	require.NoError(t, err, "User should be in cache")
 
 	// Update user
-	newEmail := "newemail@example.com"
+	newEmail := "newemail@ucas.ac.cn"
 	input := ent.UpdateUserInput{
 		Email: &newEmail,
 	}
@@ -1177,6 +1178,117 @@ func TestUpdateUser_CacheInvalidation(t *testing.T) {
 	// Verify cache was invalidated
 	_, err = userService.UserCache.Get(ctx, cacheKey)
 	require.Error(t, err, "User cache should be invalidated after update")
+}
+
+func TestUserService_CreateAndUpdateDailyTokenLimit(t *testing.T) {
+	userService, client := setupTestUserService(t)
+	defer client.Close()
+
+	ctx := ent.NewContext(context.Background(), client)
+	ctx = authz.WithTestBypass(ctx)
+	owner := createOwnerUser(t, ctx, client)
+	ctx = contexts.WithUser(ctx, owner)
+	defaultProject, err := client.Project.Create().SetName("Default").Save(ctx)
+	require.NoError(t, err)
+
+	defaulted, err := userService.CreateUser(ctx, ent.CreateUserInput{
+		Email:    "default-daily-limit@mails.ucas.ac.cn",
+		Password: "password",
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(200_000_000), defaulted.DailyTokenLimit)
+	membership, err := client.UserProject.Query().Where(userproject.UserID(defaulted.ID)).Only(ctx)
+	require.NoError(t, err)
+	require.Equal(t, defaultProject.ID, membership.ProjectID)
+	require.ElementsMatch(t, []string{"read_api_keys", "write_api_keys"}, membership.Scopes)
+
+	createdLimit := int64(123_000_000)
+	created, err := userService.CreateUser(ctx, ent.CreateUserInput{
+		Email:           "daily-limit@ucas.ac.cn",
+		Password:        "password",
+		DailyTokenLimit: &createdLimit,
+	})
+	require.NoError(t, err)
+	require.Equal(t, createdLimit, created.DailyTokenLimit)
+
+	externalEmail := "outside@example.com"
+	_, err = userService.UpdateUser(ctx, created.ID, ent.UpdateUserInput{Email: &externalEmail})
+	require.ErrorIs(t, err, ErrCampusEmailRequired)
+
+	normalizedCampusEmail := "UPDATED@MAILS.UCAS.AC.CN"
+	created, err = userService.UpdateUser(ctx, created.ID, ent.UpdateUserInput{Email: &normalizedCampusEmail})
+	require.NoError(t, err)
+	require.Equal(t, "updated@mails.ucas.ac.cn", created.Email)
+
+	updatedLimit := int64(456_000_000)
+	updated, err := userService.UpdateUser(ctx, created.ID, ent.UpdateUserInput{
+		DailyTokenLimit: &updatedLimit,
+	})
+	require.NoError(t, err)
+	require.Equal(t, updatedLimit, updated.DailyTokenLimit)
+
+	persisted, err := client.User.Get(ctx, created.ID)
+	require.NoError(t, err)
+	require.Equal(t, updatedLimit, persisted.DailyTokenLimit)
+
+	member, err := client.User.Create().
+		SetEmail("member-daily-limit@example.com").
+		SetPassword("password").
+		Save(ctx)
+	require.NoError(t, err)
+	memberCtx := contexts.WithUser(ctx, member)
+
+	unauthorizedLimit := int64(999_000_000)
+	_, err = userService.CreateUser(memberCtx, ent.CreateUserInput{
+		Email:           "member-created@mails.ucas.edu.cn",
+		Password:        "password",
+		DailyTokenLimit: &unauthorizedLimit,
+	})
+	require.ErrorContains(t, err, "only be changed by the system owner")
+
+	_, err = userService.UpdateUser(memberCtx, created.ID, ent.UpdateUserInput{
+		DailyTokenLimit: &unauthorizedLimit,
+	})
+	require.ErrorContains(t, err, "only be changed by the system owner")
+
+	promoteSelf := true
+	_, err = userService.UpdateUser(memberCtx, member.ID, ent.UpdateUserInput{IsOwner: &promoteSelf})
+	require.ErrorContains(t, err, "only be changed by the system owner")
+	member, err = client.User.Get(ctx, member.ID)
+	require.NoError(t, err)
+	require.False(t, member.IsOwner)
+
+	_, err = userService.UpdateUser(memberCtx, member.ID, ent.UpdateUserInput{AppendScopes: []string{"*"}})
+	require.ErrorContains(t, err, "cannot grant scope")
+
+	persisted, err = client.User.Get(ctx, created.ID)
+	require.NoError(t, err)
+	require.Equal(t, updatedLimit, persisted.DailyTokenLimit)
+}
+
+func TestNormalizeCampusRegistrationEmail(t *testing.T) {
+	for _, email := range []string{
+		"student@mails.ucas.ac.cn",
+		"teacher@ucas.ac.cn",
+		"student@mails.ucas.edu.cn",
+		"teacher@ucas.edu.cn",
+		" Student@MAILS.UCAS.AC.CN ",
+	} {
+		normalized, err := normalizeCampusRegistrationEmail(email)
+		require.NoError(t, err, email)
+		require.Equal(t, strings.ToLower(strings.TrimSpace(email)), normalized)
+	}
+
+	for _, email := range []string{
+		"student@example.com",
+		"student@evilucas.ac.cn",
+		"student@department.ucas.ac.cn",
+		"missing-at.ucas.ac.cn",
+		"@ucas.ac.cn",
+	} {
+		_, err := normalizeCampusRegistrationEmail(email)
+		require.ErrorIs(t, err, ErrCampusEmailRequired, email)
+	}
 }
 
 func TestUpdateUserStatus_CacheInvalidation(t *testing.T) {

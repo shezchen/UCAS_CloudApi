@@ -99,6 +99,7 @@ func (s *UsageLogService) CreateUsageLog(ctx context.Context, params CreateUsage
 	}
 
 	client := s.entFromContext(ctx)
+	totalTokens := max(params.Usage.TotalTokens, int64(0))
 
 	mut := client.UsageLog.Create().
 		SetRequestID(params.RequestID).
@@ -107,7 +108,7 @@ func (s *UsageLogService) CreateUsageLog(ctx context.Context, params CreateUsage
 		SetChannelID(params.ChannelID).
 		SetPromptTokens(params.Usage.PromptTokens).
 		SetCompletionTokens(params.Usage.CompletionTokens).
-		SetTotalTokens(params.Usage.TotalTokens).
+		SetTotalTokens(totalTokens).
 		SetSource(params.Source).
 		SetFormat(params.Format)
 
@@ -163,7 +164,7 @@ func (s *UsageLogService) CreateUsageLog(ctx context.Context, params CreateUsage
 			log.Int("usage_log_id", usageLog.ID),
 			log.Int("request_id", params.RequestID),
 			log.String("model_id", params.ActualModelID),
-			log.Int64("total_tokens", params.Usage.TotalTokens),
+			log.Int64("total_tokens", totalTokens),
 		)
 	}
 

@@ -80,10 +80,7 @@ func (c *SyntheticQuotaChecker) CheckQuota(ctx context.Context, ch *ent.Channel)
 		WithHeader("Content-Type", "application/json").
 		Build()
 
-	hc := c.httpClient
-	if ch.Settings != nil && ch.Settings.Proxy != nil {
-		hc = c.httpClient.WithProxy(ch.Settings.Proxy)
-	}
+	hc := httpClientForChannel(c.httpClient, ch)
 
 	resp, err := hc.Do(ctx, httpRequest)
 	if err != nil {

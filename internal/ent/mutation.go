@@ -2014,6 +2014,7 @@ type ChannelMutation struct {
 	base_url                     *string
 	name                         *string
 	status                       *channel.Status
+	expires_at                   *time.Time
 	credentials                  *objects.ChannelCredentials
 	disabled_api_keys            *[]objects.DisabledAPIKey
 	appenddisabled_api_keys      []objects.DisabledAPIKey
@@ -2035,6 +2036,8 @@ type ChannelMutation struct {
 	endpoints                    *[]objects.ChannelEndpoint
 	appendendpoints              []objects.ChannelEndpoint
 	clearedFields                map[string]struct{}
+	user                         *int
+	cleareduser                  bool
 	requests                     map[int]struct{}
 	removedrequests              map[int]struct{}
 	clearedrequests              bool
@@ -2438,6 +2441,104 @@ func (m *ChannelMutation) OldStatus(ctx context.Context) (v channel.Status, err 
 // ResetStatus resets all changes to the "status" field.
 func (m *ChannelMutation) ResetStatus() {
 	m.status = nil
+}
+
+// SetUserID sets the "user_id" field.
+func (m *ChannelMutation) SetUserID(i int) {
+	m.user = &i
+}
+
+// UserID returns the value of the "user_id" field in the mutation.
+func (m *ChannelMutation) UserID() (r int, exists bool) {
+	v := m.user
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUserID returns the old "user_id" field's value of the Channel entity.
+// If the Channel object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ChannelMutation) OldUserID(ctx context.Context) (v *int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUserID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUserID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUserID: %w", err)
+	}
+	return oldValue.UserID, nil
+}
+
+// ClearUserID clears the value of the "user_id" field.
+func (m *ChannelMutation) ClearUserID() {
+	m.user = nil
+	m.clearedFields[channel.FieldUserID] = struct{}{}
+}
+
+// UserIDCleared returns if the "user_id" field was cleared in this mutation.
+func (m *ChannelMutation) UserIDCleared() bool {
+	_, ok := m.clearedFields[channel.FieldUserID]
+	return ok
+}
+
+// ResetUserID resets all changes to the "user_id" field.
+func (m *ChannelMutation) ResetUserID() {
+	m.user = nil
+	delete(m.clearedFields, channel.FieldUserID)
+}
+
+// SetExpiresAt sets the "expires_at" field.
+func (m *ChannelMutation) SetExpiresAt(t time.Time) {
+	m.expires_at = &t
+}
+
+// ExpiresAt returns the value of the "expires_at" field in the mutation.
+func (m *ChannelMutation) ExpiresAt() (r time.Time, exists bool) {
+	v := m.expires_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldExpiresAt returns the old "expires_at" field's value of the Channel entity.
+// If the Channel object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ChannelMutation) OldExpiresAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldExpiresAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldExpiresAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldExpiresAt: %w", err)
+	}
+	return oldValue.ExpiresAt, nil
+}
+
+// ClearExpiresAt clears the value of the "expires_at" field.
+func (m *ChannelMutation) ClearExpiresAt() {
+	m.expires_at = nil
+	m.clearedFields[channel.FieldExpiresAt] = struct{}{}
+}
+
+// ExpiresAtCleared returns if the "expires_at" field was cleared in this mutation.
+func (m *ChannelMutation) ExpiresAtCleared() bool {
+	_, ok := m.clearedFields[channel.FieldExpiresAt]
+	return ok
+}
+
+// ResetExpiresAt resets all changes to the "expires_at" field.
+func (m *ChannelMutation) ResetExpiresAt() {
+	m.expires_at = nil
+	delete(m.clearedFields, channel.FieldExpiresAt)
 }
 
 // SetCredentials sets the "credentials" field.
@@ -3160,6 +3261,33 @@ func (m *ChannelMutation) ResetEndpoints() {
 	delete(m.clearedFields, channel.FieldEndpoints)
 }
 
+// ClearUser clears the "user" edge to the User entity.
+func (m *ChannelMutation) ClearUser() {
+	m.cleareduser = true
+	m.clearedFields[channel.FieldUserID] = struct{}{}
+}
+
+// UserCleared reports if the "user" edge to the User entity was cleared.
+func (m *ChannelMutation) UserCleared() bool {
+	return m.UserIDCleared() || m.cleareduser
+}
+
+// UserIDs returns the "user" edge IDs in the mutation.
+// Note that IDs always returns len(IDs) <= 1 for unique edges, and you should use
+// UserID instead. It exists only for internal usage by the builders.
+func (m *ChannelMutation) UserIDs() (ids []int) {
+	if id := m.user; id != nil {
+		ids = append(ids, *id)
+	}
+	return
+}
+
+// ResetUser resets all changes to the "user" edge.
+func (m *ChannelMutation) ResetUser() {
+	m.user = nil
+	m.cleareduser = false
+}
+
 // AddRequestIDs adds the "requests" edge to the Request entity by ids.
 func (m *ChannelMutation) AddRequestIDs(ids ...int) {
 	if m.requests == nil {
@@ -3503,7 +3631,7 @@ func (m *ChannelMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ChannelMutation) Fields() []string {
-	fields := make([]string, 0, 21)
+	fields := make([]string, 0, 23)
 	if m.created_at != nil {
 		fields = append(fields, channel.FieldCreatedAt)
 	}
@@ -3524,6 +3652,12 @@ func (m *ChannelMutation) Fields() []string {
 	}
 	if m.status != nil {
 		fields = append(fields, channel.FieldStatus)
+	}
+	if m.user != nil {
+		fields = append(fields, channel.FieldUserID)
+	}
+	if m.expires_at != nil {
+		fields = append(fields, channel.FieldExpiresAt)
 	}
 	if m.credentials != nil {
 		fields = append(fields, channel.FieldCredentials)
@@ -3589,6 +3723,10 @@ func (m *ChannelMutation) Field(name string) (ent.Value, bool) {
 		return m.Name()
 	case channel.FieldStatus:
 		return m.Status()
+	case channel.FieldUserID:
+		return m.UserID()
+	case channel.FieldExpiresAt:
+		return m.ExpiresAt()
 	case channel.FieldCredentials:
 		return m.Credentials()
 	case channel.FieldDisabledAPIKeys:
@@ -3640,6 +3778,10 @@ func (m *ChannelMutation) OldField(ctx context.Context, name string) (ent.Value,
 		return m.OldName(ctx)
 	case channel.FieldStatus:
 		return m.OldStatus(ctx)
+	case channel.FieldUserID:
+		return m.OldUserID(ctx)
+	case channel.FieldExpiresAt:
+		return m.OldExpiresAt(ctx)
 	case channel.FieldCredentials:
 		return m.OldCredentials(ctx)
 	case channel.FieldDisabledAPIKeys:
@@ -3725,6 +3867,20 @@ func (m *ChannelMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetStatus(v)
+		return nil
+	case channel.FieldUserID:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUserID(v)
+		return nil
+	case channel.FieldExpiresAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetExpiresAt(v)
 		return nil
 	case channel.FieldCredentials:
 		v, ok := value.(objects.ChannelCredentials)
@@ -3884,6 +4040,12 @@ func (m *ChannelMutation) ClearedFields() []string {
 	if m.FieldCleared(channel.FieldBaseURL) {
 		fields = append(fields, channel.FieldBaseURL)
 	}
+	if m.FieldCleared(channel.FieldUserID) {
+		fields = append(fields, channel.FieldUserID)
+	}
+	if m.FieldCleared(channel.FieldExpiresAt) {
+		fields = append(fields, channel.FieldExpiresAt)
+	}
 	if m.FieldCleared(channel.FieldDisabledAPIKeys) {
 		fields = append(fields, channel.FieldDisabledAPIKeys)
 	}
@@ -3927,6 +4089,12 @@ func (m *ChannelMutation) ClearField(name string) error {
 	switch name {
 	case channel.FieldBaseURL:
 		m.ClearBaseURL()
+		return nil
+	case channel.FieldUserID:
+		m.ClearUserID()
+		return nil
+	case channel.FieldExpiresAt:
+		m.ClearExpiresAt()
 		return nil
 	case channel.FieldDisabledAPIKeys:
 		m.ClearDisabledAPIKeys()
@@ -3984,6 +4152,12 @@ func (m *ChannelMutation) ResetField(name string) error {
 	case channel.FieldStatus:
 		m.ResetStatus()
 		return nil
+	case channel.FieldUserID:
+		m.ResetUserID()
+		return nil
+	case channel.FieldExpiresAt:
+		m.ResetExpiresAt()
+		return nil
 	case channel.FieldCredentials:
 		m.ResetCredentials()
 		return nil
@@ -4032,7 +4206,10 @@ func (m *ChannelMutation) ResetField(name string) error {
 
 // AddedEdges returns all edge names that were set/added in this mutation.
 func (m *ChannelMutation) AddedEdges() []string {
-	edges := make([]string, 0, 6)
+	edges := make([]string, 0, 7)
+	if m.user != nil {
+		edges = append(edges, channel.EdgeUser)
+	}
 	if m.requests != nil {
 		edges = append(edges, channel.EdgeRequests)
 	}
@@ -4058,6 +4235,10 @@ func (m *ChannelMutation) AddedEdges() []string {
 // name in this mutation.
 func (m *ChannelMutation) AddedIDs(name string) []ent.Value {
 	switch name {
+	case channel.EdgeUser:
+		if id := m.user; id != nil {
+			return []ent.Value{*id}
+		}
 	case channel.EdgeRequests:
 		ids := make([]ent.Value, 0, len(m.requests))
 		for id := range m.requests {
@@ -4098,7 +4279,7 @@ func (m *ChannelMutation) AddedIDs(name string) []ent.Value {
 
 // RemovedEdges returns all edge names that were removed in this mutation.
 func (m *ChannelMutation) RemovedEdges() []string {
-	edges := make([]string, 0, 6)
+	edges := make([]string, 0, 7)
 	if m.removedrequests != nil {
 		edges = append(edges, channel.EdgeRequests)
 	}
@@ -4157,7 +4338,10 @@ func (m *ChannelMutation) RemovedIDs(name string) []ent.Value {
 
 // ClearedEdges returns all edge names that were cleared in this mutation.
 func (m *ChannelMutation) ClearedEdges() []string {
-	edges := make([]string, 0, 6)
+	edges := make([]string, 0, 7)
+	if m.cleareduser {
+		edges = append(edges, channel.EdgeUser)
+	}
 	if m.clearedrequests {
 		edges = append(edges, channel.EdgeRequests)
 	}
@@ -4183,6 +4367,8 @@ func (m *ChannelMutation) ClearedEdges() []string {
 // was cleared in this mutation.
 func (m *ChannelMutation) EdgeCleared(name string) bool {
 	switch name {
+	case channel.EdgeUser:
+		return m.cleareduser
 	case channel.EdgeRequests:
 		return m.clearedrequests
 	case channel.EdgeExecutions:
@@ -4203,6 +4389,9 @@ func (m *ChannelMutation) EdgeCleared(name string) bool {
 // if that edge is not defined in the schema.
 func (m *ChannelMutation) ClearEdge(name string) error {
 	switch name {
+	case channel.EdgeUser:
+		m.ClearUser()
+		return nil
 	case channel.EdgeProviderQuotaStatus:
 		m.ClearProviderQuotaStatus()
 		return nil
@@ -4214,6 +4403,9 @@ func (m *ChannelMutation) ClearEdge(name string) error {
 // It returns an error if the edge is not defined in the schema.
 func (m *ChannelMutation) ResetEdge(name string) error {
 	switch name {
+	case channel.EdgeUser:
+		m.ResetUser()
+		return nil
 	case channel.EdgeRequests:
 		m.ResetRequests()
 		return nil
@@ -25132,6 +25324,8 @@ type UserMutation struct {
 	last_name                         *string
 	avatar                            *string
 	is_owner                          *bool
+	daily_token_limit                 *int64
+	adddaily_token_limit              *int64
 	scopes                            *[]string
 	appendscopes                      []string
 	clearedFields                     map[string]struct{}
@@ -25141,6 +25335,9 @@ type UserMutation struct {
 	api_keys                          map[int]struct{}
 	removedapi_keys                   map[int]struct{}
 	clearedapi_keys                   bool
+	donated_channels                  map[int]struct{}
+	removeddonated_channels           map[int]struct{}
+	cleareddonated_channels           bool
 	roles                             map[int]struct{}
 	removedroles                      map[int]struct{}
 	clearedroles                      bool
@@ -25688,6 +25885,62 @@ func (m *UserMutation) ResetIsOwner() {
 	m.is_owner = nil
 }
 
+// SetDailyTokenLimit sets the "daily_token_limit" field.
+func (m *UserMutation) SetDailyTokenLimit(i int64) {
+	m.daily_token_limit = &i
+	m.adddaily_token_limit = nil
+}
+
+// DailyTokenLimit returns the value of the "daily_token_limit" field in the mutation.
+func (m *UserMutation) DailyTokenLimit() (r int64, exists bool) {
+	v := m.daily_token_limit
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDailyTokenLimit returns the old "daily_token_limit" field's value of the User entity.
+// If the User object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserMutation) OldDailyTokenLimit(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDailyTokenLimit is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDailyTokenLimit requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDailyTokenLimit: %w", err)
+	}
+	return oldValue.DailyTokenLimit, nil
+}
+
+// AddDailyTokenLimit adds i to the "daily_token_limit" field.
+func (m *UserMutation) AddDailyTokenLimit(i int64) {
+	if m.adddaily_token_limit != nil {
+		*m.adddaily_token_limit += i
+	} else {
+		m.adddaily_token_limit = &i
+	}
+}
+
+// AddedDailyTokenLimit returns the value that was added to the "daily_token_limit" field in this mutation.
+func (m *UserMutation) AddedDailyTokenLimit() (r int64, exists bool) {
+	v := m.adddaily_token_limit
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetDailyTokenLimit resets all changes to the "daily_token_limit" field.
+func (m *UserMutation) ResetDailyTokenLimit() {
+	m.daily_token_limit = nil
+	m.adddaily_token_limit = nil
+}
+
 // SetScopes sets the "scopes" field.
 func (m *UserMutation) SetScopes(s []string) {
 	m.scopes = &s
@@ -25859,6 +26112,60 @@ func (m *UserMutation) ResetAPIKeys() {
 	m.api_keys = nil
 	m.clearedapi_keys = false
 	m.removedapi_keys = nil
+}
+
+// AddDonatedChannelIDs adds the "donated_channels" edge to the Channel entity by ids.
+func (m *UserMutation) AddDonatedChannelIDs(ids ...int) {
+	if m.donated_channels == nil {
+		m.donated_channels = make(map[int]struct{})
+	}
+	for i := range ids {
+		m.donated_channels[ids[i]] = struct{}{}
+	}
+}
+
+// ClearDonatedChannels clears the "donated_channels" edge to the Channel entity.
+func (m *UserMutation) ClearDonatedChannels() {
+	m.cleareddonated_channels = true
+}
+
+// DonatedChannelsCleared reports if the "donated_channels" edge to the Channel entity was cleared.
+func (m *UserMutation) DonatedChannelsCleared() bool {
+	return m.cleareddonated_channels
+}
+
+// RemoveDonatedChannelIDs removes the "donated_channels" edge to the Channel entity by IDs.
+func (m *UserMutation) RemoveDonatedChannelIDs(ids ...int) {
+	if m.removeddonated_channels == nil {
+		m.removeddonated_channels = make(map[int]struct{})
+	}
+	for i := range ids {
+		delete(m.donated_channels, ids[i])
+		m.removeddonated_channels[ids[i]] = struct{}{}
+	}
+}
+
+// RemovedDonatedChannels returns the removed IDs of the "donated_channels" edge to the Channel entity.
+func (m *UserMutation) RemovedDonatedChannelsIDs() (ids []int) {
+	for id := range m.removeddonated_channels {
+		ids = append(ids, id)
+	}
+	return
+}
+
+// DonatedChannelsIDs returns the "donated_channels" edge IDs in the mutation.
+func (m *UserMutation) DonatedChannelsIDs() (ids []int) {
+	for id := range m.donated_channels {
+		ids = append(ids, id)
+	}
+	return
+}
+
+// ResetDonatedChannels resets all changes to the "donated_channels" edge.
+func (m *UserMutation) ResetDonatedChannels() {
+	m.donated_channels = nil
+	m.cleareddonated_channels = false
+	m.removeddonated_channels = nil
 }
 
 // AddRoleIDs adds the "roles" edge to the Role entity by ids.
@@ -26165,7 +26472,7 @@ func (m *UserMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UserMutation) Fields() []string {
-	fields := make([]string, 0, 12)
+	fields := make([]string, 0, 13)
 	if m.created_at != nil {
 		fields = append(fields, user.FieldCreatedAt)
 	}
@@ -26198,6 +26505,9 @@ func (m *UserMutation) Fields() []string {
 	}
 	if m.is_owner != nil {
 		fields = append(fields, user.FieldIsOwner)
+	}
+	if m.daily_token_limit != nil {
+		fields = append(fields, user.FieldDailyTokenLimit)
 	}
 	if m.scopes != nil {
 		fields = append(fields, user.FieldScopes)
@@ -26232,6 +26542,8 @@ func (m *UserMutation) Field(name string) (ent.Value, bool) {
 		return m.Avatar()
 	case user.FieldIsOwner:
 		return m.IsOwner()
+	case user.FieldDailyTokenLimit:
+		return m.DailyTokenLimit()
 	case user.FieldScopes:
 		return m.Scopes()
 	}
@@ -26265,6 +26577,8 @@ func (m *UserMutation) OldField(ctx context.Context, name string) (ent.Value, er
 		return m.OldAvatar(ctx)
 	case user.FieldIsOwner:
 		return m.OldIsOwner(ctx)
+	case user.FieldDailyTokenLimit:
+		return m.OldDailyTokenLimit(ctx)
 	case user.FieldScopes:
 		return m.OldScopes(ctx)
 	}
@@ -26353,6 +26667,13 @@ func (m *UserMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetIsOwner(v)
 		return nil
+	case user.FieldDailyTokenLimit:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDailyTokenLimit(v)
+		return nil
 	case user.FieldScopes:
 		v, ok := value.([]string)
 		if !ok {
@@ -26371,6 +26692,9 @@ func (m *UserMutation) AddedFields() []string {
 	if m.adddeleted_at != nil {
 		fields = append(fields, user.FieldDeletedAt)
 	}
+	if m.adddaily_token_limit != nil {
+		fields = append(fields, user.FieldDailyTokenLimit)
+	}
 	return fields
 }
 
@@ -26381,6 +26705,8 @@ func (m *UserMutation) AddedField(name string) (ent.Value, bool) {
 	switch name {
 	case user.FieldDeletedAt:
 		return m.AddedDeletedAt()
+	case user.FieldDailyTokenLimit:
+		return m.AddedDailyTokenLimit()
 	}
 	return nil, false
 }
@@ -26396,6 +26722,13 @@ func (m *UserMutation) AddField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddDeletedAt(v)
+		return nil
+	case user.FieldDailyTokenLimit:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddDailyTokenLimit(v)
 		return nil
 	}
 	return fmt.Errorf("unknown User numeric field %s", name)
@@ -26472,6 +26805,9 @@ func (m *UserMutation) ResetField(name string) error {
 	case user.FieldIsOwner:
 		m.ResetIsOwner()
 		return nil
+	case user.FieldDailyTokenLimit:
+		m.ResetDailyTokenLimit()
+		return nil
 	case user.FieldScopes:
 		m.ResetScopes()
 		return nil
@@ -26481,12 +26817,15 @@ func (m *UserMutation) ResetField(name string) error {
 
 // AddedEdges returns all edge names that were set/added in this mutation.
 func (m *UserMutation) AddedEdges() []string {
-	edges := make([]string, 0, 7)
+	edges := make([]string, 0, 8)
 	if m.projects != nil {
 		edges = append(edges, user.EdgeProjects)
 	}
 	if m.api_keys != nil {
 		edges = append(edges, user.EdgeAPIKeys)
+	}
+	if m.donated_channels != nil {
+		edges = append(edges, user.EdgeDonatedChannels)
 	}
 	if m.roles != nil {
 		edges = append(edges, user.EdgeRoles)
@@ -26519,6 +26858,12 @@ func (m *UserMutation) AddedIDs(name string) []ent.Value {
 	case user.EdgeAPIKeys:
 		ids := make([]ent.Value, 0, len(m.api_keys))
 		for id := range m.api_keys {
+			ids = append(ids, id)
+		}
+		return ids
+	case user.EdgeDonatedChannels:
+		ids := make([]ent.Value, 0, len(m.donated_channels))
+		for id := range m.donated_channels {
 			ids = append(ids, id)
 		}
 		return ids
@@ -26558,12 +26903,15 @@ func (m *UserMutation) AddedIDs(name string) []ent.Value {
 
 // RemovedEdges returns all edge names that were removed in this mutation.
 func (m *UserMutation) RemovedEdges() []string {
-	edges := make([]string, 0, 7)
+	edges := make([]string, 0, 8)
 	if m.removedprojects != nil {
 		edges = append(edges, user.EdgeProjects)
 	}
 	if m.removedapi_keys != nil {
 		edges = append(edges, user.EdgeAPIKeys)
+	}
+	if m.removeddonated_channels != nil {
+		edges = append(edges, user.EdgeDonatedChannels)
 	}
 	if m.removedroles != nil {
 		edges = append(edges, user.EdgeRoles)
@@ -26596,6 +26944,12 @@ func (m *UserMutation) RemovedIDs(name string) []ent.Value {
 	case user.EdgeAPIKeys:
 		ids := make([]ent.Value, 0, len(m.removedapi_keys))
 		for id := range m.removedapi_keys {
+			ids = append(ids, id)
+		}
+		return ids
+	case user.EdgeDonatedChannels:
+		ids := make([]ent.Value, 0, len(m.removeddonated_channels))
+		for id := range m.removeddonated_channels {
 			ids = append(ids, id)
 		}
 		return ids
@@ -26635,12 +26989,15 @@ func (m *UserMutation) RemovedIDs(name string) []ent.Value {
 
 // ClearedEdges returns all edge names that were cleared in this mutation.
 func (m *UserMutation) ClearedEdges() []string {
-	edges := make([]string, 0, 7)
+	edges := make([]string, 0, 8)
 	if m.clearedprojects {
 		edges = append(edges, user.EdgeProjects)
 	}
 	if m.clearedapi_keys {
 		edges = append(edges, user.EdgeAPIKeys)
+	}
+	if m.cleareddonated_channels {
+		edges = append(edges, user.EdgeDonatedChannels)
 	}
 	if m.clearedroles {
 		edges = append(edges, user.EdgeRoles)
@@ -26668,6 +27025,8 @@ func (m *UserMutation) EdgeCleared(name string) bool {
 		return m.clearedprojects
 	case user.EdgeAPIKeys:
 		return m.clearedapi_keys
+	case user.EdgeDonatedChannels:
+		return m.cleareddonated_channels
 	case user.EdgeRoles:
 		return m.clearedroles
 	case user.EdgeChannelOverrideTemplates:
@@ -26699,6 +27058,9 @@ func (m *UserMutation) ResetEdge(name string) error {
 		return nil
 	case user.EdgeAPIKeys:
 		m.ResetAPIKeys()
+		return nil
+	case user.EdgeDonatedChannels:
+		m.ResetDonatedChannels()
 		return nil
 	case user.EdgeRoles:
 		m.ResetRoles()

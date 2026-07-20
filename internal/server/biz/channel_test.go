@@ -3,14 +3,18 @@ package biz
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/require"
 
 	"github.com/looplj/axonhub/internal/authz"
+	"github.com/looplj/axonhub/internal/contexts"
 	"github.com/looplj/axonhub/internal/ent"
 	"github.com/looplj/axonhub/internal/ent/channel"
 	"github.com/looplj/axonhub/internal/ent/enttest"
+	"github.com/looplj/axonhub/internal/ent/schema/schematype"
+	"github.com/looplj/axonhub/internal/ent/user"
 	"github.com/looplj/axonhub/internal/objects"
 )
 
@@ -1016,4 +1020,389 @@ func TestChannelService_BulkCreateChannels(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
+}
+
+func createChannelTestUser(t *testing.T, client *ent.Client, ctx context.Context, email string, owner bool) *ent.User {
+	t.Helper()
+
+	created, err := client.User.Create().
+		SetEmail(email).
+		SetPassword("test-password-hash").
+		SetStatus(user.StatusActivated).
+		SetIsOwner(owner).
+		Save(ctx)
+	require.NoError(t, err)
+
+	return created
+}
+
+func testCreateChannelInput(name string, expiresAt *time.Time) ent.CreateChannelInput {
+	return ent.CreateChannelInput{
+		Type:                    channel.TypeOpenai,
+		Name:                    name,
+		BaseURL:                 new("https://8.8.8.8/v1"),
+		Credentials:             objects.ChannelCredentials{APIKey: "secret-" + name},
+		SupportedModels:         []string{"model-" + name},
+		AutoSyncSupportedModels: new(false),
+		DefaultTestModel:        "model-" + name,
+		ExpiresAt:               expiresAt,
+	}
+}
+
+const validDonationGCPJSON = `{
+	"type":"service_account",
+	"token_uri":"https://oauth2.googleapis.com/token",
+	"auth_uri":"https://accounts.google.com/o/oauth2/auth",
+	"auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs",
+	"client_x509_cert_url":"https://www.googleapis.com/robot/v1/metadata/x509/test%40example.com",
+	"universe_domain":"googleapis.com"
+}`
+
+func TestChannelService_DonationOwnershipAndExpiryOnCreate(t *testing.T) {
+	svc, client := setupTestChannelService(t)
+	defer svc.Stop()
+	defer client.Close()
+
+	setupCtx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+	donor := createChannelTestUser(t, client, setupCtx, "donor@example.com", false)
+	other := createChannelTestUser(t, client, setupCtx, "other@example.com", false)
+	owner := createChannelTestUser(t, client, setupCtx, "owner@example.com", true)
+	donorCtx := contexts.WithUser(ent.NewContext(context.Background(), client), donor)
+	otherCtx := contexts.WithUser(ent.NewContext(context.Background(), client), other)
+	ownerCtx := contexts.WithUser(ent.NewContext(context.Background(), client), owner)
+
+	_, err := svc.CreateChannel(donorCtx, testCreateChannelInput("missing-expiry", nil))
+	require.ErrorContains(t, err, "expires at is required")
+
+	past := time.Now().Add(-time.Minute)
+	_, err = svc.CreateChannel(donorCtx, testCreateChannelInput("past-expiry", &past))
+	require.ErrorContains(t, err, "must be in the future")
+
+	future := time.Now().Add(time.Hour)
+	privateInput := testCreateChannelInput("private-url", &future)
+	privateInput.BaseURL = new("https://127.0.0.1/v1")
+	_, err = svc.CreateChannel(donorCtx, privateInput)
+	require.ErrorContains(t, err, "restricted address")
+
+	proxyInput := testCreateChannelInput("custom-proxy", &future)
+	proxyInput.Settings = &objects.ChannelSettings{
+		Proxy: &objects.ProxyConfig{Type: objects.ProxyType("url"), URL: "http://127.0.0.1:8080"},
+	}
+	_, err = svc.CreateChannel(donorCtx, proxyInput)
+	require.ErrorContains(t, err, "restricted address")
+
+	publicProxyInput := testCreateChannelInput("public-custom-proxy", &future)
+	publicProxyInput.Settings = &objects.ChannelSettings{
+		Proxy: &objects.ProxyConfig{Type: objects.ProxyType("url"), URL: "http://8.8.8.8:8080"},
+	}
+	proxiedDonation, err := svc.CreateChannel(donorCtx, publicProxyInput)
+	require.NoError(t, err)
+	require.Equal(t, "http://8.8.8.8:8080", proxiedDonation.Settings.Proxy.URL)
+
+	donated, err := svc.CreateChannel(donorCtx, testCreateChannelInput("donated", &future))
+	require.NoError(t, err)
+	require.NotNil(t, donated.UserID)
+	require.Equal(t, donor.ID, *donated.UserID)
+	require.NotNil(t, donated.ExpiresAt)
+	require.WithinDuration(t, future, *donated.ExpiresAt, time.Millisecond)
+
+	orderingWeight := 100
+	_, err = svc.UpdateChannel(donorCtx, donated.ID, &ent.UpdateChannelInput{OrderingWeight: &orderingWeight})
+	require.ErrorContains(t, err, "only be changed by the system owner")
+	_, err = svc.BulkUpdateChannelOrdering(donorCtx, []*ChannelOrderingItem{{ID: donated.ID, OrderingWeight: orderingWeight}})
+	require.ErrorContains(t, err, "only be changed by the system owner")
+
+	privateUpdateURL := "https://169.254.169.254/latest/meta-data"
+	_, err = svc.UpdateChannel(donorCtx, donated.ID, &ent.UpdateChannelInput{BaseURL: &privateUpdateURL})
+	require.ErrorContains(t, err, "restricted address")
+
+	_, err = svc.UpdateChannel(donorCtx, donated.ID, &ent.UpdateChannelInput{
+		Settings: &objects.ChannelSettings{
+			Proxy: &objects.ProxyConfig{Type: objects.ProxyType("url"), URL: "http://127.0.0.1:8080"},
+		},
+	})
+	require.ErrorContains(t, err, "restricted address")
+
+	privateEndpoint := DefaultEndpointsForChannelType(channel.TypeOpenai)[0]
+	privateEndpoint.BaseURL = "https://10.0.0.1/v1"
+	_, err = svc.UpdateChannel(donorCtx, donated.ID, &ent.UpdateChannelInput{
+		Endpoints: []objects.ChannelEndpoint{privateEndpoint},
+	})
+	require.ErrorContains(t, err, "endpoint[0]")
+
+	_, err = svc.SaveChannelEndpoints(donorCtx, SaveChannelEndpointsInput{
+		ChannelID: objects.GUID{Type: "Channel", ID: donated.ID},
+		Endpoints: []objects.ChannelEndpoint{privateEndpoint},
+	})
+	require.ErrorContains(t, err, "endpoint[0]")
+
+	gcpInput := testCreateChannelInput("donated-gcp", &future)
+	gcpInput.Type = channel.TypeAnthropicGcp
+	gcpInput.Credentials = objects.ChannelCredentials{GCP: &objects.GCPCredential{
+		Region:    "us-central1",
+		ProjectID: "campus-project",
+		JSONData:  validDonationGCPJSON,
+	}}
+	gcpChannel, err := svc.CreateChannel(donorCtx, gcpInput)
+	require.NoError(t, err)
+	updatedRemark := "updated without resubmitting credentials"
+	updatedGCPChannel, err := svc.UpdateChannel(donorCtx, gcpChannel.ID, &ent.UpdateChannelInput{Remark: &updatedRemark})
+	require.NoError(t, err)
+	require.Equal(t, validDonationGCPJSON, updatedGCPChannel.Credentials.GCP.JSONData)
+
+	maliciousGCPInput := testCreateChannelInput("malicious-gcp", &future)
+	maliciousGCPInput.Type = channel.TypeAnthropicGcp
+	maliciousGCPInput.Credentials = objects.ChannelCredentials{GCP: &objects.GCPCredential{
+		Region:    "global",
+		ProjectID: "campus-project",
+		JSONData:  `{"type":"service_account","token_uri":"https://169.254.169.254/token"}`,
+	}}
+	_, err = svc.CreateChannel(donorCtx, maliciousGCPInput)
+	require.ErrorContains(t, err, "token_uri")
+
+	visibleToDonor, err := client.Channel.Query().All(donorCtx)
+	require.NoError(t, err)
+	require.Len(t, visibleToDonor, 3)
+	require.ElementsMatch(t, []int{donated.ID, proxiedDonation.ID, gcpChannel.ID}, []int{
+		visibleToDonor[0].ID,
+		visibleToDonor[1].ID,
+		visibleToDonor[2].ID,
+	})
+
+	visibleToOther, err := client.Channel.Query().All(otherCtx)
+	require.NoError(t, err)
+	require.Empty(t, visibleToOther)
+
+	global, err := svc.CreateChannel(ownerCtx, testCreateChannelInput("global", nil))
+	require.NoError(t, err)
+	require.Nil(t, global.UserID)
+	require.Nil(t, global.ExpiresAt)
+
+	ownerLocalInput := testCreateChannelInput("owner-local", nil)
+	ownerLocalInput.BaseURL = new("http://127.0.0.1:11434/v1")
+	ownerLocal, err := svc.CreateChannel(ownerCtx, ownerLocalInput)
+	require.NoError(t, err)
+	require.Nil(t, ownerLocal.UserID)
+
+	ownerExpiry := time.Now().Add(2 * time.Hour)
+	expiringGlobal, err := svc.CreateChannel(ownerCtx, testCreateChannelInput("expiring-global", &ownerExpiry))
+	require.NoError(t, err)
+	require.Nil(t, expiringGlobal.UserID)
+	require.NotNil(t, expiringGlobal.ExpiresAt)
+}
+
+func TestChannelService_ExpiredChannelCannotUpdateOrEnable(t *testing.T) {
+	svc, client := setupTestChannelService(t)
+	defer svc.Stop()
+	defer client.Close()
+
+	setupCtx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+	donor := createChannelTestUser(t, client, setupCtx, "expired-donor@example.com", false)
+	past := time.Now().Add(-time.Minute)
+	expired, err := client.Channel.Create().
+		SetType(channel.TypeOpenai).
+		SetName("expired donation").
+		SetCredentials(objects.ChannelCredentials{APIKey: "expired-secret"}).
+		SetSupportedModels([]string{"expired-model"}).
+		SetDefaultTestModel("expired-model").
+		SetStatus(channel.StatusDisabled).
+		SetUserID(donor.ID).
+		SetExpiresAt(past).
+		Save(setupCtx)
+	require.NoError(t, err)
+
+	donorCtx := contexts.WithUser(ent.NewContext(context.Background(), client), donor)
+	newName := "should not update"
+	_, err = svc.UpdateChannel(donorCtx, expired.ID, &ent.UpdateChannelInput{Name: &newName})
+	require.ErrorContains(t, err, "channel expired")
+
+	_, err = svc.UpdateChannelStatus(donorCtx, expired.ID, channel.StatusEnabled)
+	require.ErrorContains(t, err, "channel expired")
+
+	_, err = svc.UpdateChannelStatus(donorCtx, expired.ID, channel.StatusArchived)
+	require.NoError(t, err)
+}
+
+func TestChannelService_DeletionRulesForDonatedChannels(t *testing.T) {
+	svc, client := setupTestChannelService(t)
+	defer svc.Stop()
+	defer client.Close()
+
+	setupCtx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+	donor := createChannelTestUser(t, client, setupCtx, "delete-donor@example.com", false)
+	owner := createChannelTestUser(t, client, setupCtx, "delete-owner@example.com", true)
+	donorCtx := contexts.WithUser(ent.NewContext(context.Background(), client), donor)
+	ownerCtx := contexts.WithUser(ent.NewContext(context.Background(), client), owner)
+	future := time.Now().Add(time.Hour)
+
+	activeDonation, err := client.Channel.Create().
+		SetType(channel.TypeOpenai).
+		SetName("active donation").
+		SetBaseURL("https://secret-user:secret-password@example.com/v1?token=secret").
+		SetCredentials(objects.ChannelCredentials{APIKey: "active-secret"}).
+		SetDisabledAPIKeys([]objects.DisabledAPIKey{{Key: "disabled-active-secret", DisabledAt: time.Now()}}).
+		SetSupportedModels([]string{"active-model"}).
+		SetDefaultTestModel("active-model").
+		SetSettings(&objects.ChannelSettings{
+			ProviderQuota: &objects.ChannelProviderQuotaSettings{
+				OpencodeGo: &objects.OpenCodeGoQuotaSettings{AuthCookie: "quota-cookie-secret"},
+			},
+		}).
+		SetEndpoints([]objects.ChannelEndpoint{{BaseURL: "https://endpoint.example.com?secret=value"}}).
+		SetUserID(donor.ID).
+		SetExpiresAt(future).
+		Save(setupCtx)
+	require.NoError(t, err)
+
+	err = svc.DeleteChannel(ownerCtx, activeDonation.ID)
+	require.ErrorContains(t, err, "only be deleted by its donor")
+
+	err = svc.DeleteChannel(donorCtx, activeDonation.ID)
+	require.NoError(t, err)
+	deletedDonation, err := client.Channel.Get(schematype.SkipSoftDelete(setupCtx), activeDonation.ID)
+	require.NoError(t, err)
+	require.NotZero(t, deletedDonation.DeletedAt)
+	require.Empty(t, deletedDonation.BaseURL)
+	require.Empty(t, deletedDonation.Credentials.APIKey)
+	require.Empty(t, deletedDonation.DisabledAPIKeys)
+	require.Nil(t, deletedDonation.Settings)
+	require.Empty(t, deletedDonation.Endpoints)
+
+	bulkDonation, err := client.Channel.Create().
+		SetType(channel.TypeOpenai).
+		SetName("bulk active donation").
+		SetCredentials(objects.ChannelCredentials{APIKey: "bulk-secret"}).
+		SetSupportedModels([]string{"bulk-model"}).
+		SetDefaultTestModel("bulk-model").
+		SetUserID(donor.ID).
+		SetExpiresAt(future).
+		Save(setupCtx)
+	require.NoError(t, err)
+
+	global, err := client.Channel.Create().
+		SetType(channel.TypeOpenai).
+		SetName("owner global deletion").
+		SetCredentials(objects.ChannelCredentials{APIKey: "global-secret"}).
+		SetSupportedModels([]string{"global-model"}).
+		SetDefaultTestModel("global-model").
+		Save(setupCtx)
+	require.NoError(t, err)
+
+	err = svc.BulkDeleteChannels(ownerCtx, []int{bulkDonation.ID, global.ID})
+	require.ErrorContains(t, err, "only be deleted by its donor")
+	_, err = client.Channel.Get(ownerCtx, global.ID)
+	require.NoError(t, err, "bulk deletion must reject the whole request before deleting globals")
+
+	err = svc.DeleteChannel(ownerCtx, global.ID)
+	require.NoError(t, err)
+}
+
+func TestChannelService_ExpiryExcludesRoutingModelsAndCleansSecrets(t *testing.T) {
+	svc, client := setupTestChannelService(t)
+	defer svc.Stop()
+	defer client.Close()
+
+	oldAsyncReloadDisabled := asyncReloadDisabled
+	asyncReloadDisabled = true
+	defer func() { asyncReloadDisabled = oldAsyncReloadDisabled }()
+
+	setupCtx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+	donor := createChannelTestUser(t, client, setupCtx, "cleanup-donor@example.com", false)
+	now := time.Now()
+	past := now.Add(-time.Minute)
+	future := now.Add(time.Hour)
+
+	expiredDonation, err := client.Channel.Create().
+		SetType(channel.TypeOpenai).
+		SetName("expired routed donation").
+		SetCredentials(objects.ChannelCredentials{APIKey: "expired-donation-secret"}).
+		SetDisabledAPIKeys([]objects.DisabledAPIKey{{Key: "disabled-secret", DisabledAt: past}}).
+		SetSupportedModels([]string{"expired-donation-model"}).
+		SetDefaultTestModel("expired-donation-model").
+		SetStatus(channel.StatusEnabled).
+		SetAutoSyncSupportedModels(true).
+		SetUserID(donor.ID).
+		SetExpiresAt(past).
+		Save(setupCtx)
+	require.NoError(t, err)
+
+	expiredGlobal, err := client.Channel.Create().
+		SetType(channel.TypeOpenai).
+		SetName("expired routed global").
+		SetCredentials(objects.ChannelCredentials{APIKey: "expired-global-secret"}).
+		SetSupportedModels([]string{"expired-global-model"}).
+		SetDefaultTestModel("expired-global-model").
+		SetStatus(channel.StatusEnabled).
+		SetExpiresAt(past).
+		Save(setupCtx)
+	require.NoError(t, err)
+
+	activeDonation, err := client.Channel.Create().
+		SetType(channel.TypeOpenai).
+		SetName("active routed donation").
+		SetCredentials(objects.ChannelCredentials{APIKey: "active-secret"}).
+		SetSupportedModels([]string{"active-donation-model"}).
+		SetDefaultTestModel("active-donation-model").
+		SetStatus(channel.StatusEnabled).
+		SetUserID(donor.ID).
+		SetExpiresAt(future).
+		Save(setupCtx)
+	require.NoError(t, err)
+
+	permanentGlobal, err := client.Channel.Create().
+		SetType(channel.TypeOpenai).
+		SetName("permanent routed global").
+		SetCredentials(objects.ChannelCredentials{APIKey: "permanent-secret"}).
+		SetSupportedModels([]string{"permanent-global-model"}).
+		SetDefaultTestModel("permanent-global-model").
+		SetStatus(channel.StatusEnabled).
+		Save(setupCtx)
+	require.NoError(t, err)
+
+	models, err := svc.ListModels(setupCtx, ListModelsInput{})
+	require.NoError(t, err)
+	modelIDs := lo.Map(models, func(model *ModelIdentityWithStatus, _ int) string { return model.ID })
+	require.ElementsMatch(t, []string{"active-donation-model", "permanent-global-model"}, modelIDs)
+
+	svc.SetEnabledChannelsForTest([]*Channel{
+		{Channel: expiredDonation},
+		{Channel: expiredGlobal},
+		{Channel: activeDonation},
+		{Channel: permanentGlobal},
+	})
+	routed := svc.GetEnabledChannels()
+	routedIDs := lo.Map(routed, func(ch *Channel, _ int) int { return ch.ID })
+	require.ElementsMatch(t, []int{activeDonation.ID, permanentGlobal.ID}, routedIDs)
+
+	eligibleForAutoSync, err := client.Channel.Query().
+		Where(
+			channel.StatusEQ(channel.StatusEnabled),
+			channel.AutoSyncSupportedModelsEQ(true),
+			channelAvailableAtPredicate(now),
+		).
+		Count(setupCtx)
+	require.NoError(t, err)
+	require.Zero(t, eligibleForAutoSync)
+
+	err = svc.expireChannels(setupCtx, now)
+	require.NoError(t, err)
+
+	withDeletedCtx := schematype.SkipSoftDelete(setupCtx)
+	for _, id := range []int{expiredDonation.ID, expiredGlobal.ID} {
+		cleaned, err := client.Channel.Get(withDeletedCtx, id)
+		require.NoError(t, err)
+		require.NotZero(t, cleaned.DeletedAt)
+		require.Equal(t, channel.StatusArchived, cleaned.Status)
+		require.Empty(t, cleaned.BaseURL)
+		require.Empty(t, cleaned.Credentials.APIKey)
+		require.Empty(t, cleaned.Credentials.APIKeys)
+		require.Empty(t, cleaned.DisabledAPIKeys)
+		require.Nil(t, cleaned.Settings)
+		require.Empty(t, cleaned.Endpoints)
+	}
+
+	_, err = client.Channel.Get(setupCtx, activeDonation.ID)
+	require.NoError(t, err)
+	_, err = client.Channel.Get(setupCtx, permanentGlobal.ID)
+	require.NoError(t, err)
 }

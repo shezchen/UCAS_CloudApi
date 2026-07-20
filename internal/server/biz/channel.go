@@ -12,8 +12,11 @@ import (
 
 	"go.uber.org/fx"
 
+	"github.com/looplj/axonhub/internal/authz"
+	"github.com/looplj/axonhub/internal/contexts"
 	"github.com/looplj/axonhub/internal/ent"
 	"github.com/looplj/axonhub/internal/ent/channel"
+	"github.com/looplj/axonhub/internal/ent/predicate"
 	"github.com/looplj/axonhub/internal/ent/schema/schematype"
 	"github.com/looplj/axonhub/internal/log"
 	"github.com/looplj/axonhub/internal/objects"
@@ -80,6 +83,110 @@ type Channel struct {
 	// apiKeyOverride, if non-empty, forces all outbound transformers to use this key
 	// instead of the channel's normal key selection. Used by the channel key test flow.
 	apiKeyOverride string
+}
+
+func channelExpiredAt(ch *ent.Channel, now time.Time) bool {
+	return ch != nil && ch.ExpiresAt != nil && !ch.ExpiresAt.After(now)
+}
+
+func channelAvailableAt(ch *ent.Channel, now time.Time) bool {
+	return !channelExpiredAt(ch, now)
+}
+
+func channelAvailableAtPredicate(now time.Time) predicate.Channel {
+	return channel.Or(
+		channel.ExpiresAtIsNil(),
+		channel.ExpiresAtGT(now),
+	)
+}
+
+func validateFutureChannelExpiry(expiresAt *time.Time, required bool, now time.Time) error {
+	if expiresAt == nil {
+		if required {
+			return fmt.Errorf("expires at is required for donated channels")
+		}
+
+		return nil
+	}
+
+	if !expiresAt.After(now) {
+		return fmt.Errorf("expires at must be in the future")
+	}
+
+	return nil
+}
+
+func rejectExpiredChannel(ch *ent.Channel, now time.Time) error {
+	if !channelExpiredAt(ch, now) {
+		return nil
+	}
+
+	return fmt.Errorf("channel expired at %s", ch.ExpiresAt.Format(time.RFC3339))
+}
+
+func canManageChannelOrdering(ctx context.Context) bool {
+	if currentUser, ok := contexts.GetUser(ctx); ok && currentUser != nil {
+		return currentUser.IsOwner
+	}
+
+	principal, ok := authz.GetPrincipal(ctx)
+	return ok && (principal.IsSystem() || principal.IsTest())
+}
+
+func validateChannelDeletion(ctx context.Context, ch *ent.Channel, now time.Time) error {
+	if ch == nil || ch.UserID == nil || channelExpiredAt(ch, now) {
+		return nil
+	}
+
+	currentUser, ok := contexts.GetUser(ctx)
+	if ok && currentUser != nil && currentUser.ID == *ch.UserID {
+		return nil
+	}
+
+	return fmt.Errorf("active donated channel can only be deleted by its donor")
+}
+
+func (svc *ChannelService) scrubAndSoftDeleteChannels(ctx context.Context, ids []int) (int, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+
+	deleted := 0
+	err := svc.RunInTransaction(ctx, func(txCtx context.Context) error {
+		client := svc.entFromContext(txCtx)
+		updated, err := client.Channel.Update().
+			Where(channel.IDIn(ids...)).
+			SetStatus(channel.StatusArchived).
+			ClearBaseURL().
+			SetCredentials(objects.ChannelCredentials{}).
+			ClearDisabledAPIKeys().
+			ClearSettings().
+			ClearEndpoints().
+			Save(txCtx)
+		if err != nil {
+			return fmt.Errorf("failed to scrub channels before deletion: %w", err)
+		}
+		if updated != len(ids) {
+			return fmt.Errorf("expected to scrub %d channels, but scrubbed %d", len(ids), updated)
+		}
+
+		deleted, err = client.Channel.Delete().
+			Where(channel.IDIn(ids...)).
+			Exec(txCtx)
+		if err != nil {
+			return fmt.Errorf("failed to soft-delete channels: %w", err)
+		}
+		if deleted != len(ids) {
+			return fmt.Errorf("expected to soft-delete %d channels, but deleted %d", len(ids), deleted)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	return deleted, nil
 }
 
 type ChannelServiceParams struct {
@@ -195,15 +302,29 @@ type ChannelService struct {
 }
 
 func (svc *ChannelService) RegisterScheduledTasks(ctx context.Context, s *scheduler.Scheduler) error {
-	return s.Register(ctx, scheduler.TaskSpec{
+	if err := s.Register(ctx, scheduler.TaskSpec{
 		Name:        "channel-model-sync",
 		Description: "Sync channel models every hour",
 		CronExpr:    "11 * * * *",
 		Timezone:    "UTC",
-	}, svc.runSyncChannelModelsPeriodically)
+	}, svc.runSyncChannelModelsPeriodically); err != nil {
+		return err
+	}
+
+	return s.Register(ctx, scheduler.TaskSpec{
+		Name:        "channel-expiry-cleanup",
+		Description: "Soft-delete expired channels and clear their credentials",
+		CronExpr:    "* * * * *",
+		Timezone:    "UTC",
+	}, svc.runExpireChannelsPeriodically)
 }
 
 func (svc *ChannelService) reloadEnabledChannels(ctx context.Context, current []*Channel, lastUpdate time.Time) ([]*Channel, time.Time, bool, error) {
+	now := time.Now()
+	cacheContainsExpiredChannel := slices.ContainsFunc(current, func(ch *Channel) bool {
+		return ch != nil && channelExpiredAt(ch.Channel, now)
+	})
+
 	// Query latest updated channel including soft-deleted ones to detect deletions
 	latestUpdatedChannel, err := svc.entFromContext(ctx).Channel.Query().
 		Order(ent.Desc(channel.FieldUpdatedAt)).
@@ -216,13 +337,16 @@ func (svc *ChannelService) reloadEnabledChannels(ctx context.Context, current []
 		if lastUpdate.IsZero() && len(current) == 0 {
 			return current, time.Time{}, false, nil
 		}
-	} else if !latestUpdatedChannel.UpdatedAt.After(lastUpdate) {
+	} else if !latestUpdatedChannel.UpdatedAt.After(lastUpdate) && !cacheContainsExpiredChannel {
 		log.Debug(ctx, "no new channels updated")
 		return current, lastUpdate, false, nil
 	}
 
 	entities, err := svc.entFromContext(ctx).Channel.Query().
-		Where(channel.StatusEQ(channel.StatusEnabled)).
+		Where(
+			channel.StatusEQ(channel.StatusEnabled),
+			channelAvailableAtPredicate(now),
+		).
 		Order(ent.Desc(channel.FieldOrderingWeight)).
 		All(ctx)
 	if err != nil {
@@ -343,7 +467,17 @@ func (svc *ChannelService) GetCacheVersion() int64 {
 // DO NOT modify the returned slice or any of its Channel elements.
 // Modifications will not persist and may cause data inconsistency.
 func (svc *ChannelService) GetEnabledChannels() []*Channel {
-	return svc.enabledChannelsCache.GetData()
+	channels := svc.enabledChannelsCache.GetData()
+	available := make([]*Channel, 0, len(channels))
+	now := time.Now()
+
+	for _, ch := range channels {
+		if ch != nil && channelAvailableAt(ch.Channel, now) {
+			available = append(available, ch)
+		}
+	}
+
+	return available
 }
 
 // GetEnabledChannel returns the enabled channel by id, or nil if not found.
@@ -378,6 +512,9 @@ func (svc *ChannelService) GetChannel(ctx context.Context, channelID int) (*Chan
 	if err != nil {
 		return nil, fmt.Errorf("channel not found: %w", err)
 	}
+	if err := rejectExpiredChannel(entity, time.Now()); err != nil {
+		return nil, err
+	}
 
 	return svc.buildChannelWithOutbounds(entity)
 }
@@ -390,6 +527,9 @@ func (svc *ChannelService) GetChannelWithKey(ctx context.Context, channelID int,
 	entity, err := svc.entFromContext(ctx).Channel.Get(ctx, channelID)
 	if err != nil {
 		return nil, fmt.Errorf("channel not found: %w", err)
+	}
+	if err := rejectExpiredChannel(entity, time.Now()); err != nil {
+		return nil, err
 	}
 
 	return svc.buildChannelWithOutbounds(entity, apiKey)
@@ -435,7 +575,8 @@ func setModelStatus(models map[string]channel.Status, modelID string, newStatus 
 // It supports filtering by status and optionally including model mappings and prefixes.
 func (svc *ChannelService) ListModels(ctx context.Context, input ListModelsInput) ([]*ModelIdentityWithStatus, error) {
 	// Build query for channels
-	query := svc.entFromContext(ctx).Channel.Query()
+	query := svc.entFromContext(ctx).Channel.Query().
+		Where(channelAvailableAtPredicate(time.Now()))
 
 	// Apply status filter if provided, otherwise default to enabled
 	if len(input.StatusIn) > 0 {
@@ -503,6 +644,22 @@ func (svc *ChannelService) ListModels(ctx context.Context, input ListModelsInput
 // createChannel creates a new channel without triggering a reload.
 // This is useful for batch operations where reload should happen once at the end.
 func (svc *ChannelService) createChannel(ctx context.Context, input ent.CreateChannelInput) (*ent.Channel, error) {
+	currentUser, hasCurrentUser := contexts.GetUser(ctx)
+	isDonatedChannel := hasCurrentUser && currentUser != nil && !currentUser.IsOwner
+	if isDonatedChannel && input.AutoSyncSupportedModels == nil {
+		// Campus donations opt into model discovery by default. Donors may still
+		// turn it off for providers without a catalog endpoint.
+		input.AutoSyncSupportedModels = new(true)
+	}
+	if err := validateFutureChannelExpiry(input.ExpiresAt, isDonatedChannel, time.Now()); err != nil {
+		return nil, err
+	}
+	if isDonatedChannel {
+		if err := ValidateDonationChannelConfiguration(ctx, input.Type, input.BaseURL, &input.Credentials, input.Settings, input.Endpoints); err != nil {
+			return nil, fmt.Errorf("invalid donated channel network configuration: %w", err)
+		}
+	}
+
 	if input.Settings != nil {
 		if input.Settings.BodyOverrideOperations != nil {
 			if err := ValidateBodyOverrideOperations(input.Settings.BodyOverrideOperations); err != nil {
@@ -546,7 +703,12 @@ func (svc *ChannelService) createChannel(ctx context.Context, input ent.CreateCh
 		SetDefaultTestModel(input.DefaultTestModel).
 		SetNillableAutoSyncSupportedModels(input.AutoSyncSupportedModels).
 		SetNillableAutoSyncModelPattern(input.AutoSyncModelPattern).
+		SetNillableExpiresAt(input.ExpiresAt).
 		SetSettings(input.Settings)
+
+	if isDonatedChannel {
+		createBuilder.SetUserID(currentUser.ID)
+	}
 
 	if input.Endpoints != nil {
 		createBuilder.SetEndpoints(input.Endpoints)
@@ -586,6 +748,7 @@ func (svc *ChannelService) CreateChannel(ctx context.Context, input ent.CreateCh
 	if err != nil {
 		return nil, err
 	}
+	channel = svc.syncDonatedChannelModelsBestEffort(ctx, channel)
 
 	svc.asyncReloadChannels()
 
@@ -650,7 +813,56 @@ func NormalizeRetryableErrorPatterns(settings *objects.ChannelSettings) error {
 
 // UpdateChannel updates an existing channel with the provided input.
 func (svc *ChannelService) UpdateChannel(ctx context.Context, id int, input *ent.UpdateChannelInput) (*ent.Channel, error) {
-	log.Debug(ctx, "UpdateChannel", log.Int("id", id), log.Any("input", input))
+	existingChannel, err := svc.entFromContext(ctx).Channel.Get(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get channel: %w", err)
+	}
+
+	if err := rejectExpiredChannel(existingChannel, time.Now()); err != nil {
+		return nil, err
+	}
+
+	currentUser, hasCurrentUser := contexts.GetUser(ctx)
+	if input.OrderingWeight != nil && !canManageChannelOrdering(ctx) {
+		return nil, fmt.Errorf("channel ordering can only be changed by the system owner")
+	}
+	if existingChannel.UserID != nil && hasCurrentUser && currentUser != nil && currentUser.IsOwner &&
+		(input.ExpiresAt != nil || input.ClearExpiresAt) {
+		return nil, fmt.Errorf("donated channel expiry can only be changed by its donor")
+	}
+	if hasCurrentUser && currentUser != nil && !currentUser.IsOwner && input.ClearExpiresAt {
+		return nil, fmt.Errorf("donated channel expiry can not be cleared")
+	}
+	if hasCurrentUser && currentUser != nil && !currentUser.IsOwner {
+		effectiveType := existingChannel.Type
+		if input.Type != nil {
+			effectiveType = *input.Type
+		}
+		effectiveBaseURL := &existingChannel.BaseURL
+		if input.BaseURL != nil {
+			effectiveBaseURL = input.BaseURL
+		}
+		effectiveCredentials := &existingChannel.Credentials
+		if input.Credentials != nil {
+			effectiveCredentials = input.Credentials
+		}
+		effectiveSettings := existingChannel.Settings
+		if input.Settings != nil {
+			effectiveSettings = input.Settings
+		}
+		effectiveEndpoints := existingChannel.Endpoints
+		if input.Endpoints != nil {
+			effectiveEndpoints = input.Endpoints
+		}
+
+		if err := ValidateDonationChannelConfiguration(ctx, effectiveType, effectiveBaseURL, effectiveCredentials, effectiveSettings, effectiveEndpoints); err != nil {
+			return nil, fmt.Errorf("invalid donated channel network configuration: %w", err)
+		}
+	}
+
+	if err := validateFutureChannelExpiry(input.ExpiresAt, false, time.Now()); err != nil {
+		return nil, err
+	}
 
 	// Check if name is being updated and if it conflicts with existing channels
 	if input.Name != nil {
@@ -740,6 +952,12 @@ func (svc *ChannelService) UpdateChannel(ctx context.Context, id int, input *ent
 		mut.SetAutoSyncModelPattern(*input.AutoSyncModelPattern)
 	}
 
+	if input.ClearExpiresAt {
+		mut.ClearExpiresAt()
+	} else if input.ExpiresAt != nil {
+		mut.SetExpiresAt(*input.ExpiresAt)
+	}
+
 	if input.Endpoints != nil {
 		if err := ValidateEndpoints(input.Endpoints); err != nil {
 			return nil, fmt.Errorf("invalid endpoints: %w", err)
@@ -756,6 +974,7 @@ func (svc *ChannelService) UpdateChannel(ctx context.Context, id int, input *ent
 	if err != nil {
 		return nil, fmt.Errorf("failed to update channel: %w", err)
 	}
+	channel = svc.syncDonatedChannelModelsBestEffort(ctx, channel)
 
 	// Intentionally NO forgetLimiter call: ChannelLimiterManager.GetOrCreate
 	// already detects rate-limit changes via cfg equality and rebuilds on the
@@ -769,7 +988,31 @@ func (svc *ChannelService) UpdateChannel(ctx context.Context, id int, input *ent
 
 // UpdateChannelStatus updates the status of a channel.
 func (svc *ChannelService) UpdateChannelStatus(ctx context.Context, id int, status channel.Status) (*ent.Channel, error) {
-	channel, err := svc.entFromContext(ctx).Channel.UpdateOneID(id).
+	existingChannel, err := svc.entFromContext(ctx).Channel.Get(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get channel: %w", err)
+	}
+
+	if status == channel.StatusEnabled {
+		if err := rejectExpiredChannel(existingChannel, time.Now()); err != nil {
+			return nil, err
+		}
+		if existingChannel.UserID != nil {
+			if err := ValidateDonationChannelConfiguration(
+				ctx,
+				existingChannel.Type,
+				&existingChannel.BaseURL,
+				&existingChannel.Credentials,
+				existingChannel.Settings,
+				existingChannel.Endpoints,
+			); err != nil {
+				return nil, fmt.Errorf("invalid donated channel network configuration: %w", err)
+			}
+		}
+		existingChannel = svc.syncDonatedChannelModelsBestEffort(ctx, existingChannel)
+	}
+
+	updatedChannel, err := svc.entFromContext(ctx).Channel.UpdateOne(existingChannel).
 		SetStatus(status).
 		Save(ctx)
 	if err != nil {
@@ -778,7 +1021,7 @@ func (svc *ChannelService) UpdateChannelStatus(ctx context.Context, id int, stat
 
 	svc.asyncReloadChannels()
 
-	return channel, nil
+	return updatedChannel, nil
 }
 
 // For test, disable async reload.
@@ -806,6 +1049,15 @@ func (svc *ChannelService) SaveChannelEndpoints(ctx context.Context, input SaveC
 	if err != nil {
 		return nil, fmt.Errorf("failed to get channel: %w", err)
 	}
+	if err := rejectExpiredChannel(ch, time.Now()); err != nil {
+		return nil, err
+	}
+	currentUser, hasCurrentUser := contexts.GetUser(ctx)
+	if hasCurrentUser && currentUser != nil && !currentUser.IsOwner {
+		if err := ValidateDonationChannelConfiguration(ctx, ch.Type, &ch.BaseURL, &ch.Credentials, ch.Settings, input.Endpoints); err != nil {
+			return nil, fmt.Errorf("invalid donated channel network configuration: %w", err)
+		}
+	}
 
 	ch, err = svc.entFromContext(ctx).Channel.UpdateOne(ch).
 		SetEndpoints(input.Endpoints).
@@ -821,7 +1073,16 @@ func (svc *ChannelService) SaveChannelEndpoints(ctx context.Context, input SaveC
 
 // DeleteChannel deletes a channel by ID.
 func (svc *ChannelService) DeleteChannel(ctx context.Context, id int) error {
-	if err := svc.entFromContext(ctx).Channel.DeleteOneID(id).Exec(ctx); err != nil {
+	ch, err := svc.entFromContext(ctx).Channel.Get(ctx, id)
+	if err != nil {
+		return fmt.Errorf("failed to get channel: %w", err)
+	}
+
+	if err := validateChannelDeletion(ctx, ch, time.Now()); err != nil {
+		return err
+	}
+
+	if _, err := svc.scrubAndSoftDeleteChannels(ctx, []int{id}); err != nil {
 		return fmt.Errorf("failed to delete channel: %w", err)
 	}
 

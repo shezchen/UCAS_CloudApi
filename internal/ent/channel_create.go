@@ -18,6 +18,7 @@ import (
 	"github.com/looplj/axonhub/internal/ent/request"
 	"github.com/looplj/axonhub/internal/ent/requestexecution"
 	"github.com/looplj/axonhub/internal/ent/usagelog"
+	"github.com/looplj/axonhub/internal/ent/user"
 	"github.com/looplj/axonhub/internal/objects"
 )
 
@@ -107,6 +108,34 @@ func (_c *ChannelCreate) SetStatus(v channel.Status) *ChannelCreate {
 func (_c *ChannelCreate) SetNillableStatus(v *channel.Status) *ChannelCreate {
 	if v != nil {
 		_c.SetStatus(*v)
+	}
+	return _c
+}
+
+// SetUserID sets the "user_id" field.
+func (_c *ChannelCreate) SetUserID(v int) *ChannelCreate {
+	_c.mutation.SetUserID(v)
+	return _c
+}
+
+// SetNillableUserID sets the "user_id" field if the given value is not nil.
+func (_c *ChannelCreate) SetNillableUserID(v *int) *ChannelCreate {
+	if v != nil {
+		_c.SetUserID(*v)
+	}
+	return _c
+}
+
+// SetExpiresAt sets the "expires_at" field.
+func (_c *ChannelCreate) SetExpiresAt(v time.Time) *ChannelCreate {
+	_c.mutation.SetExpiresAt(v)
+	return _c
+}
+
+// SetNillableExpiresAt sets the "expires_at" field if the given value is not nil.
+func (_c *ChannelCreate) SetNillableExpiresAt(v *time.Time) *ChannelCreate {
+	if v != nil {
+		_c.SetExpiresAt(*v)
 	}
 	return _c
 }
@@ -241,6 +270,11 @@ func (_c *ChannelCreate) SetNillableRemark(v *string) *ChannelCreate {
 func (_c *ChannelCreate) SetEndpoints(v []objects.ChannelEndpoint) *ChannelCreate {
 	_c.mutation.SetEndpoints(v)
 	return _c
+}
+
+// SetUser sets the "user" edge to the User entity.
+func (_c *ChannelCreate) SetUser(v *User) *ChannelCreate {
+	return _c.SetUserID(v.ID)
 }
 
 // AddRequestIDs adds the "requests" edge to the Request entity by IDs.
@@ -529,6 +563,10 @@ func (_c *ChannelCreate) createSpec() (*Channel, *sqlgraph.CreateSpec) {
 		_spec.SetField(channel.FieldStatus, field.TypeEnum, value)
 		_node.Status = value
 	}
+	if value, ok := _c.mutation.ExpiresAt(); ok {
+		_spec.SetField(channel.FieldExpiresAt, field.TypeTime, value)
+		_node.ExpiresAt = &value
+	}
 	if value, ok := _c.mutation.Credentials(); ok {
 		_spec.SetField(channel.FieldCredentials, field.TypeJSON, value)
 		_node.Credentials = value
@@ -584,6 +622,23 @@ func (_c *ChannelCreate) createSpec() (*Channel, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Endpoints(); ok {
 		_spec.SetField(channel.FieldEndpoints, field.TypeJSON, value)
 		_node.Endpoints = value
+	}
+	if nodes := _c.mutation.UserIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   channel.UserTable,
+			Columns: []string{channel.UserColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(user.FieldID, field.TypeInt),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_node.UserID = &nodes[0]
+		_spec.Edges = append(_spec.Edges, edge)
 	}
 	if nodes := _c.mutation.RequestsIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
@@ -814,6 +869,24 @@ func (u *ChannelUpsert) SetStatus(v channel.Status) *ChannelUpsert {
 // UpdateStatus sets the "status" field to the value that was provided on create.
 func (u *ChannelUpsert) UpdateStatus() *ChannelUpsert {
 	u.SetExcluded(channel.FieldStatus)
+	return u
+}
+
+// SetExpiresAt sets the "expires_at" field.
+func (u *ChannelUpsert) SetExpiresAt(v time.Time) *ChannelUpsert {
+	u.Set(channel.FieldExpiresAt, v)
+	return u
+}
+
+// UpdateExpiresAt sets the "expires_at" field to the value that was provided on create.
+func (u *ChannelUpsert) UpdateExpiresAt() *ChannelUpsert {
+	u.SetExcluded(channel.FieldExpiresAt)
+	return u
+}
+
+// ClearExpiresAt clears the value of the "expires_at" field.
+func (u *ChannelUpsert) ClearExpiresAt() *ChannelUpsert {
+	u.SetNull(channel.FieldExpiresAt)
 	return u
 }
 
@@ -1059,6 +1132,9 @@ func (u *ChannelUpsertOne) UpdateNewValues() *ChannelUpsertOne {
 		if _, exists := u.create.mutation.CreatedAt(); exists {
 			s.SetIgnore(channel.FieldCreatedAt)
 		}
+		if _, exists := u.create.mutation.UserID(); exists {
+			s.SetIgnore(channel.FieldUserID)
+		}
 	}))
 	return u
 }
@@ -1185,6 +1261,27 @@ func (u *ChannelUpsertOne) SetStatus(v channel.Status) *ChannelUpsertOne {
 func (u *ChannelUpsertOne) UpdateStatus() *ChannelUpsertOne {
 	return u.Update(func(s *ChannelUpsert) {
 		s.UpdateStatus()
+	})
+}
+
+// SetExpiresAt sets the "expires_at" field.
+func (u *ChannelUpsertOne) SetExpiresAt(v time.Time) *ChannelUpsertOne {
+	return u.Update(func(s *ChannelUpsert) {
+		s.SetExpiresAt(v)
+	})
+}
+
+// UpdateExpiresAt sets the "expires_at" field to the value that was provided on create.
+func (u *ChannelUpsertOne) UpdateExpiresAt() *ChannelUpsertOne {
+	return u.Update(func(s *ChannelUpsert) {
+		s.UpdateExpiresAt()
+	})
+}
+
+// ClearExpiresAt clears the value of the "expires_at" field.
+func (u *ChannelUpsertOne) ClearExpiresAt() *ChannelUpsertOne {
+	return u.Update(func(s *ChannelUpsert) {
+		s.ClearExpiresAt()
 	})
 }
 
@@ -1633,6 +1730,9 @@ func (u *ChannelUpsertBulk) UpdateNewValues() *ChannelUpsertBulk {
 			if _, exists := b.mutation.CreatedAt(); exists {
 				s.SetIgnore(channel.FieldCreatedAt)
 			}
+			if _, exists := b.mutation.UserID(); exists {
+				s.SetIgnore(channel.FieldUserID)
+			}
 		}
 	}))
 	return u
@@ -1760,6 +1860,27 @@ func (u *ChannelUpsertBulk) SetStatus(v channel.Status) *ChannelUpsertBulk {
 func (u *ChannelUpsertBulk) UpdateStatus() *ChannelUpsertBulk {
 	return u.Update(func(s *ChannelUpsert) {
 		s.UpdateStatus()
+	})
+}
+
+// SetExpiresAt sets the "expires_at" field.
+func (u *ChannelUpsertBulk) SetExpiresAt(v time.Time) *ChannelUpsertBulk {
+	return u.Update(func(s *ChannelUpsert) {
+		s.SetExpiresAt(v)
+	})
+}
+
+// UpdateExpiresAt sets the "expires_at" field to the value that was provided on create.
+func (u *ChannelUpsertBulk) UpdateExpiresAt() *ChannelUpsertBulk {
+	return u.Update(func(s *ChannelUpsert) {
+		s.UpdateExpiresAt()
+	})
+}
+
+// ClearExpiresAt clears the value of the "expires_at" field.
+func (u *ChannelUpsertBulk) ClearExpiresAt() *ChannelUpsertBulk {
+	return u.Update(func(s *ChannelUpsert) {
+		s.ClearExpiresAt()
 	})
 }
 

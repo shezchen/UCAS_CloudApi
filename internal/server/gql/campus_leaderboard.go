@@ -1,0 +1,174 @@
+package gql
+
+import (
+	"context"
+	"crypto/sha256"
+	"fmt"
+	"sort"
+
+	"entgo.io/ent/dialect/sql"
+
+	"github.com/looplj/axonhub/internal/contexts"
+	"github.com/looplj/axonhub/internal/ent/apikey"
+	"github.com/looplj/axonhub/internal/ent/privacy"
+	"github.com/looplj/axonhub/internal/ent/usagelog"
+	"github.com/looplj/axonhub/internal/ent/userproject"
+	"github.com/looplj/axonhub/internal/pkg/xtime"
+)
+
+const campusLeaderboardLimit = 50
+
+type campusUsageAggregate struct {
+	UserID            int   `json:"user_id"`
+	DailyTokenLimit   int64 `json:"daily_token_limit"`
+	RecordedTokens    int64 `json:"recorded_tokens"`
+	MeteredRequestCnt int   `json:"metered_request_count"`
+}
+
+type rankedCampusUsage struct {
+	UserID            int
+	PublicAlias       string
+	RecordedTokens    int64
+	MeteredRequestCnt int
+	LimitPercent      float64
+}
+
+func campusPublicAlias(projectID, userID int) string {
+	digest := sha256.Sum256([]byte(fmt.Sprintf("axonhub-campus:%d:%d", projectID, userID)))
+	return fmt.Sprintf("同学-%x", digest[:4])
+}
+
+func campusLimitPercent(recordedTokens, dailyTokenLimit int64) float64 {
+	if dailyTokenLimit <= 0 {
+		if recordedTokens > 0 {
+			return 100
+		}
+		return 0
+	}
+
+	return float64(recordedTokens) / float64(dailyTokenLimit) * 100
+}
+
+func rankCampusUsage(projectID, currentUserID int, aggregates []campusUsageAggregate) []*CampusUsageLeaderboardEntry {
+	foundCurrentUser := false
+	ranked := make([]rankedCampusUsage, 0, len(aggregates)+1)
+	for _, aggregate := range aggregates {
+		if aggregate.UserID == currentUserID {
+			foundCurrentUser = true
+		}
+		ranked = append(ranked, rankedCampusUsage{
+			UserID:            aggregate.UserID,
+			PublicAlias:       campusPublicAlias(projectID, aggregate.UserID),
+			RecordedTokens:    aggregate.RecordedTokens,
+			MeteredRequestCnt: aggregate.MeteredRequestCnt,
+			LimitPercent:      campusLimitPercent(aggregate.RecordedTokens, aggregate.DailyTokenLimit),
+		})
+	}
+
+	if !foundCurrentUser {
+		ranked = append(ranked, rankedCampusUsage{
+			UserID:      currentUserID,
+			PublicAlias: campusPublicAlias(projectID, currentUserID),
+		})
+	}
+
+	sort.Slice(ranked, func(i, j int) bool {
+		if ranked[i].RecordedTokens != ranked[j].RecordedTokens {
+			return ranked[i].RecordedTokens > ranked[j].RecordedTokens
+		}
+		if ranked[i].MeteredRequestCnt != ranked[j].MeteredRequestCnt {
+			return ranked[i].MeteredRequestCnt > ranked[j].MeteredRequestCnt
+		}
+		return ranked[i].PublicAlias < ranked[j].PublicAlias
+	})
+
+	entries := make([]*CampusUsageLeaderboardEntry, 0, min(campusLeaderboardLimit+1, len(ranked)))
+	for i, item := range ranked {
+		isCurrentUser := item.UserID == currentUserID
+		if i >= campusLeaderboardLimit && !isCurrentUser {
+			continue
+		}
+		entries = append(entries, &CampusUsageLeaderboardEntry{
+			Rank:                i + 1,
+			PublicAlias:         item.PublicAlias,
+			IsMe:                isCurrentUser,
+			RecordedTokens:      float64(item.RecordedTokens),
+			MeteredRequestCount: item.MeteredRequestCnt,
+			LimitPercent:        item.LimitPercent,
+		})
+	}
+
+	return entries
+}
+
+func (r *queryResolver) resolveCampusUsageLeaderboard(ctx context.Context) ([]*CampusUsageLeaderboardEntry, error) {
+	currentUser, ok := contexts.GetUser(ctx)
+	if !ok || currentUser == nil {
+		return nil, fmt.Errorf("user not found in context")
+	}
+
+	projectID, ok := contexts.GetProjectID(ctx)
+	if !ok {
+		return nil, fmt.Errorf("project ID not found in context")
+	}
+
+	if !currentUser.IsOwner {
+		isMember, err := r.client.UserProject.Query().
+			Where(
+				userproject.UserIDEQ(currentUser.ID),
+				userproject.ProjectIDEQ(projectID),
+			).
+			Exist(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to verify project membership: %w", err)
+		}
+		if !isMember {
+			return nil, fmt.Errorf("permission denied: current user is not a project member")
+		}
+	}
+
+	// General settings are Owner-managed, but members need the configured
+	// timezone to share the same calendar-day boundary.
+	restrictedReadCtx := privacy.DecisionContext(ctx, privacy.Allow)
+	period := xtime.GetCalendarPeriods(r.systemService.TimeLocation(restrictedReadCtx)).Today
+	var aggregates []campusUsageAggregate
+
+	// Membership is verified above. The privacy bypass is deliberately scoped to
+	// this aggregate, whose GraphQL DTO contains no direct identifiers or secrets.
+	err := r.client.UsageLog.Query().
+		Where(
+			usagelog.ProjectIDEQ(projectID),
+			usagelog.APIKeyIDNotNil(),
+			usagelog.CreatedAtGTE(period.Start),
+			usagelog.CreatedAtLT(period.End),
+		).
+		Modify(func(s *sql.Selector) {
+			apiKeyTable := sql.Table(apikey.Table)
+			userTable := sql.Table("users")
+
+			s.Join(apiKeyTable).On(
+				s.C(usagelog.FieldAPIKeyID),
+				apiKeyTable.C(apikey.FieldID),
+			)
+			s.Join(userTable).On(
+				apiKeyTable.C(apikey.FieldUserID),
+				userTable.C("id"),
+			)
+
+			// Intentionally do not filter api_keys.deleted_at: deleting or rotating
+			// a key must not erase its already-recorded contribution to today's use.
+			s.Select(
+				sql.As(userTable.C("id"), "user_id"),
+				sql.As(userTable.C("daily_token_limit"), "daily_token_limit"),
+				sql.As(fmt.Sprintf("COALESCE(SUM(%s), 0)", s.C(usagelog.FieldTotalTokens)), "recorded_tokens"),
+				sql.As(sql.Count(s.C(usagelog.FieldID)), "metered_request_count"),
+			).
+				GroupBy(userTable.C("id"), userTable.C("daily_token_limit"))
+		}).
+		Scan(restrictedReadCtx, &aggregates)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get campus usage leaderboard: %w", err)
+	}
+
+	return rankCampusUsage(projectID, currentUser.ID, aggregates), nil
+}

@@ -287,6 +287,15 @@ type ComplexityRoot struct {
 		Updated  func(childComplexity int) int
 	}
 
+	CampusUsageLeaderboardEntry struct {
+		IsMe                func(childComplexity int) int
+		LimitPercent        func(childComplexity int) int
+		MeteredRequestCount func(childComplexity int) int
+		PublicAlias         func(childComplexity int) int
+		Rank                func(childComplexity int) int
+		RecordedTokens      func(childComplexity int) int
+	}
+
 	Channel struct {
 		AllModelEntries         func(childComplexity int) int
 		AutoSyncModelPattern    func(childComplexity int) int
@@ -302,6 +311,7 @@ type ComplexityRoot struct {
 		Endpoints               func(childComplexity int) int
 		ErrorMessage            func(childComplexity int) int
 		Executions              func(childComplexity int, after *entgql.Cursor[int], first *int, before *entgql.Cursor[int], last *int, orderBy *ent.RequestExecutionOrder, where *ent.RequestExecutionWhereInput) int
+		ExpiresAt               func(childComplexity int) int
 		ID                      func(childComplexity int) int
 		LiveLimiterStats        func(childComplexity int) int
 		ManualModels            func(childComplexity int) int
@@ -318,6 +328,8 @@ type ComplexityRoot struct {
 		Type                    func(childComplexity int) int
 		UpdatedAt               func(childComplexity int) int
 		UsageLogs               func(childComplexity int, after *entgql.Cursor[int], first *int, before *entgql.Cursor[int], last *int, orderBy *ent.UsageLogOrder, where *ent.UsageLogWhereInput) int
+		User                    func(childComplexity int) int
+		UserID                  func(childComplexity int) int
 	}
 
 	ChannelConnection struct {
@@ -1241,6 +1253,7 @@ type ComplexityRoot struct {
 		AllScopes                    func(childComplexity int, level *string) int
 		AutoBackupSettings           func(childComplexity int) int
 		BrandSettings                func(childComplexity int) int
+		CampusUsageLeaderboard       func(childComplexity int) int
 		ChannelOverrideTemplates     func(childComplexity int, after *entgql.Cursor[int], first *int, before *entgql.Cursor[int], last *int, orderBy *ent.ChannelOverrideTemplateOrder, where *ent.ChannelOverrideTemplateWhereInput) int
 		ChannelPerformanceStats      func(childComplexity int) int
 		ChannelProbeData             func(childComplexity int, input biz.GetChannelProbeDataInput) int
@@ -1875,6 +1888,8 @@ type ComplexityRoot struct {
 		Avatar                   func(childComplexity int) int
 		ChannelOverrideTemplates func(childComplexity int, after *entgql.Cursor[int], first *int, before *entgql.Cursor[int], last *int, orderBy *ent.ChannelOverrideTemplateOrder, where *ent.ChannelOverrideTemplateWhereInput) int
 		CreatedAt                func(childComplexity int) int
+		DailyTokenLimit          func(childComplexity int) int
+		DonatedChannels          func(childComplexity int, after *entgql.Cursor[int], first *int, before *entgql.Cursor[int], last *int, orderBy *ent.ChannelOrder, where *ent.ChannelWhereInput) int
 		Email                    func(childComplexity int) int
 		FirstName                func(childComplexity int) int
 		ID                       func(childComplexity int) int
@@ -2008,6 +2023,8 @@ type APIKeyProfileTemplateResolver interface {
 }
 type ChannelResolver interface {
 	ID(ctx context.Context, obj *ent.Channel) (*objects.GUID, error)
+
+	UserID(ctx context.Context, obj *ent.Channel) (*objects.GUID, error)
 
 	Policies(ctx context.Context, obj *ent.Channel) (*objects.ChannelPolicies, error)
 
@@ -2237,6 +2254,7 @@ type QueryResolver interface {
 	CostStatsByModel(ctx context.Context, timeWindow *string) ([]*CostStatsByModel, error)
 	CostStatsByAPIKey(ctx context.Context, timeWindow *string) ([]*CostStatsByAPIKey, error)
 	UsageStatsByUser(ctx context.Context, timeWindow *string) ([]*UsageStatsByUser, error)
+	CampusUsageLeaderboard(ctx context.Context) ([]*CampusUsageLeaderboardEntry, error)
 	AllScopes(ctx context.Context, level *string) ([]*ScopeInfo, error)
 	Me(ctx context.Context) (*objects.UserInfo, error)
 	MyProjects(ctx context.Context) ([]*ent.Project, error)
@@ -3048,6 +3066,43 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.complexity.BulkUpdateChannelOrderingResult.Updated(childComplexity), true
 
+	case "CampusUsageLeaderboardEntry.isMe":
+		if e.complexity.CampusUsageLeaderboardEntry.IsMe == nil {
+			break
+		}
+
+		return e.complexity.CampusUsageLeaderboardEntry.IsMe(childComplexity), true
+	case "CampusUsageLeaderboardEntry.limitPercent":
+		if e.complexity.CampusUsageLeaderboardEntry.LimitPercent == nil {
+			break
+		}
+
+		return e.complexity.CampusUsageLeaderboardEntry.LimitPercent(childComplexity), true
+	case "CampusUsageLeaderboardEntry.meteredRequestCount":
+		if e.complexity.CampusUsageLeaderboardEntry.MeteredRequestCount == nil {
+			break
+		}
+
+		return e.complexity.CampusUsageLeaderboardEntry.MeteredRequestCount(childComplexity), true
+	case "CampusUsageLeaderboardEntry.publicAlias":
+		if e.complexity.CampusUsageLeaderboardEntry.PublicAlias == nil {
+			break
+		}
+
+		return e.complexity.CampusUsageLeaderboardEntry.PublicAlias(childComplexity), true
+	case "CampusUsageLeaderboardEntry.rank":
+		if e.complexity.CampusUsageLeaderboardEntry.Rank == nil {
+			break
+		}
+
+		return e.complexity.CampusUsageLeaderboardEntry.Rank(childComplexity), true
+	case "CampusUsageLeaderboardEntry.recordedTokens":
+		if e.complexity.CampusUsageLeaderboardEntry.RecordedTokens == nil {
+			break
+		}
+
+		return e.complexity.CampusUsageLeaderboardEntry.RecordedTokens(childComplexity), true
+
 	case "Channel.allModelEntries":
 		if e.complexity.Channel.AllModelEntries == nil {
 			break
@@ -3137,6 +3192,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Channel.Executions(childComplexity, args["after"].(*entgql.Cursor[int]), args["first"].(*int), args["before"].(*entgql.Cursor[int]), args["last"].(*int), args["orderBy"].(*ent.RequestExecutionOrder), args["where"].(*ent.RequestExecutionWhereInput)), true
+	case "Channel.expiresAt":
+		if e.complexity.Channel.ExpiresAt == nil {
+			break
+		}
+
+		return e.complexity.Channel.ExpiresAt(childComplexity), true
 	case "Channel.id":
 		if e.complexity.Channel.ID == nil {
 			break
@@ -3243,6 +3304,18 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Channel.UsageLogs(childComplexity, args["after"].(*entgql.Cursor[int]), args["first"].(*int), args["before"].(*entgql.Cursor[int]), args["last"].(*int), args["orderBy"].(*ent.UsageLogOrder), args["where"].(*ent.UsageLogWhereInput)), true
+	case "Channel.user":
+		if e.complexity.Channel.User == nil {
+			break
+		}
+
+		return e.complexity.Channel.User(childComplexity), true
+	case "Channel.userID":
+		if e.complexity.Channel.UserID == nil {
+			break
+		}
+
+		return e.complexity.Channel.UserID(childComplexity), true
 
 	case "ChannelConnection.edges":
 		if e.complexity.ChannelConnection.Edges == nil {
@@ -7466,6 +7539,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Query.BrandSettings(childComplexity), true
+	case "Query.campusUsageLeaderboard":
+		if e.complexity.Query.CampusUsageLeaderboard == nil {
+			break
+		}
+
+		return e.complexity.Query.CampusUsageLeaderboard(childComplexity), true
 	case "Query.channelOverrideTemplates":
 		if e.complexity.Query.ChannelOverrideTemplates == nil {
 			break
@@ -10254,6 +10333,23 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.User.CreatedAt(childComplexity), true
+	case "User.dailyTokenLimit":
+		if e.complexity.User.DailyTokenLimit == nil {
+			break
+		}
+
+		return e.complexity.User.DailyTokenLimit(childComplexity), true
+	case "User.donatedChannels":
+		if e.complexity.User.DonatedChannels == nil {
+			break
+		}
+
+		args, err := ec.field_User_donatedChannels_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.User.DonatedChannels(childComplexity, args["after"].(*entgql.Cursor[int]), args["first"].(*int), args["before"].(*entgql.Cursor[int]), args["last"].(*int), args["orderBy"].(*ent.ChannelOrder), args["where"].(*ent.ChannelWhereInput)), true
 	case "User.email":
 		if e.complexity.User.Email == nil {
 			break
@@ -14202,6 +14298,42 @@ func (ec *executionContext) field_User_channelOverrideTemplates_args(ctx context
 	return args, nil
 }
 
+func (ec *executionContext) field_User_donatedChannels_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "after", ec.unmarshalOCursor2ᚖentgoᚗioᚋcontribᚋentgqlᚐCursor)
+	if err != nil {
+		return nil, err
+	}
+	args["after"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "first", ec.unmarshalOInt2ᚖint)
+	if err != nil {
+		return nil, err
+	}
+	args["first"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "before", ec.unmarshalOCursor2ᚖentgoᚗioᚋcontribᚋentgqlᚐCursor)
+	if err != nil {
+		return nil, err
+	}
+	args["before"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "last", ec.unmarshalOInt2ᚖint)
+	if err != nil {
+		return nil, err
+	}
+	args["last"] = arg3
+	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "orderBy", ec.unmarshalOChannelOrder2ᚖgithubᚗcomᚋloopljᚋaxonhubᚋinternalᚋentᚐChannelOrder)
+	if err != nil {
+		return nil, err
+	}
+	args["orderBy"] = arg4
+	arg5, err := graphql.ProcessArgField(ctx, rawArgs, "where", ec.unmarshalOChannelWhereInput2ᚖgithubᚗcomᚋloopljᚋaxonhubᚋinternalᚋentᚐChannelWhereInput)
+	if err != nil {
+		return nil, err
+	}
+	args["where"] = arg5
+	return args, nil
+}
+
 func (ec *executionContext) field_User_oidcIdentities_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -14731,12 +14863,16 @@ func (ec *executionContext) fieldContext_APIKey_user(_ context.Context, field gr
 				return ec.fieldContext_User_avatar(ctx, field)
 			case "isOwner":
 				return ec.fieldContext_User_isOwner(ctx, field)
+			case "dailyTokenLimit":
+				return ec.fieldContext_User_dailyTokenLimit(ctx, field)
 			case "scopes":
 				return ec.fieldContext_User_scopes(ctx, field)
 			case "projects":
 				return ec.fieldContext_User_projects(ctx, field)
 			case "apiKeys":
 				return ec.fieldContext_User_apiKeys(ctx, field)
+			case "donatedChannels":
+				return ec.fieldContext_User_donatedChannels(ctx, field)
 			case "roles":
 				return ec.fieldContext_User_roles(ctx, field)
 			case "channelOverrideTemplates":
@@ -16723,6 +16859,10 @@ func (ec *executionContext) fieldContext_ApplyChannelOverrideTemplatePayload_cha
 				return ec.fieldContext_Channel_name(ctx, field)
 			case "status":
 				return ec.fieldContext_Channel_status(ctx, field)
+			case "userID":
+				return ec.fieldContext_Channel_userID(ctx, field)
+			case "expiresAt":
+				return ec.fieldContext_Channel_expiresAt(ctx, field)
 			case "supportedModels":
 				return ec.fieldContext_Channel_supportedModels(ctx, field)
 			case "manualModels":
@@ -16747,6 +16887,8 @@ func (ec *executionContext) fieldContext_ApplyChannelOverrideTemplatePayload_cha
 				return ec.fieldContext_Channel_remark(ctx, field)
 			case "endpoints":
 				return ec.fieldContext_Channel_endpoints(ctx, field)
+			case "user":
+				return ec.fieldContext_Channel_user(ctx, field)
 			case "requests":
 				return ec.fieldContext_Channel_requests(ctx, field)
 			case "executions":
@@ -17754,6 +17896,10 @@ func (ec *executionContext) fieldContext_BulkImportChannelsResult_channels(_ con
 				return ec.fieldContext_Channel_name(ctx, field)
 			case "status":
 				return ec.fieldContext_Channel_status(ctx, field)
+			case "userID":
+				return ec.fieldContext_Channel_userID(ctx, field)
+			case "expiresAt":
+				return ec.fieldContext_Channel_expiresAt(ctx, field)
 			case "supportedModels":
 				return ec.fieldContext_Channel_supportedModels(ctx, field)
 			case "manualModels":
@@ -17778,6 +17924,8 @@ func (ec *executionContext) fieldContext_BulkImportChannelsResult_channels(_ con
 				return ec.fieldContext_Channel_remark(ctx, field)
 			case "endpoints":
 				return ec.fieldContext_Channel_endpoints(ctx, field)
+			case "user":
+				return ec.fieldContext_Channel_user(ctx, field)
 			case "requests":
 				return ec.fieldContext_Channel_requests(ctx, field)
 			case "executions":
@@ -17903,6 +18051,10 @@ func (ec *executionContext) fieldContext_BulkUpdateChannelOrderingResult_channel
 				return ec.fieldContext_Channel_name(ctx, field)
 			case "status":
 				return ec.fieldContext_Channel_status(ctx, field)
+			case "userID":
+				return ec.fieldContext_Channel_userID(ctx, field)
+			case "expiresAt":
+				return ec.fieldContext_Channel_expiresAt(ctx, field)
 			case "supportedModels":
 				return ec.fieldContext_Channel_supportedModels(ctx, field)
 			case "manualModels":
@@ -17927,6 +18079,8 @@ func (ec *executionContext) fieldContext_BulkUpdateChannelOrderingResult_channel
 				return ec.fieldContext_Channel_remark(ctx, field)
 			case "endpoints":
 				return ec.fieldContext_Channel_endpoints(ctx, field)
+			case "user":
+				return ec.fieldContext_Channel_user(ctx, field)
 			case "requests":
 				return ec.fieldContext_Channel_requests(ctx, field)
 			case "executions":
@@ -17951,6 +18105,180 @@ func (ec *executionContext) fieldContext_BulkUpdateChannelOrderingResult_channel
 				return ec.fieldContext_Channel_liveLimiterStats(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type Channel", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CampusUsageLeaderboardEntry_rank(ctx context.Context, field graphql.CollectedField, obj *CampusUsageLeaderboardEntry) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CampusUsageLeaderboardEntry_rank,
+		func(ctx context.Context) (any, error) {
+			return obj.Rank, nil
+		},
+		nil,
+		ec.marshalNInt2int,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_CampusUsageLeaderboardEntry_rank(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CampusUsageLeaderboardEntry",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CampusUsageLeaderboardEntry_publicAlias(ctx context.Context, field graphql.CollectedField, obj *CampusUsageLeaderboardEntry) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CampusUsageLeaderboardEntry_publicAlias,
+		func(ctx context.Context) (any, error) {
+			return obj.PublicAlias, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_CampusUsageLeaderboardEntry_publicAlias(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CampusUsageLeaderboardEntry",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CampusUsageLeaderboardEntry_isMe(ctx context.Context, field graphql.CollectedField, obj *CampusUsageLeaderboardEntry) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CampusUsageLeaderboardEntry_isMe,
+		func(ctx context.Context) (any, error) {
+			return obj.IsMe, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_CampusUsageLeaderboardEntry_isMe(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CampusUsageLeaderboardEntry",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CampusUsageLeaderboardEntry_recordedTokens(ctx context.Context, field graphql.CollectedField, obj *CampusUsageLeaderboardEntry) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CampusUsageLeaderboardEntry_recordedTokens,
+		func(ctx context.Context) (any, error) {
+			return obj.RecordedTokens, nil
+		},
+		nil,
+		ec.marshalNFloat2float64,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_CampusUsageLeaderboardEntry_recordedTokens(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CampusUsageLeaderboardEntry",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Float does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CampusUsageLeaderboardEntry_meteredRequestCount(ctx context.Context, field graphql.CollectedField, obj *CampusUsageLeaderboardEntry) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CampusUsageLeaderboardEntry_meteredRequestCount,
+		func(ctx context.Context) (any, error) {
+			return obj.MeteredRequestCount, nil
+		},
+		nil,
+		ec.marshalNInt2int,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_CampusUsageLeaderboardEntry_meteredRequestCount(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CampusUsageLeaderboardEntry",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CampusUsageLeaderboardEntry_limitPercent(ctx context.Context, field graphql.CollectedField, obj *CampusUsageLeaderboardEntry) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CampusUsageLeaderboardEntry_limitPercent,
+		func(ctx context.Context) (any, error) {
+			return obj.LimitPercent, nil
+		},
+		nil,
+		ec.marshalNFloat2float64,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_CampusUsageLeaderboardEntry_limitPercent(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CampusUsageLeaderboardEntry",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Float does not have child fields")
 		},
 	}
 	return fc, nil
@@ -18154,6 +18482,64 @@ func (ec *executionContext) fieldContext_Channel_status(_ context.Context, field
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type ChannelStatus does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Channel_userID(ctx context.Context, field graphql.CollectedField, obj *ent.Channel) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Channel_userID,
+		func(ctx context.Context) (any, error) {
+			return ec.resolvers.Channel().UserID(ctx, obj)
+		},
+		nil,
+		ec.marshalOID2ᚖgithubᚗcomᚋloopljᚋaxonhubᚋinternalᚋobjectsᚐGUID,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Channel_userID(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Channel",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type ID does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Channel_expiresAt(ctx context.Context, field graphql.CollectedField, obj *ent.Channel) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Channel_expiresAt,
+		func(ctx context.Context) (any, error) {
+			return obj.ExpiresAt, nil
+		},
+		nil,
+		ec.marshalOTime2ᚖtimeᚐTime,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Channel_expiresAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Channel",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Time does not have child fields")
 		},
 	}
 	return fc, nil
@@ -18550,6 +18936,77 @@ func (ec *executionContext) fieldContext_Channel_endpoints(_ context.Context, fi
 				return ec.fieldContext_ChannelEndpoint_transport(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type ChannelEndpoint", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Channel_user(ctx context.Context, field graphql.CollectedField, obj *ent.Channel) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Channel_user,
+		func(ctx context.Context) (any, error) {
+			return obj.User(ctx)
+		},
+		nil,
+		ec.marshalOUser2ᚖgithubᚗcomᚋloopljᚋaxonhubᚋinternalᚋentᚐUser,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Channel_user(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Channel",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "id":
+				return ec.fieldContext_User_id(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_User_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_User_updatedAt(ctx, field)
+			case "email":
+				return ec.fieldContext_User_email(ctx, field)
+			case "status":
+				return ec.fieldContext_User_status(ctx, field)
+			case "preferLanguage":
+				return ec.fieldContext_User_preferLanguage(ctx, field)
+			case "firstName":
+				return ec.fieldContext_User_firstName(ctx, field)
+			case "lastName":
+				return ec.fieldContext_User_lastName(ctx, field)
+			case "avatar":
+				return ec.fieldContext_User_avatar(ctx, field)
+			case "isOwner":
+				return ec.fieldContext_User_isOwner(ctx, field)
+			case "dailyTokenLimit":
+				return ec.fieldContext_User_dailyTokenLimit(ctx, field)
+			case "scopes":
+				return ec.fieldContext_User_scopes(ctx, field)
+			case "projects":
+				return ec.fieldContext_User_projects(ctx, field)
+			case "apiKeys":
+				return ec.fieldContext_User_apiKeys(ctx, field)
+			case "donatedChannels":
+				return ec.fieldContext_User_donatedChannels(ctx, field)
+			case "roles":
+				return ec.fieldContext_User_roles(ctx, field)
+			case "channelOverrideTemplates":
+				return ec.fieldContext_User_channelOverrideTemplates(ctx, field)
+			case "oidcIdentities":
+				return ec.fieldContext_User_oidcIdentities(ctx, field)
+			case "projectUsers":
+				return ec.fieldContext_User_projectUsers(ctx, field)
+			case "userRoles":
+				return ec.fieldContext_User_userRoles(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type User", field.Name)
 		},
 	}
 	return fc, nil
@@ -19323,6 +19780,10 @@ func (ec *executionContext) fieldContext_ChannelEdge_node(_ context.Context, fie
 				return ec.fieldContext_Channel_name(ctx, field)
 			case "status":
 				return ec.fieldContext_Channel_status(ctx, field)
+			case "userID":
+				return ec.fieldContext_Channel_userID(ctx, field)
+			case "expiresAt":
+				return ec.fieldContext_Channel_expiresAt(ctx, field)
 			case "supportedModels":
 				return ec.fieldContext_Channel_supportedModels(ctx, field)
 			case "manualModels":
@@ -19347,6 +19808,8 @@ func (ec *executionContext) fieldContext_ChannelEdge_node(_ context.Context, fie
 				return ec.fieldContext_Channel_remark(ctx, field)
 			case "endpoints":
 				return ec.fieldContext_Channel_endpoints(ctx, field)
+			case "user":
+				return ec.fieldContext_Channel_user(ctx, field)
 			case "requests":
 				return ec.fieldContext_Channel_requests(ctx, field)
 			case "executions":
@@ -20056,6 +20519,10 @@ func (ec *executionContext) fieldContext_ChannelModelPrice_channel(_ context.Con
 				return ec.fieldContext_Channel_name(ctx, field)
 			case "status":
 				return ec.fieldContext_Channel_status(ctx, field)
+			case "userID":
+				return ec.fieldContext_Channel_userID(ctx, field)
+			case "expiresAt":
+				return ec.fieldContext_Channel_expiresAt(ctx, field)
 			case "supportedModels":
 				return ec.fieldContext_Channel_supportedModels(ctx, field)
 			case "manualModels":
@@ -20080,6 +20547,8 @@ func (ec *executionContext) fieldContext_ChannelModelPrice_channel(_ context.Con
 				return ec.fieldContext_Channel_remark(ctx, field)
 			case "endpoints":
 				return ec.fieldContext_Channel_endpoints(ctx, field)
+			case "user":
+				return ec.fieldContext_Channel_user(ctx, field)
 			case "requests":
 				return ec.fieldContext_Channel_requests(ctx, field)
 			case "executions":
@@ -21284,12 +21753,16 @@ func (ec *executionContext) fieldContext_ChannelOverrideTemplate_user(_ context.
 				return ec.fieldContext_User_avatar(ctx, field)
 			case "isOwner":
 				return ec.fieldContext_User_isOwner(ctx, field)
+			case "dailyTokenLimit":
+				return ec.fieldContext_User_dailyTokenLimit(ctx, field)
 			case "scopes":
 				return ec.fieldContext_User_scopes(ctx, field)
 			case "projects":
 				return ec.fieldContext_User_projects(ctx, field)
 			case "apiKeys":
 				return ec.fieldContext_User_apiKeys(ctx, field)
+			case "donatedChannels":
+				return ec.fieldContext_User_donatedChannels(ctx, field)
 			case "roles":
 				return ec.fieldContext_User_roles(ctx, field)
 			case "channelOverrideTemplates":
@@ -21936,6 +22409,10 @@ func (ec *executionContext) fieldContext_ChannelProbe_channel(_ context.Context,
 				return ec.fieldContext_Channel_name(ctx, field)
 			case "status":
 				return ec.fieldContext_Channel_status(ctx, field)
+			case "userID":
+				return ec.fieldContext_Channel_userID(ctx, field)
+			case "expiresAt":
+				return ec.fieldContext_Channel_expiresAt(ctx, field)
 			case "supportedModels":
 				return ec.fieldContext_Channel_supportedModels(ctx, field)
 			case "manualModels":
@@ -21960,6 +22437,8 @@ func (ec *executionContext) fieldContext_ChannelProbe_channel(_ context.Context,
 				return ec.fieldContext_Channel_remark(ctx, field)
 			case "endpoints":
 				return ec.fieldContext_Channel_endpoints(ctx, field)
+			case "user":
+				return ec.fieldContext_Channel_user(ctx, field)
 			case "requests":
 				return ec.fieldContext_Channel_requests(ctx, field)
 			case "executions":
@@ -23728,6 +24207,10 @@ func (ec *executionContext) fieldContext_ClearChannelOverrideTemplatesPayload_ch
 				return ec.fieldContext_Channel_name(ctx, field)
 			case "status":
 				return ec.fieldContext_Channel_status(ctx, field)
+			case "userID":
+				return ec.fieldContext_Channel_userID(ctx, field)
+			case "expiresAt":
+				return ec.fieldContext_Channel_expiresAt(ctx, field)
 			case "supportedModels":
 				return ec.fieldContext_Channel_supportedModels(ctx, field)
 			case "manualModels":
@@ -23752,6 +24235,8 @@ func (ec *executionContext) fieldContext_ClearChannelOverrideTemplatesPayload_ch
 				return ec.fieldContext_Channel_remark(ctx, field)
 			case "endpoints":
 				return ec.fieldContext_Channel_endpoints(ctx, field)
+			case "user":
+				return ec.fieldContext_Channel_user(ctx, field)
 			case "requests":
 				return ec.fieldContext_Channel_requests(ctx, field)
 			case "executions":
@@ -26640,12 +27125,16 @@ func (ec *executionContext) fieldContext_InitializeSystemPayload_user(_ context.
 				return ec.fieldContext_User_avatar(ctx, field)
 			case "isOwner":
 				return ec.fieldContext_User_isOwner(ctx, field)
+			case "dailyTokenLimit":
+				return ec.fieldContext_User_dailyTokenLimit(ctx, field)
 			case "scopes":
 				return ec.fieldContext_User_scopes(ctx, field)
 			case "projects":
 				return ec.fieldContext_User_projects(ctx, field)
 			case "apiKeys":
 				return ec.fieldContext_User_apiKeys(ctx, field)
+			case "donatedChannels":
+				return ec.fieldContext_User_donatedChannels(ctx, field)
 			case "roles":
 				return ec.fieldContext_User_roles(ctx, field)
 			case "channelOverrideTemplates":
@@ -28176,6 +28665,10 @@ func (ec *executionContext) fieldContext_ModelChannelConnection_channel(_ contex
 				return ec.fieldContext_Channel_name(ctx, field)
 			case "status":
 				return ec.fieldContext_Channel_status(ctx, field)
+			case "userID":
+				return ec.fieldContext_Channel_userID(ctx, field)
+			case "expiresAt":
+				return ec.fieldContext_Channel_expiresAt(ctx, field)
 			case "supportedModels":
 				return ec.fieldContext_Channel_supportedModels(ctx, field)
 			case "manualModels":
@@ -28200,6 +28693,8 @@ func (ec *executionContext) fieldContext_ModelChannelConnection_channel(_ contex
 				return ec.fieldContext_Channel_remark(ctx, field)
 			case "endpoints":
 				return ec.fieldContext_Channel_endpoints(ctx, field)
+			case "user":
+				return ec.fieldContext_Channel_user(ctx, field)
 			case "requests":
 				return ec.fieldContext_Channel_requests(ctx, field)
 			case "executions":
@@ -29246,6 +29741,10 @@ func (ec *executionContext) fieldContext_Mutation_createChannel(ctx context.Cont
 				return ec.fieldContext_Channel_name(ctx, field)
 			case "status":
 				return ec.fieldContext_Channel_status(ctx, field)
+			case "userID":
+				return ec.fieldContext_Channel_userID(ctx, field)
+			case "expiresAt":
+				return ec.fieldContext_Channel_expiresAt(ctx, field)
 			case "supportedModels":
 				return ec.fieldContext_Channel_supportedModels(ctx, field)
 			case "manualModels":
@@ -29270,6 +29769,8 @@ func (ec *executionContext) fieldContext_Mutation_createChannel(ctx context.Cont
 				return ec.fieldContext_Channel_remark(ctx, field)
 			case "endpoints":
 				return ec.fieldContext_Channel_endpoints(ctx, field)
+			case "user":
+				return ec.fieldContext_Channel_user(ctx, field)
 			case "requests":
 				return ec.fieldContext_Channel_requests(ctx, field)
 			case "executions":
@@ -29349,6 +29850,10 @@ func (ec *executionContext) fieldContext_Mutation_duplicateChannel(ctx context.C
 				return ec.fieldContext_Channel_name(ctx, field)
 			case "status":
 				return ec.fieldContext_Channel_status(ctx, field)
+			case "userID":
+				return ec.fieldContext_Channel_userID(ctx, field)
+			case "expiresAt":
+				return ec.fieldContext_Channel_expiresAt(ctx, field)
 			case "supportedModels":
 				return ec.fieldContext_Channel_supportedModels(ctx, field)
 			case "manualModels":
@@ -29373,6 +29878,8 @@ func (ec *executionContext) fieldContext_Mutation_duplicateChannel(ctx context.C
 				return ec.fieldContext_Channel_remark(ctx, field)
 			case "endpoints":
 				return ec.fieldContext_Channel_endpoints(ctx, field)
+			case "user":
+				return ec.fieldContext_Channel_user(ctx, field)
 			case "requests":
 				return ec.fieldContext_Channel_requests(ctx, field)
 			case "executions":
@@ -29452,6 +29959,10 @@ func (ec *executionContext) fieldContext_Mutation_bulkCreateChannels(ctx context
 				return ec.fieldContext_Channel_name(ctx, field)
 			case "status":
 				return ec.fieldContext_Channel_status(ctx, field)
+			case "userID":
+				return ec.fieldContext_Channel_userID(ctx, field)
+			case "expiresAt":
+				return ec.fieldContext_Channel_expiresAt(ctx, field)
 			case "supportedModels":
 				return ec.fieldContext_Channel_supportedModels(ctx, field)
 			case "manualModels":
@@ -29476,6 +29987,8 @@ func (ec *executionContext) fieldContext_Mutation_bulkCreateChannels(ctx context
 				return ec.fieldContext_Channel_remark(ctx, field)
 			case "endpoints":
 				return ec.fieldContext_Channel_endpoints(ctx, field)
+			case "user":
+				return ec.fieldContext_Channel_user(ctx, field)
 			case "requests":
 				return ec.fieldContext_Channel_requests(ctx, field)
 			case "executions":
@@ -29555,6 +30068,10 @@ func (ec *executionContext) fieldContext_Mutation_updateChannel(ctx context.Cont
 				return ec.fieldContext_Channel_name(ctx, field)
 			case "status":
 				return ec.fieldContext_Channel_status(ctx, field)
+			case "userID":
+				return ec.fieldContext_Channel_userID(ctx, field)
+			case "expiresAt":
+				return ec.fieldContext_Channel_expiresAt(ctx, field)
 			case "supportedModels":
 				return ec.fieldContext_Channel_supportedModels(ctx, field)
 			case "manualModels":
@@ -29579,6 +30096,8 @@ func (ec *executionContext) fieldContext_Mutation_updateChannel(ctx context.Cont
 				return ec.fieldContext_Channel_remark(ctx, field)
 			case "endpoints":
 				return ec.fieldContext_Channel_endpoints(ctx, field)
+			case "user":
+				return ec.fieldContext_Channel_user(ctx, field)
 			case "requests":
 				return ec.fieldContext_Channel_requests(ctx, field)
 			case "executions":
@@ -29658,6 +30177,10 @@ func (ec *executionContext) fieldContext_Mutation_saveChannelEndpoints(ctx conte
 				return ec.fieldContext_Channel_name(ctx, field)
 			case "status":
 				return ec.fieldContext_Channel_status(ctx, field)
+			case "userID":
+				return ec.fieldContext_Channel_userID(ctx, field)
+			case "expiresAt":
+				return ec.fieldContext_Channel_expiresAt(ctx, field)
 			case "supportedModels":
 				return ec.fieldContext_Channel_supportedModels(ctx, field)
 			case "manualModels":
@@ -29682,6 +30205,8 @@ func (ec *executionContext) fieldContext_Mutation_saveChannelEndpoints(ctx conte
 				return ec.fieldContext_Channel_remark(ctx, field)
 			case "endpoints":
 				return ec.fieldContext_Channel_endpoints(ctx, field)
+			case "user":
+				return ec.fieldContext_Channel_user(ctx, field)
 			case "requests":
 				return ec.fieldContext_Channel_requests(ctx, field)
 			case "executions":
@@ -29761,6 +30286,10 @@ func (ec *executionContext) fieldContext_Mutation_updateChannelStatus(ctx contex
 				return ec.fieldContext_Channel_name(ctx, field)
 			case "status":
 				return ec.fieldContext_Channel_status(ctx, field)
+			case "userID":
+				return ec.fieldContext_Channel_userID(ctx, field)
+			case "expiresAt":
+				return ec.fieldContext_Channel_expiresAt(ctx, field)
 			case "supportedModels":
 				return ec.fieldContext_Channel_supportedModels(ctx, field)
 			case "manualModels":
@@ -29785,6 +30314,8 @@ func (ec *executionContext) fieldContext_Mutation_updateChannelStatus(ctx contex
 				return ec.fieldContext_Channel_remark(ctx, field)
 			case "endpoints":
 				return ec.fieldContext_Channel_endpoints(ctx, field)
+			case "user":
+				return ec.fieldContext_Channel_user(ctx, field)
 			case "requests":
 				return ec.fieldContext_Channel_requests(ctx, field)
 			case "executions":
@@ -31064,12 +31595,16 @@ func (ec *executionContext) fieldContext_Mutation_createUser(ctx context.Context
 				return ec.fieldContext_User_avatar(ctx, field)
 			case "isOwner":
 				return ec.fieldContext_User_isOwner(ctx, field)
+			case "dailyTokenLimit":
+				return ec.fieldContext_User_dailyTokenLimit(ctx, field)
 			case "scopes":
 				return ec.fieldContext_User_scopes(ctx, field)
 			case "projects":
 				return ec.fieldContext_User_projects(ctx, field)
 			case "apiKeys":
 				return ec.fieldContext_User_apiKeys(ctx, field)
+			case "donatedChannels":
+				return ec.fieldContext_User_donatedChannels(ctx, field)
 			case "roles":
 				return ec.fieldContext_User_roles(ctx, field)
 			case "channelOverrideTemplates":
@@ -31143,12 +31678,16 @@ func (ec *executionContext) fieldContext_Mutation_updateUser(ctx context.Context
 				return ec.fieldContext_User_avatar(ctx, field)
 			case "isOwner":
 				return ec.fieldContext_User_isOwner(ctx, field)
+			case "dailyTokenLimit":
+				return ec.fieldContext_User_dailyTokenLimit(ctx, field)
 			case "scopes":
 				return ec.fieldContext_User_scopes(ctx, field)
 			case "projects":
 				return ec.fieldContext_User_projects(ctx, field)
 			case "apiKeys":
 				return ec.fieldContext_User_apiKeys(ctx, field)
+			case "donatedChannels":
+				return ec.fieldContext_User_donatedChannels(ctx, field)
 			case "roles":
 				return ec.fieldContext_User_roles(ctx, field)
 			case "channelOverrideTemplates":
@@ -31222,12 +31761,16 @@ func (ec *executionContext) fieldContext_Mutation_updateUserStatus(ctx context.C
 				return ec.fieldContext_User_avatar(ctx, field)
 			case "isOwner":
 				return ec.fieldContext_User_isOwner(ctx, field)
+			case "dailyTokenLimit":
+				return ec.fieldContext_User_dailyTokenLimit(ctx, field)
 			case "scopes":
 				return ec.fieldContext_User_scopes(ctx, field)
 			case "projects":
 				return ec.fieldContext_User_projects(ctx, field)
 			case "apiKeys":
 				return ec.fieldContext_User_apiKeys(ctx, field)
+			case "donatedChannels":
+				return ec.fieldContext_User_donatedChannels(ctx, field)
 			case "roles":
 				return ec.fieldContext_User_roles(ctx, field)
 			case "channelOverrideTemplates":
@@ -32756,12 +33299,16 @@ func (ec *executionContext) fieldContext_Mutation_updateMe(ctx context.Context, 
 				return ec.fieldContext_User_avatar(ctx, field)
 			case "isOwner":
 				return ec.fieldContext_User_isOwner(ctx, field)
+			case "dailyTokenLimit":
+				return ec.fieldContext_User_dailyTokenLimit(ctx, field)
 			case "scopes":
 				return ec.fieldContext_User_scopes(ctx, field)
 			case "projects":
 				return ec.fieldContext_User_projects(ctx, field)
 			case "apiKeys":
 				return ec.fieldContext_User_apiKeys(ctx, field)
+			case "donatedChannels":
+				return ec.fieldContext_User_donatedChannels(ctx, field)
 			case "roles":
 				return ec.fieldContext_User_roles(ctx, field)
 			case "channelOverrideTemplates":
@@ -35650,12 +36197,16 @@ func (ec *executionContext) fieldContext_OIDCIdentity_user(_ context.Context, fi
 				return ec.fieldContext_User_avatar(ctx, field)
 			case "isOwner":
 				return ec.fieldContext_User_isOwner(ctx, field)
+			case "dailyTokenLimit":
+				return ec.fieldContext_User_dailyTokenLimit(ctx, field)
 			case "scopes":
 				return ec.fieldContext_User_scopes(ctx, field)
 			case "projects":
 				return ec.fieldContext_User_projects(ctx, field)
 			case "apiKeys":
 				return ec.fieldContext_User_apiKeys(ctx, field)
+			case "donatedChannels":
+				return ec.fieldContext_User_donatedChannels(ctx, field)
 			case "roles":
 				return ec.fieldContext_User_roles(ctx, field)
 			case "channelOverrideTemplates":
@@ -39686,6 +40237,10 @@ func (ec *executionContext) fieldContext_ProviderQuotaStatus_channel(_ context.C
 				return ec.fieldContext_Channel_name(ctx, field)
 			case "status":
 				return ec.fieldContext_Channel_status(ctx, field)
+			case "userID":
+				return ec.fieldContext_Channel_userID(ctx, field)
+			case "expiresAt":
+				return ec.fieldContext_Channel_expiresAt(ctx, field)
 			case "supportedModels":
 				return ec.fieldContext_Channel_supportedModels(ctx, field)
 			case "manualModels":
@@ -39710,6 +40265,8 @@ func (ec *executionContext) fieldContext_ProviderQuotaStatus_channel(_ context.C
 				return ec.fieldContext_Channel_remark(ctx, field)
 			case "endpoints":
 				return ec.fieldContext_Channel_endpoints(ctx, field)
+			case "user":
+				return ec.fieldContext_Channel_user(ctx, field)
 			case "requests":
 				return ec.fieldContext_Channel_requests(ctx, field)
 			case "executions":
@@ -40925,6 +41482,10 @@ func (ec *executionContext) fieldContext_Query_allChannelSummarys(ctx context.Co
 				return ec.fieldContext_Channel_name(ctx, field)
 			case "status":
 				return ec.fieldContext_Channel_status(ctx, field)
+			case "userID":
+				return ec.fieldContext_Channel_userID(ctx, field)
+			case "expiresAt":
+				return ec.fieldContext_Channel_expiresAt(ctx, field)
 			case "supportedModels":
 				return ec.fieldContext_Channel_supportedModels(ctx, field)
 			case "manualModels":
@@ -40949,6 +41510,8 @@ func (ec *executionContext) fieldContext_Query_allChannelSummarys(ctx context.Co
 				return ec.fieldContext_Channel_remark(ctx, field)
 			case "endpoints":
 				return ec.fieldContext_Channel_endpoints(ctx, field)
+			case "user":
+				return ec.fieldContext_Channel_user(ctx, field)
 			case "requests":
 				return ec.fieldContext_Channel_requests(ctx, field)
 			case "executions":
@@ -42196,6 +42759,49 @@ func (ec *executionContext) fieldContext_Query_usageStatsByUser(ctx context.Cont
 	if fc.Args, err = ec.field_Query_usageStatsByUser_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_campusUsageLeaderboard(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_campusUsageLeaderboard,
+		func(ctx context.Context) (any, error) {
+			return ec.resolvers.Query().CampusUsageLeaderboard(ctx)
+		},
+		nil,
+		ec.marshalNCampusUsageLeaderboardEntry2ᚕᚖgithubᚗcomᚋloopljᚋaxonhubᚋinternalᚋserverᚋgqlᚐCampusUsageLeaderboardEntryᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_campusUsageLeaderboard(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "rank":
+				return ec.fieldContext_CampusUsageLeaderboardEntry_rank(ctx, field)
+			case "publicAlias":
+				return ec.fieldContext_CampusUsageLeaderboardEntry_publicAlias(ctx, field)
+			case "isMe":
+				return ec.fieldContext_CampusUsageLeaderboardEntry_isMe(ctx, field)
+			case "recordedTokens":
+				return ec.fieldContext_CampusUsageLeaderboardEntry_recordedTokens(ctx, field)
+			case "meteredRequestCount":
+				return ec.fieldContext_CampusUsageLeaderboardEntry_meteredRequestCount(ctx, field)
+			case "limitPercent":
+				return ec.fieldContext_CampusUsageLeaderboardEntry_limitPercent(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type CampusUsageLeaderboardEntry", field.Name)
+		},
 	}
 	return fc, nil
 }
@@ -44819,6 +45425,10 @@ func (ec *executionContext) fieldContext_Request_channel(_ context.Context, fiel
 				return ec.fieldContext_Channel_name(ctx, field)
 			case "status":
 				return ec.fieldContext_Channel_status(ctx, field)
+			case "userID":
+				return ec.fieldContext_Channel_userID(ctx, field)
+			case "expiresAt":
+				return ec.fieldContext_Channel_expiresAt(ctx, field)
 			case "supportedModels":
 				return ec.fieldContext_Channel_supportedModels(ctx, field)
 			case "manualModels":
@@ -44843,6 +45453,8 @@ func (ec *executionContext) fieldContext_Request_channel(_ context.Context, fiel
 				return ec.fieldContext_Channel_remark(ctx, field)
 			case "endpoints":
 				return ec.fieldContext_Channel_endpoints(ctx, field)
+			case "user":
+				return ec.fieldContext_Channel_user(ctx, field)
 			case "requests":
 				return ec.fieldContext_Channel_requests(ctx, field)
 			case "executions":
@@ -45956,6 +46568,10 @@ func (ec *executionContext) fieldContext_RequestExecution_channel(_ context.Cont
 				return ec.fieldContext_Channel_name(ctx, field)
 			case "status":
 				return ec.fieldContext_Channel_status(ctx, field)
+			case "userID":
+				return ec.fieldContext_Channel_userID(ctx, field)
+			case "expiresAt":
+				return ec.fieldContext_Channel_expiresAt(ctx, field)
 			case "supportedModels":
 				return ec.fieldContext_Channel_supportedModels(ctx, field)
 			case "manualModels":
@@ -45980,6 +46596,8 @@ func (ec *executionContext) fieldContext_RequestExecution_channel(_ context.Cont
 				return ec.fieldContext_Channel_remark(ctx, field)
 			case "endpoints":
 				return ec.fieldContext_Channel_endpoints(ctx, field)
+			case "user":
+				return ec.fieldContext_Channel_user(ctx, field)
 			case "requests":
 				return ec.fieldContext_Channel_requests(ctx, field)
 			case "executions":
@@ -48386,12 +49004,16 @@ func (ec *executionContext) fieldContext_SignInPayload_user(_ context.Context, f
 				return ec.fieldContext_User_avatar(ctx, field)
 			case "isOwner":
 				return ec.fieldContext_User_isOwner(ctx, field)
+			case "dailyTokenLimit":
+				return ec.fieldContext_User_dailyTokenLimit(ctx, field)
 			case "scopes":
 				return ec.fieldContext_User_scopes(ctx, field)
 			case "projects":
 				return ec.fieldContext_User_projects(ctx, field)
 			case "apiKeys":
 				return ec.fieldContext_User_apiKeys(ctx, field)
+			case "donatedChannels":
+				return ec.fieldContext_User_donatedChannels(ctx, field)
 			case "roles":
 				return ec.fieldContext_User_roles(ctx, field)
 			case "channelOverrideTemplates":
@@ -53369,6 +53991,10 @@ func (ec *executionContext) fieldContext_UnassociatedChannel_channel(_ context.C
 				return ec.fieldContext_Channel_name(ctx, field)
 			case "status":
 				return ec.fieldContext_Channel_status(ctx, field)
+			case "userID":
+				return ec.fieldContext_Channel_userID(ctx, field)
+			case "expiresAt":
+				return ec.fieldContext_Channel_expiresAt(ctx, field)
 			case "supportedModels":
 				return ec.fieldContext_Channel_supportedModels(ctx, field)
 			case "manualModels":
@@ -53393,6 +54019,8 @@ func (ec *executionContext) fieldContext_UnassociatedChannel_channel(_ context.C
 				return ec.fieldContext_Channel_remark(ctx, field)
 			case "endpoints":
 				return ec.fieldContext_Channel_endpoints(ctx, field)
+			case "user":
+				return ec.fieldContext_Channel_user(ctx, field)
 			case "requests":
 				return ec.fieldContext_Channel_requests(ctx, field)
 			case "executions":
@@ -54446,6 +55074,10 @@ func (ec *executionContext) fieldContext_UsageLog_channel(_ context.Context, fie
 				return ec.fieldContext_Channel_name(ctx, field)
 			case "status":
 				return ec.fieldContext_Channel_status(ctx, field)
+			case "userID":
+				return ec.fieldContext_Channel_userID(ctx, field)
+			case "expiresAt":
+				return ec.fieldContext_Channel_expiresAt(ctx, field)
 			case "supportedModels":
 				return ec.fieldContext_Channel_supportedModels(ctx, field)
 			case "manualModels":
@@ -54470,6 +55102,8 @@ func (ec *executionContext) fieldContext_UsageLog_channel(_ context.Context, fie
 				return ec.fieldContext_Channel_remark(ctx, field)
 			case "endpoints":
 				return ec.fieldContext_Channel_endpoints(ctx, field)
+			case "user":
+				return ec.fieldContext_Channel_user(ctx, field)
 			case "requests":
 				return ec.fieldContext_Channel_requests(ctx, field)
 			case "executions":
@@ -55327,6 +55961,35 @@ func (ec *executionContext) fieldContext_User_isOwner(_ context.Context, field g
 	return fc, nil
 }
 
+func (ec *executionContext) _User_dailyTokenLimit(ctx context.Context, field graphql.CollectedField, obj *ent.User) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_User_dailyTokenLimit,
+		func(ctx context.Context) (any, error) {
+			return obj.DailyTokenLimit, nil
+		},
+		nil,
+		ec.marshalNInt2int64,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_User_dailyTokenLimit(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "User",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _User_scopes(ctx context.Context, field graphql.CollectedField, obj *ent.User) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -55448,6 +56111,55 @@ func (ec *executionContext) fieldContext_User_apiKeys(ctx context.Context, field
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_User_apiKeys_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _User_donatedChannels(ctx context.Context, field graphql.CollectedField, obj *ent.User) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_User_donatedChannels,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return obj.DonatedChannels(ctx, fc.Args["after"].(*entgql.Cursor[int]), fc.Args["first"].(*int), fc.Args["before"].(*entgql.Cursor[int]), fc.Args["last"].(*int), fc.Args["orderBy"].(*ent.ChannelOrder), fc.Args["where"].(*ent.ChannelWhereInput))
+		},
+		nil,
+		ec.marshalNChannelConnection2ᚖgithubᚗcomᚋloopljᚋaxonhubᚋinternalᚋentᚐChannelConnection,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_User_donatedChannels(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "User",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "edges":
+				return ec.fieldContext_ChannelConnection_edges(ctx, field)
+			case "pageInfo":
+				return ec.fieldContext_ChannelConnection_pageInfo(ctx, field)
+			case "totalCount":
+				return ec.fieldContext_ChannelConnection_totalCount(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type ChannelConnection", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_User_donatedChannels_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -55871,12 +56583,16 @@ func (ec *executionContext) fieldContext_UserEdge_node(_ context.Context, field 
 				return ec.fieldContext_User_avatar(ctx, field)
 			case "isOwner":
 				return ec.fieldContext_User_isOwner(ctx, field)
+			case "dailyTokenLimit":
+				return ec.fieldContext_User_dailyTokenLimit(ctx, field)
 			case "scopes":
 				return ec.fieldContext_User_scopes(ctx, field)
 			case "projects":
 				return ec.fieldContext_User_projects(ctx, field)
 			case "apiKeys":
 				return ec.fieldContext_User_apiKeys(ctx, field)
+			case "donatedChannels":
+				return ec.fieldContext_User_donatedChannels(ctx, field)
 			case "roles":
 				return ec.fieldContext_User_roles(ctx, field)
 			case "channelOverrideTemplates":
@@ -56544,12 +57260,16 @@ func (ec *executionContext) fieldContext_UserProject_user(_ context.Context, fie
 				return ec.fieldContext_User_avatar(ctx, field)
 			case "isOwner":
 				return ec.fieldContext_User_isOwner(ctx, field)
+			case "dailyTokenLimit":
+				return ec.fieldContext_User_dailyTokenLimit(ctx, field)
 			case "scopes":
 				return ec.fieldContext_User_scopes(ctx, field)
 			case "projects":
 				return ec.fieldContext_User_projects(ctx, field)
 			case "apiKeys":
 				return ec.fieldContext_User_apiKeys(ctx, field)
+			case "donatedChannels":
+				return ec.fieldContext_User_donatedChannels(ctx, field)
 			case "roles":
 				return ec.fieldContext_User_roles(ctx, field)
 			case "channelOverrideTemplates":
@@ -56941,12 +57661,16 @@ func (ec *executionContext) fieldContext_UserRole_user(_ context.Context, field 
 				return ec.fieldContext_User_avatar(ctx, field)
 			case "isOwner":
 				return ec.fieldContext_User_isOwner(ctx, field)
+			case "dailyTokenLimit":
+				return ec.fieldContext_User_dailyTokenLimit(ctx, field)
 			case "scopes":
 				return ec.fieldContext_User_scopes(ctx, field)
 			case "projects":
 				return ec.fieldContext_User_projects(ctx, field)
 			case "apiKeys":
 				return ec.fieldContext_User_apiKeys(ctx, field)
+			case "donatedChannels":
+				return ec.fieldContext_User_donatedChannels(ctx, field)
 			case "roles":
 				return ec.fieldContext_User_roles(ctx, field)
 			case "channelOverrideTemplates":
@@ -64049,7 +64773,7 @@ func (ec *executionContext) unmarshalInputChannelWhereInput(ctx context.Context,
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"not", "and", "or", "id", "idNEQ", "idIn", "idNotIn", "idGT", "idGTE", "idLT", "idLTE", "createdAt", "createdAtNEQ", "createdAtIn", "createdAtNotIn", "createdAtGT", "createdAtGTE", "createdAtLT", "createdAtLTE", "updatedAt", "updatedAtNEQ", "updatedAtIn", "updatedAtNotIn", "updatedAtGT", "updatedAtGTE", "updatedAtLT", "updatedAtLTE", "type", "typeNEQ", "typeIn", "typeNotIn", "baseURL", "baseURLNEQ", "baseURLIn", "baseURLNotIn", "baseURLGT", "baseURLGTE", "baseURLLT", "baseURLLTE", "baseURLContains", "baseURLHasPrefix", "baseURLHasSuffix", "baseURLIsNil", "baseURLNotNil", "baseURLEqualFold", "baseURLContainsFold", "name", "nameNEQ", "nameIn", "nameNotIn", "nameGT", "nameGTE", "nameLT", "nameLTE", "nameContains", "nameHasPrefix", "nameHasSuffix", "nameEqualFold", "nameContainsFold", "status", "statusNEQ", "statusIn", "statusNotIn", "autoSyncSupportedModels", "autoSyncSupportedModelsNEQ", "autoSyncModelPattern", "autoSyncModelPatternNEQ", "autoSyncModelPatternIn", "autoSyncModelPatternNotIn", "autoSyncModelPatternGT", "autoSyncModelPatternGTE", "autoSyncModelPatternLT", "autoSyncModelPatternLTE", "autoSyncModelPatternContains", "autoSyncModelPatternHasPrefix", "autoSyncModelPatternHasSuffix", "autoSyncModelPatternIsNil", "autoSyncModelPatternNotNil", "autoSyncModelPatternEqualFold", "autoSyncModelPatternContainsFold", "defaultTestModel", "defaultTestModelNEQ", "defaultTestModelIn", "defaultTestModelNotIn", "defaultTestModelGT", "defaultTestModelGTE", "defaultTestModelLT", "defaultTestModelLTE", "defaultTestModelContains", "defaultTestModelHasPrefix", "defaultTestModelHasSuffix", "defaultTestModelEqualFold", "defaultTestModelContainsFold", "orderingWeight", "orderingWeightNEQ", "orderingWeightIn", "orderingWeightNotIn", "orderingWeightGT", "orderingWeightGTE", "orderingWeightLT", "orderingWeightLTE", "errorMessage", "errorMessageNEQ", "errorMessageIn", "errorMessageNotIn", "errorMessageGT", "errorMessageGTE", "errorMessageLT", "errorMessageLTE", "errorMessageContains", "errorMessageHasPrefix", "errorMessageHasSuffix", "errorMessageIsNil", "errorMessageNotNil", "errorMessageEqualFold", "errorMessageContainsFold", "remark", "remarkNEQ", "remarkIn", "remarkNotIn", "remarkGT", "remarkGTE", "remarkLT", "remarkLTE", "remarkContains", "remarkHasPrefix", "remarkHasSuffix", "remarkIsNil", "remarkNotNil", "remarkEqualFold", "remarkContainsFold", "hasRequests", "hasRequestsWith", "hasExecutions", "hasExecutionsWith", "hasUsageLogs", "hasUsageLogsWith", "hasChannelProbes", "hasChannelProbesWith", "hasChannelModelPrices", "hasChannelModelPricesWith", "hasProviderQuotaStatus", "hasProviderQuotaStatusWith"}
+	fieldsInOrder := [...]string{"not", "and", "or", "id", "idNEQ", "idIn", "idNotIn", "idGT", "idGTE", "idLT", "idLTE", "createdAt", "createdAtNEQ", "createdAtIn", "createdAtNotIn", "createdAtGT", "createdAtGTE", "createdAtLT", "createdAtLTE", "updatedAt", "updatedAtNEQ", "updatedAtIn", "updatedAtNotIn", "updatedAtGT", "updatedAtGTE", "updatedAtLT", "updatedAtLTE", "type", "typeNEQ", "typeIn", "typeNotIn", "baseURL", "baseURLNEQ", "baseURLIn", "baseURLNotIn", "baseURLGT", "baseURLGTE", "baseURLLT", "baseURLLTE", "baseURLContains", "baseURLHasPrefix", "baseURLHasSuffix", "baseURLIsNil", "baseURLNotNil", "baseURLEqualFold", "baseURLContainsFold", "name", "nameNEQ", "nameIn", "nameNotIn", "nameGT", "nameGTE", "nameLT", "nameLTE", "nameContains", "nameHasPrefix", "nameHasSuffix", "nameEqualFold", "nameContainsFold", "status", "statusNEQ", "statusIn", "statusNotIn", "userID", "userIDNEQ", "userIDIn", "userIDNotIn", "userIDIsNil", "userIDNotNil", "expiresAt", "expiresAtNEQ", "expiresAtIn", "expiresAtNotIn", "expiresAtGT", "expiresAtGTE", "expiresAtLT", "expiresAtLTE", "expiresAtIsNil", "expiresAtNotNil", "autoSyncSupportedModels", "autoSyncSupportedModelsNEQ", "autoSyncModelPattern", "autoSyncModelPatternNEQ", "autoSyncModelPatternIn", "autoSyncModelPatternNotIn", "autoSyncModelPatternGT", "autoSyncModelPatternGTE", "autoSyncModelPatternLT", "autoSyncModelPatternLTE", "autoSyncModelPatternContains", "autoSyncModelPatternHasPrefix", "autoSyncModelPatternHasSuffix", "autoSyncModelPatternIsNil", "autoSyncModelPatternNotNil", "autoSyncModelPatternEqualFold", "autoSyncModelPatternContainsFold", "defaultTestModel", "defaultTestModelNEQ", "defaultTestModelIn", "defaultTestModelNotIn", "defaultTestModelGT", "defaultTestModelGTE", "defaultTestModelLT", "defaultTestModelLTE", "defaultTestModelContains", "defaultTestModelHasPrefix", "defaultTestModelHasSuffix", "defaultTestModelEqualFold", "defaultTestModelContainsFold", "orderingWeight", "orderingWeightNEQ", "orderingWeightIn", "orderingWeightNotIn", "orderingWeightGT", "orderingWeightGTE", "orderingWeightLT", "orderingWeightLTE", "errorMessage", "errorMessageNEQ", "errorMessageIn", "errorMessageNotIn", "errorMessageGT", "errorMessageGTE", "errorMessageLT", "errorMessageLTE", "errorMessageContains", "errorMessageHasPrefix", "errorMessageHasSuffix", "errorMessageIsNil", "errorMessageNotNil", "errorMessageEqualFold", "errorMessageContainsFold", "remark", "remarkNEQ", "remarkIn", "remarkNotIn", "remarkGT", "remarkGTE", "remarkLT", "remarkLTE", "remarkContains", "remarkHasPrefix", "remarkHasSuffix", "remarkIsNil", "remarkNotNil", "remarkEqualFold", "remarkContainsFold", "hasUser", "hasUserWith", "hasRequests", "hasRequestsWith", "hasExecutions", "hasExecutionsWith", "hasUsageLogs", "hasUsageLogsWith", "hasChannelProbes", "hasChannelProbesWith", "hasChannelModelPrices", "hasChannelModelPricesWith", "hasProviderQuotaStatus", "hasProviderQuotaStatusWith"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -64529,6 +65253,134 @@ func (ec *executionContext) unmarshalInputChannelWhereInput(ctx context.Context,
 				return it, err
 			}
 			it.StatusNotIn = data
+		case "userID":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("userID"))
+			data, err := ec.unmarshalOID2ᚖgithubᚗcomᚋloopljᚋaxonhubᚋinternalᚋobjectsᚐGUID(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			converted, err := objects.ConvertGUIDPtrToIntPtr(data)
+			if err != nil {
+				return it, graphql.ErrorOnPath(ctx, err)
+			}
+			it.UserID = converted
+		case "userIDNEQ":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("userIDNEQ"))
+			data, err := ec.unmarshalOID2ᚖgithubᚗcomᚋloopljᚋaxonhubᚋinternalᚋobjectsᚐGUID(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			converted, err := objects.ConvertGUIDPtrToIntPtr(data)
+			if err != nil {
+				return it, graphql.ErrorOnPath(ctx, err)
+			}
+			it.UserIDNEQ = converted
+		case "userIDIn":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("userIDIn"))
+			data, err := ec.unmarshalOID2ᚕᚖgithubᚗcomᚋloopljᚋaxonhubᚋinternalᚋobjectsᚐGUIDᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			converted, err := objects.ConvertGUIDPtrsToInts(data)
+			if err != nil {
+				return it, graphql.ErrorOnPath(ctx, err)
+			}
+			it.UserIDIn = converted
+		case "userIDNotIn":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("userIDNotIn"))
+			data, err := ec.unmarshalOID2ᚕᚖgithubᚗcomᚋloopljᚋaxonhubᚋinternalᚋobjectsᚐGUIDᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			converted, err := objects.ConvertGUIDPtrsToInts(data)
+			if err != nil {
+				return it, graphql.ErrorOnPath(ctx, err)
+			}
+			it.UserIDNotIn = converted
+		case "userIDIsNil":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("userIDIsNil"))
+			data, err := ec.unmarshalOBoolean2bool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.UserIDIsNil = data
+		case "userIDNotNil":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("userIDNotNil"))
+			data, err := ec.unmarshalOBoolean2bool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.UserIDNotNil = data
+		case "expiresAt":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("expiresAt"))
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ExpiresAt = data
+		case "expiresAtNEQ":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("expiresAtNEQ"))
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ExpiresAtNEQ = data
+		case "expiresAtIn":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("expiresAtIn"))
+			data, err := ec.unmarshalOTime2ᚕtimeᚐTimeᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ExpiresAtIn = data
+		case "expiresAtNotIn":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("expiresAtNotIn"))
+			data, err := ec.unmarshalOTime2ᚕtimeᚐTimeᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ExpiresAtNotIn = data
+		case "expiresAtGT":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("expiresAtGT"))
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ExpiresAtGT = data
+		case "expiresAtGTE":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("expiresAtGTE"))
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ExpiresAtGTE = data
+		case "expiresAtLT":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("expiresAtLT"))
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ExpiresAtLT = data
+		case "expiresAtLTE":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("expiresAtLTE"))
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ExpiresAtLTE = data
+		case "expiresAtIsNil":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("expiresAtIsNil"))
+			data, err := ec.unmarshalOBoolean2bool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ExpiresAtIsNil = data
+		case "expiresAtNotNil":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("expiresAtNotNil"))
+			data, err := ec.unmarshalOBoolean2bool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ExpiresAtNotNil = data
 		case "autoSyncSupportedModels":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("autoSyncSupportedModels"))
 			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
@@ -65005,6 +65857,20 @@ func (ec *executionContext) unmarshalInputChannelWhereInput(ctx context.Context,
 				return it, err
 			}
 			it.RemarkContainsFold = data
+		case "hasUser":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("hasUser"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.HasUser = data
+		case "hasUserWith":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("hasUserWith"))
+			data, err := ec.unmarshalOUserWhereInput2ᚕᚖgithubᚗcomᚋloopljᚋaxonhubᚋinternalᚋentᚐUserWhereInputᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.HasUserWith = data
 		case "hasRequests":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("hasRequests"))
 			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
@@ -65450,7 +66316,7 @@ func (ec *executionContext) unmarshalInputCreateChannelInput(ctx context.Context
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"type", "baseURL", "name", "credentials", "supportedModels", "manualModels", "autoSyncSupportedModels", "autoSyncModelPattern", "tags", "defaultTestModel", "policies", "settings", "orderingWeight", "remark", "endpoints"}
+	fieldsInOrder := [...]string{"type", "baseURL", "name", "expiresAt", "credentials", "supportedModels", "manualModels", "autoSyncSupportedModels", "autoSyncModelPattern", "tags", "defaultTestModel", "policies", "settings", "orderingWeight", "remark", "endpoints"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -65478,6 +66344,13 @@ func (ec *executionContext) unmarshalInputCreateChannelInput(ctx context.Context
 				return it, err
 			}
 			it.Name = data
+		case "expiresAt":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("expiresAt"))
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ExpiresAt = data
 		case "credentials":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("credentials"))
 			data, err := ec.unmarshalNChannelCredentialsInput2githubᚗcomᚋloopljᚋaxonhubᚋinternalᚋobjectsᚐChannelCredentials(ctx, v)
@@ -66574,7 +67447,7 @@ func (ec *executionContext) unmarshalInputCreateUserInput(ctx context.Context, o
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"email", "status", "preferLanguage", "password", "firstName", "lastName", "avatar", "isOwner", "scopes", "projectIDs", "roleIDs"}
+	fieldsInOrder := [...]string{"email", "status", "preferLanguage", "password", "firstName", "lastName", "avatar", "isOwner", "dailyTokenLimit", "scopes", "projectIDs", "roleIDs"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -66637,6 +67510,13 @@ func (ec *executionContext) unmarshalInputCreateUserInput(ctx context.Context, o
 				return it, err
 			}
 			it.IsOwner = data
+		case "dailyTokenLimit":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("dailyTokenLimit"))
+			data, err := ec.unmarshalOInt2ᚖint64(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.DailyTokenLimit = data
 		case "scopes":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("scopes"))
 			data, err := ec.unmarshalOString2ᚕstringᚄ(ctx, v)
@@ -79183,7 +80063,7 @@ func (ec *executionContext) unmarshalInputUpdateChannelInput(ctx context.Context
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"type", "baseURL", "clearBaseURL", "name", "status", "credentials", "supportedModels", "appendSupportedModels", "manualModels", "appendManualModels", "clearManualModels", "autoSyncSupportedModels", "autoSyncModelPattern", "clearAutoSyncModelPattern", "tags", "appendTags", "clearTags", "defaultTestModel", "policies", "clearPolicies", "settings", "clearSettings", "orderingWeight", "errorMessage", "clearErrorMessage", "remark", "clearRemark", "endpoints", "appendEndpoints", "clearEndpoints"}
+	fieldsInOrder := [...]string{"type", "baseURL", "clearBaseURL", "name", "status", "expiresAt", "clearExpiresAt", "credentials", "supportedModels", "appendSupportedModels", "manualModels", "appendManualModels", "clearManualModels", "autoSyncSupportedModels", "autoSyncModelPattern", "clearAutoSyncModelPattern", "tags", "appendTags", "clearTags", "defaultTestModel", "policies", "clearPolicies", "settings", "clearSettings", "orderingWeight", "errorMessage", "clearErrorMessage", "remark", "clearRemark", "endpoints", "appendEndpoints", "clearEndpoints"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -79225,6 +80105,20 @@ func (ec *executionContext) unmarshalInputUpdateChannelInput(ctx context.Context
 				return it, err
 			}
 			it.Status = data
+		case "expiresAt":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("expiresAt"))
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ExpiresAt = data
+		case "clearExpiresAt":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("clearExpiresAt"))
+			data, err := ec.unmarshalOBoolean2bool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ClearExpiresAt = data
 		case "credentials":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("credentials"))
 			data, err := ec.unmarshalOChannelCredentialsInput2ᚖgithubᚗcomᚋloopljᚋaxonhubᚋinternalᚋobjectsᚐChannelCredentials(ctx, v)
@@ -81215,7 +82109,7 @@ func (ec *executionContext) unmarshalInputUpdateUserInput(ctx context.Context, o
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"email", "status", "preferLanguage", "password", "firstName", "lastName", "avatar", "clearAvatar", "isOwner", "scopes", "appendScopes", "clearScopes", "addProjectIDs", "removeProjectIDs", "clearProjects", "addRoleIDs", "removeRoleIDs", "clearRoles"}
+	fieldsInOrder := [...]string{"email", "status", "preferLanguage", "password", "firstName", "lastName", "avatar", "clearAvatar", "isOwner", "dailyTokenLimit", "scopes", "appendScopes", "clearScopes", "addProjectIDs", "removeProjectIDs", "clearProjects", "addRoleIDs", "removeRoleIDs", "clearRoles"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -81285,6 +82179,13 @@ func (ec *executionContext) unmarshalInputUpdateUserInput(ctx context.Context, o
 				return it, err
 			}
 			it.IsOwner = data
+		case "dailyTokenLimit":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("dailyTokenLimit"))
+			data, err := ec.unmarshalOInt2ᚖint64(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.DailyTokenLimit = data
 		case "scopes":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("scopes"))
 			data, err := ec.unmarshalOString2ᚕstringᚄ(ctx, v)
@@ -83817,7 +84718,7 @@ func (ec *executionContext) unmarshalInputUserWhereInput(ctx context.Context, ob
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"not", "and", "or", "id", "idNEQ", "idIn", "idNotIn", "idGT", "idGTE", "idLT", "idLTE", "createdAt", "createdAtNEQ", "createdAtIn", "createdAtNotIn", "createdAtGT", "createdAtGTE", "createdAtLT", "createdAtLTE", "updatedAt", "updatedAtNEQ", "updatedAtIn", "updatedAtNotIn", "updatedAtGT", "updatedAtGTE", "updatedAtLT", "updatedAtLTE", "email", "emailNEQ", "emailIn", "emailNotIn", "emailGT", "emailGTE", "emailLT", "emailLTE", "emailContains", "emailHasPrefix", "emailHasSuffix", "emailEqualFold", "emailContainsFold", "status", "statusNEQ", "statusIn", "statusNotIn", "preferLanguage", "preferLanguageNEQ", "preferLanguageIn", "preferLanguageNotIn", "preferLanguageGT", "preferLanguageGTE", "preferLanguageLT", "preferLanguageLTE", "preferLanguageContains", "preferLanguageHasPrefix", "preferLanguageHasSuffix", "preferLanguageEqualFold", "preferLanguageContainsFold", "firstName", "firstNameNEQ", "firstNameIn", "firstNameNotIn", "firstNameGT", "firstNameGTE", "firstNameLT", "firstNameLTE", "firstNameContains", "firstNameHasPrefix", "firstNameHasSuffix", "firstNameEqualFold", "firstNameContainsFold", "lastName", "lastNameNEQ", "lastNameIn", "lastNameNotIn", "lastNameGT", "lastNameGTE", "lastNameLT", "lastNameLTE", "lastNameContains", "lastNameHasPrefix", "lastNameHasSuffix", "lastNameEqualFold", "lastNameContainsFold", "avatar", "avatarNEQ", "avatarIn", "avatarNotIn", "avatarGT", "avatarGTE", "avatarLT", "avatarLTE", "avatarContains", "avatarHasPrefix", "avatarHasSuffix", "avatarIsNil", "avatarNotNil", "avatarEqualFold", "avatarContainsFold", "isOwner", "isOwnerNEQ", "hasProjects", "hasProjectsWith", "hasAPIKeys", "hasAPIKeysWith", "hasRoles", "hasRolesWith", "hasChannelOverrideTemplates", "hasChannelOverrideTemplatesWith", "hasOidcIdentities", "hasOidcIdentitiesWith", "hasProjectUsers", "hasProjectUsersWith", "hasUserRoles", "hasUserRolesWith"}
+	fieldsInOrder := [...]string{"not", "and", "or", "id", "idNEQ", "idIn", "idNotIn", "idGT", "idGTE", "idLT", "idLTE", "createdAt", "createdAtNEQ", "createdAtIn", "createdAtNotIn", "createdAtGT", "createdAtGTE", "createdAtLT", "createdAtLTE", "updatedAt", "updatedAtNEQ", "updatedAtIn", "updatedAtNotIn", "updatedAtGT", "updatedAtGTE", "updatedAtLT", "updatedAtLTE", "email", "emailNEQ", "emailIn", "emailNotIn", "emailGT", "emailGTE", "emailLT", "emailLTE", "emailContains", "emailHasPrefix", "emailHasSuffix", "emailEqualFold", "emailContainsFold", "status", "statusNEQ", "statusIn", "statusNotIn", "preferLanguage", "preferLanguageNEQ", "preferLanguageIn", "preferLanguageNotIn", "preferLanguageGT", "preferLanguageGTE", "preferLanguageLT", "preferLanguageLTE", "preferLanguageContains", "preferLanguageHasPrefix", "preferLanguageHasSuffix", "preferLanguageEqualFold", "preferLanguageContainsFold", "firstName", "firstNameNEQ", "firstNameIn", "firstNameNotIn", "firstNameGT", "firstNameGTE", "firstNameLT", "firstNameLTE", "firstNameContains", "firstNameHasPrefix", "firstNameHasSuffix", "firstNameEqualFold", "firstNameContainsFold", "lastName", "lastNameNEQ", "lastNameIn", "lastNameNotIn", "lastNameGT", "lastNameGTE", "lastNameLT", "lastNameLTE", "lastNameContains", "lastNameHasPrefix", "lastNameHasSuffix", "lastNameEqualFold", "lastNameContainsFold", "avatar", "avatarNEQ", "avatarIn", "avatarNotIn", "avatarGT", "avatarGTE", "avatarLT", "avatarLTE", "avatarContains", "avatarHasPrefix", "avatarHasSuffix", "avatarIsNil", "avatarNotNil", "avatarEqualFold", "avatarContainsFold", "isOwner", "isOwnerNEQ", "dailyTokenLimit", "dailyTokenLimitNEQ", "dailyTokenLimitIn", "dailyTokenLimitNotIn", "dailyTokenLimitGT", "dailyTokenLimitGTE", "dailyTokenLimitLT", "dailyTokenLimitLTE", "hasProjects", "hasProjectsWith", "hasAPIKeys", "hasAPIKeysWith", "hasDonatedChannels", "hasDonatedChannelsWith", "hasRoles", "hasRolesWith", "hasChannelOverrideTemplates", "hasChannelOverrideTemplatesWith", "hasOidcIdentities", "hasOidcIdentitiesWith", "hasProjectUsers", "hasProjectUsersWith", "hasUserRoles", "hasUserRolesWith"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -84556,6 +85457,62 @@ func (ec *executionContext) unmarshalInputUserWhereInput(ctx context.Context, ob
 				return it, err
 			}
 			it.IsOwnerNEQ = data
+		case "dailyTokenLimit":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("dailyTokenLimit"))
+			data, err := ec.unmarshalOInt2ᚖint64(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.DailyTokenLimit = data
+		case "dailyTokenLimitNEQ":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("dailyTokenLimitNEQ"))
+			data, err := ec.unmarshalOInt2ᚖint64(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.DailyTokenLimitNEQ = data
+		case "dailyTokenLimitIn":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("dailyTokenLimitIn"))
+			data, err := ec.unmarshalOInt2ᚕint64ᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.DailyTokenLimitIn = data
+		case "dailyTokenLimitNotIn":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("dailyTokenLimitNotIn"))
+			data, err := ec.unmarshalOInt2ᚕint64ᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.DailyTokenLimitNotIn = data
+		case "dailyTokenLimitGT":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("dailyTokenLimitGT"))
+			data, err := ec.unmarshalOInt2ᚖint64(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.DailyTokenLimitGT = data
+		case "dailyTokenLimitGTE":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("dailyTokenLimitGTE"))
+			data, err := ec.unmarshalOInt2ᚖint64(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.DailyTokenLimitGTE = data
+		case "dailyTokenLimitLT":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("dailyTokenLimitLT"))
+			data, err := ec.unmarshalOInt2ᚖint64(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.DailyTokenLimitLT = data
+		case "dailyTokenLimitLTE":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("dailyTokenLimitLTE"))
+			data, err := ec.unmarshalOInt2ᚖint64(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.DailyTokenLimitLTE = data
 		case "hasProjects":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("hasProjects"))
 			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
@@ -84584,6 +85541,20 @@ func (ec *executionContext) unmarshalInputUserWhereInput(ctx context.Context, ob
 				return it, err
 			}
 			it.HasAPIKeysWith = data
+		case "hasDonatedChannels":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("hasDonatedChannels"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.HasDonatedChannels = data
+		case "hasDonatedChannelsWith":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("hasDonatedChannelsWith"))
+			data, err := ec.unmarshalOChannelWhereInput2ᚕᚖgithubᚗcomᚋloopljᚋaxonhubᚋinternalᚋentᚐChannelWhereInputᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.HasDonatedChannelsWith = data
 		case "hasRoles":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("hasRoles"))
 			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
@@ -86617,6 +87588,70 @@ func (ec *executionContext) _BulkUpdateChannelOrderingResult(ctx context.Context
 	return out
 }
 
+var campusUsageLeaderboardEntryImplementors = []string{"CampusUsageLeaderboardEntry"}
+
+func (ec *executionContext) _CampusUsageLeaderboardEntry(ctx context.Context, sel ast.SelectionSet, obj *CampusUsageLeaderboardEntry) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, campusUsageLeaderboardEntryImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("CampusUsageLeaderboardEntry")
+		case "rank":
+			out.Values[i] = ec._CampusUsageLeaderboardEntry_rank(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "publicAlias":
+			out.Values[i] = ec._CampusUsageLeaderboardEntry_publicAlias(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "isMe":
+			out.Values[i] = ec._CampusUsageLeaderboardEntry_isMe(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "recordedTokens":
+			out.Values[i] = ec._CampusUsageLeaderboardEntry_recordedTokens(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "meteredRequestCount":
+			out.Values[i] = ec._CampusUsageLeaderboardEntry_meteredRequestCount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "limitPercent":
+			out.Values[i] = ec._CampusUsageLeaderboardEntry_limitPercent(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.processDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
 var channelImplementors = []string{"Channel", "Node"}
 
 func (ec *executionContext) _Channel(ctx context.Context, sel ast.SelectionSet, obj *ent.Channel) graphql.Marshaler {
@@ -86691,6 +87726,41 @@ func (ec *executionContext) _Channel(ctx context.Context, sel ast.SelectionSet, 
 			if out.Values[i] == graphql.Null {
 				atomic.AddUint32(&out.Invalids, 1)
 			}
+		case "userID":
+			field := field
+
+			innerFunc := func(ctx context.Context, _ *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Channel_userID(ctx, field, obj)
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "expiresAt":
+			out.Values[i] = ec._Channel_expiresAt(ctx, field, obj)
 		case "supportedModels":
 			out.Values[i] = ec._Channel_supportedModels(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
@@ -86758,6 +87828,39 @@ func (ec *executionContext) _Channel(ctx context.Context, sel ast.SelectionSet, 
 			out.Values[i] = ec._Channel_remark(ctx, field, obj)
 		case "endpoints":
 			out.Values[i] = ec._Channel_endpoints(ctx, field, obj)
+		case "user":
+			field := field
+
+			innerFunc := func(ctx context.Context, _ *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Channel_user(ctx, field, obj)
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
 		case "requests":
 			field := field
 
@@ -96016,6 +97119,28 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 			}
 
 			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "campusUsageLeaderboard":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_campusUsageLeaderboard(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
 		case "allScopes":
 			field := field
 
@@ -102399,6 +103524,11 @@ func (ec *executionContext) _User(ctx context.Context, sel ast.SelectionSet, obj
 			if out.Values[i] == graphql.Null {
 				atomic.AddUint32(&out.Invalids, 1)
 			}
+		case "dailyTokenLimit":
+			out.Values[i] = ec._User_dailyTokenLimit(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
 		case "scopes":
 			out.Values[i] = ec._User_scopes(ctx, field, obj)
 		case "projects":
@@ -102447,6 +103577,42 @@ func (ec *executionContext) _User(ctx context.Context, sel ast.SelectionSet, obj
 					}
 				}()
 				res = ec._User_apiKeys(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "donatedChannels":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._User_donatedChannels(ctx, field, obj)
 				if res == graphql.Null {
 					atomic.AddUint32(&fs.Invalids, 1)
 				}
@@ -104693,6 +105859,60 @@ func (ec *executionContext) marshalNBulkUpdateChannelOrderingResult2ᚖgithubᚗ
 		return graphql.Null
 	}
 	return ec._BulkUpdateChannelOrderingResult(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNCampusUsageLeaderboardEntry2ᚕᚖgithubᚗcomᚋloopljᚋaxonhubᚋinternalᚋserverᚋgqlᚐCampusUsageLeaderboardEntryᚄ(ctx context.Context, sel ast.SelectionSet, v []*CampusUsageLeaderboardEntry) graphql.Marshaler {
+	ret := make(graphql.Array, len(v))
+	var wg sync.WaitGroup
+	isLen1 := len(v) == 1
+	if !isLen1 {
+		wg.Add(len(v))
+	}
+	for i := range v {
+		i := i
+		fc := &graphql.FieldContext{
+			Index:  &i,
+			Result: &v[i],
+		}
+		ctx := graphql.WithFieldContext(ctx, fc)
+		f := func(i int) {
+			defer func() {
+				if r := recover(); r != nil {
+					ec.Error(ctx, ec.Recover(ctx, r))
+					ret = nil
+				}
+			}()
+			if !isLen1 {
+				defer wg.Done()
+			}
+			ret[i] = ec.marshalNCampusUsageLeaderboardEntry2ᚖgithubᚗcomᚋloopljᚋaxonhubᚋinternalᚋserverᚋgqlᚐCampusUsageLeaderboardEntry(ctx, sel, v[i])
+		}
+		if isLen1 {
+			f(i)
+		} else {
+			go f(i)
+		}
+
+	}
+	wg.Wait()
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNCampusUsageLeaderboardEntry2ᚖgithubᚗcomᚋloopljᚋaxonhubᚋinternalᚋserverᚋgqlᚐCampusUsageLeaderboardEntry(ctx context.Context, sel ast.SelectionSet, v *CampusUsageLeaderboardEntry) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._CampusUsageLeaderboardEntry(ctx, sel, v)
 }
 
 func (ec *executionContext) marshalNChannel2githubᚗcomᚋloopljᚋaxonhubᚋinternalᚋentᚐChannel(ctx context.Context, sel ast.SelectionSet, v ent.Channel) graphql.Marshaler {

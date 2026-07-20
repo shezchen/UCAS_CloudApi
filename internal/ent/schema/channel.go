@@ -109,6 +109,18 @@ func (Channel) Fields() []ent.Field {
 				entgql.Skip(entgql.SkipMutationCreateInput),
 				entgql.OrderField("STATUS"),
 			),
+		field.Int("user_id").
+			Optional().
+			Nillable().
+			Immutable().
+			Comment("User who donated this channel; null for owner-managed global channels").
+			Annotations(
+				entgql.Skip(entgql.SkipMutationCreateInput, entgql.SkipMutationUpdateInput),
+			),
+		field.Time("expires_at").
+			Optional().
+			Nillable().
+			Comment("Donation expiry time; null means the channel does not expire"),
 		field.JSON("credentials", objects.ChannelCredentials{}).Sensitive(),
 		field.JSON("disabled_api_keys", []objects.DisabledAPIKey{}).
 			Default([]objects.DisabledAPIKey{}).
@@ -158,6 +170,14 @@ func (Channel) Fields() []ent.Field {
 
 func (Channel) Edges() []ent.Edge {
 	return []ent.Edge{
+		edge.From("user", User.Type).
+			Ref("donated_channels").
+			Field("user_id").
+			Unique().
+			Immutable().
+			Annotations(
+				entgql.Skip(entgql.SkipMutationCreateInput, entgql.SkipMutationUpdateInput),
+			),
 		edge.To("requests", Request.Type).
 			Annotations(
 				entgql.Skip(entgql.SkipMutationCreateInput, entgql.SkipMutationUpdateInput),
@@ -203,12 +223,12 @@ func (Channel) Policy() ent.Policy {
 	return scopes.Policy{
 		Query: scopes.QueryPolicy{
 			scopes.APIKeyScopeQueryRule(scopes.ScopeReadChannels),
-			scopes.OwnerRule(), // owner 用户可以访问所有渠道
-			scopes.UserReadScopeRule(scopes.ScopeReadChannels), // 需要 channels 读取权限
+			scopes.OwnerRule(),          // owner 用户可以访问所有渠道
+			scopes.UserOwnedQueryRule(), // 普通用户只能访问自己捐赠的渠道
 		},
 		Mutation: scopes.MutationPolicy{
-			scopes.OwnerRule(), // owner 用户可以修改所有渠道
-			scopes.UserWriteScopeRule(scopes.ScopeWriteChannels), // 需要 channels 写入权限
+			scopes.OwnerRule(),             // owner 用户可以修改所有渠道
+			scopes.UserOwnedMutationRule(), // 普通用户只能修改自己捐赠的渠道
 		},
 	}
 }

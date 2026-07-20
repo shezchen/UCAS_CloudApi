@@ -41,10 +41,7 @@ func (c *GithubCopilotQuotaChecker) CheckQuota(ctx context.Context, ch *ent.Chan
 		return QuotaData{}, err
 	}
 
-	hc := c.httpClient
-	if ch.Settings != nil && ch.Settings.Proxy != nil {
-		hc = c.httpClient.WithProxy(ch.Settings.Proxy)
-	}
+	hc := httpClientForChannel(c.httpClient, ch)
 
 	payload, err := c.fetchUserPayload(ctx, hc, accessToken)
 	if err != nil {
@@ -248,7 +245,6 @@ func (c *GithubCopilotQuotaChecker) parseResetDate(payload *copilotUserPayload) 
 	}
 	return nil
 }
-
 
 func (c *GithubCopilotQuotaChecker) SupportsChannel(ch *ent.Channel) bool {
 	return ch.Type == channel.TypeGithubCopilot

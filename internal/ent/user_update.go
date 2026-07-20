@@ -13,6 +13,7 @@ import (
 	"entgo.io/ent/dialect/sql/sqljson"
 	"entgo.io/ent/schema/field"
 	"github.com/looplj/axonhub/internal/ent/apikey"
+	"github.com/looplj/axonhub/internal/ent/channel"
 	"github.com/looplj/axonhub/internal/ent/channeloverridetemplate"
 	"github.com/looplj/axonhub/internal/ent/oidcidentity"
 	"github.com/looplj/axonhub/internal/ent/predicate"
@@ -182,6 +183,27 @@ func (_u *UserUpdate) SetNillableIsOwner(v *bool) *UserUpdate {
 	return _u
 }
 
+// SetDailyTokenLimit sets the "daily_token_limit" field.
+func (_u *UserUpdate) SetDailyTokenLimit(v int64) *UserUpdate {
+	_u.mutation.ResetDailyTokenLimit()
+	_u.mutation.SetDailyTokenLimit(v)
+	return _u
+}
+
+// SetNillableDailyTokenLimit sets the "daily_token_limit" field if the given value is not nil.
+func (_u *UserUpdate) SetNillableDailyTokenLimit(v *int64) *UserUpdate {
+	if v != nil {
+		_u.SetDailyTokenLimit(*v)
+	}
+	return _u
+}
+
+// AddDailyTokenLimit adds value to the "daily_token_limit" field.
+func (_u *UserUpdate) AddDailyTokenLimit(v int64) *UserUpdate {
+	_u.mutation.AddDailyTokenLimit(v)
+	return _u
+}
+
 // SetScopes sets the "scopes" field.
 func (_u *UserUpdate) SetScopes(v []string) *UserUpdate {
 	_u.mutation.SetScopes(v)
@@ -228,6 +250,21 @@ func (_u *UserUpdate) AddAPIKeys(v ...*APIKey) *UserUpdate {
 		ids[i] = v[i].ID
 	}
 	return _u.AddAPIKeyIDs(ids...)
+}
+
+// AddDonatedChannelIDs adds the "donated_channels" edge to the Channel entity by IDs.
+func (_u *UserUpdate) AddDonatedChannelIDs(ids ...int) *UserUpdate {
+	_u.mutation.AddDonatedChannelIDs(ids...)
+	return _u
+}
+
+// AddDonatedChannels adds the "donated_channels" edges to the Channel entity.
+func (_u *UserUpdate) AddDonatedChannels(v ...*Channel) *UserUpdate {
+	ids := make([]int, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.AddDonatedChannelIDs(ids...)
 }
 
 // AddRoleIDs adds the "roles" edge to the Role entity by IDs.
@@ -350,6 +387,27 @@ func (_u *UserUpdate) RemoveAPIKeys(v ...*APIKey) *UserUpdate {
 		ids[i] = v[i].ID
 	}
 	return _u.RemoveAPIKeyIDs(ids...)
+}
+
+// ClearDonatedChannels clears all "donated_channels" edges to the Channel entity.
+func (_u *UserUpdate) ClearDonatedChannels() *UserUpdate {
+	_u.mutation.ClearDonatedChannels()
+	return _u
+}
+
+// RemoveDonatedChannelIDs removes the "donated_channels" edge to Channel entities by IDs.
+func (_u *UserUpdate) RemoveDonatedChannelIDs(ids ...int) *UserUpdate {
+	_u.mutation.RemoveDonatedChannelIDs(ids...)
+	return _u
+}
+
+// RemoveDonatedChannels removes "donated_channels" edges to Channel entities.
+func (_u *UserUpdate) RemoveDonatedChannels(v ...*Channel) *UserUpdate {
+	ids := make([]int, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.RemoveDonatedChannelIDs(ids...)
 }
 
 // ClearRoles clears all "roles" edges to the Role entity.
@@ -506,6 +564,11 @@ func (_u *UserUpdate) check() error {
 			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "User.status": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.DailyTokenLimit(); ok {
+		if err := user.DailyTokenLimitValidator(v); err != nil {
+			return &ValidationError{Name: "daily_token_limit", err: fmt.Errorf(`ent: validator failed for field "User.daily_token_limit": %w`, err)}
+		}
+	}
 	return nil
 }
 
@@ -562,6 +625,12 @@ func (_u *UserUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.IsOwner(); ok {
 		_spec.SetField(user.FieldIsOwner, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.DailyTokenLimit(); ok {
+		_spec.SetField(user.FieldDailyTokenLimit, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedDailyTokenLimit(); ok {
+		_spec.AddField(user.FieldDailyTokenLimit, field.TypeInt64, value)
 	}
 	if value, ok := _u.mutation.Scopes(); ok {
 		_spec.SetField(user.FieldScopes, field.TypeJSON, value)
@@ -669,6 +738,51 @@ func (_u *UserUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(apikey.FieldID, field.TypeInt),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.DonatedChannelsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.DonatedChannelsTable,
+			Columns: []string{user.DonatedChannelsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(channel.FieldID, field.TypeInt),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.RemovedDonatedChannelsIDs(); len(nodes) > 0 && !_u.mutation.DonatedChannelsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.DonatedChannelsTable,
+			Columns: []string{user.DonatedChannelsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(channel.FieldID, field.TypeInt),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.DonatedChannelsIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.DonatedChannelsTable,
+			Columns: []string{user.DonatedChannelsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(channel.FieldID, field.TypeInt),
 			},
 		}
 		for _, k := range nodes {
@@ -1080,6 +1194,27 @@ func (_u *UserUpdateOne) SetNillableIsOwner(v *bool) *UserUpdateOne {
 	return _u
 }
 
+// SetDailyTokenLimit sets the "daily_token_limit" field.
+func (_u *UserUpdateOne) SetDailyTokenLimit(v int64) *UserUpdateOne {
+	_u.mutation.ResetDailyTokenLimit()
+	_u.mutation.SetDailyTokenLimit(v)
+	return _u
+}
+
+// SetNillableDailyTokenLimit sets the "daily_token_limit" field if the given value is not nil.
+func (_u *UserUpdateOne) SetNillableDailyTokenLimit(v *int64) *UserUpdateOne {
+	if v != nil {
+		_u.SetDailyTokenLimit(*v)
+	}
+	return _u
+}
+
+// AddDailyTokenLimit adds value to the "daily_token_limit" field.
+func (_u *UserUpdateOne) AddDailyTokenLimit(v int64) *UserUpdateOne {
+	_u.mutation.AddDailyTokenLimit(v)
+	return _u
+}
+
 // SetScopes sets the "scopes" field.
 func (_u *UserUpdateOne) SetScopes(v []string) *UserUpdateOne {
 	_u.mutation.SetScopes(v)
@@ -1126,6 +1261,21 @@ func (_u *UserUpdateOne) AddAPIKeys(v ...*APIKey) *UserUpdateOne {
 		ids[i] = v[i].ID
 	}
 	return _u.AddAPIKeyIDs(ids...)
+}
+
+// AddDonatedChannelIDs adds the "donated_channels" edge to the Channel entity by IDs.
+func (_u *UserUpdateOne) AddDonatedChannelIDs(ids ...int) *UserUpdateOne {
+	_u.mutation.AddDonatedChannelIDs(ids...)
+	return _u
+}
+
+// AddDonatedChannels adds the "donated_channels" edges to the Channel entity.
+func (_u *UserUpdateOne) AddDonatedChannels(v ...*Channel) *UserUpdateOne {
+	ids := make([]int, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.AddDonatedChannelIDs(ids...)
 }
 
 // AddRoleIDs adds the "roles" edge to the Role entity by IDs.
@@ -1248,6 +1398,27 @@ func (_u *UserUpdateOne) RemoveAPIKeys(v ...*APIKey) *UserUpdateOne {
 		ids[i] = v[i].ID
 	}
 	return _u.RemoveAPIKeyIDs(ids...)
+}
+
+// ClearDonatedChannels clears all "donated_channels" edges to the Channel entity.
+func (_u *UserUpdateOne) ClearDonatedChannels() *UserUpdateOne {
+	_u.mutation.ClearDonatedChannels()
+	return _u
+}
+
+// RemoveDonatedChannelIDs removes the "donated_channels" edge to Channel entities by IDs.
+func (_u *UserUpdateOne) RemoveDonatedChannelIDs(ids ...int) *UserUpdateOne {
+	_u.mutation.RemoveDonatedChannelIDs(ids...)
+	return _u
+}
+
+// RemoveDonatedChannels removes "donated_channels" edges to Channel entities.
+func (_u *UserUpdateOne) RemoveDonatedChannels(v ...*Channel) *UserUpdateOne {
+	ids := make([]int, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.RemoveDonatedChannelIDs(ids...)
 }
 
 // ClearRoles clears all "roles" edges to the Role entity.
@@ -1417,6 +1588,11 @@ func (_u *UserUpdateOne) check() error {
 			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "User.status": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.DailyTokenLimit(); ok {
+		if err := user.DailyTokenLimitValidator(v); err != nil {
+			return &ValidationError{Name: "daily_token_limit", err: fmt.Errorf(`ent: validator failed for field "User.daily_token_limit": %w`, err)}
+		}
+	}
 	return nil
 }
 
@@ -1490,6 +1666,12 @@ func (_u *UserUpdateOne) sqlSave(ctx context.Context) (_node *User, err error) {
 	}
 	if value, ok := _u.mutation.IsOwner(); ok {
 		_spec.SetField(user.FieldIsOwner, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.DailyTokenLimit(); ok {
+		_spec.SetField(user.FieldDailyTokenLimit, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedDailyTokenLimit(); ok {
+		_spec.AddField(user.FieldDailyTokenLimit, field.TypeInt64, value)
 	}
 	if value, ok := _u.mutation.Scopes(); ok {
 		_spec.SetField(user.FieldScopes, field.TypeJSON, value)
@@ -1597,6 +1779,51 @@ func (_u *UserUpdateOne) sqlSave(ctx context.Context) (_node *User, err error) {
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(apikey.FieldID, field.TypeInt),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.DonatedChannelsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.DonatedChannelsTable,
+			Columns: []string{user.DonatedChannelsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(channel.FieldID, field.TypeInt),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.RemovedDonatedChannelsIDs(); len(nodes) > 0 && !_u.mutation.DonatedChannelsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.DonatedChannelsTable,
+			Columns: []string{user.DonatedChannelsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(channel.FieldID, field.TypeInt),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.DonatedChannelsIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.DonatedChannelsTable,
+			Columns: []string{user.DonatedChannelsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(channel.FieldID, field.TypeInt),
 			},
 		}
 		for _, k := range nodes {

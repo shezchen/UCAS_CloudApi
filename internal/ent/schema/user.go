@@ -49,6 +49,10 @@ func (User) Fields() []ent.Field {
 			},
 		),
 		field.Bool("is_owner").Default(false),
+		field.Int64("daily_token_limit").
+			Default(200_000_000).
+			Min(0).
+			Comment("Maximum total tokens this user may consume per day"),
 		field.Strings("scopes").
 			Comment("User scopes in system level: write_channels, read_channels, add_users, read_users, etc.").
 			Default([]string{}).
@@ -66,6 +70,11 @@ func (User) Edges() []ent.Edge {
 				entgql.RelayConnection(),
 			),
 		edge.To("api_keys", APIKey.Type).
+			Annotations(
+				entgql.Skip(entgql.SkipMutationCreateInput, entgql.SkipMutationUpdateInput),
+				entgql.RelayConnection(),
+			),
+		edge.To("donated_channels", Channel.Type).
 			Annotations(
 				entgql.Skip(entgql.SkipMutationCreateInput, entgql.SkipMutationUpdateInput),
 				entgql.RelayConnection(),

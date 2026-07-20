@@ -11,24 +11,27 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/looplj/axonhub/llm/streams"
 )
+
 // MaxErrorBodySize is the maximum number of bytes read from an upstream error
 // response body. Error bodies beyond this size are truncated to prevent OOM
 // from pathological upstream responses that echo large request payloads in
 // validation error messages, producing response bodies of 1+ GB.
 const MaxErrorBodySize = 1 << 20 // 1 MB
 
-
 // HttpClient implements the HttpClient interface.
 type HttpClient struct {
-	client      *http.Client
-	proxyConfig *ProxyConfig
-	opts        []ClientOption
+	client            *http.Client
+	proxyConfig       *ProxyConfig
+	opts              []ClientOption
+	publicNetworkOnly bool
+	resolver          publicNetworkResolver
 }
 
 // ClientOption configures an HttpClient.
@@ -36,6 +39,8 @@ type ClientOption func(*clientOptions)
 
 type clientOptions struct {
 	insecureSkipVerify bool
+	publicNetworkOnly  bool
+	resolver           publicNetworkResolver
 }
 
 // WithInsecureSkipVerify disables TLS certificate verification.
@@ -45,12 +50,251 @@ func WithInsecureSkipVerify(skip bool) ClientOption {
 	}
 }
 
+// WithPublicNetworkOnly restricts requests to HTTP(S)/WS(S) endpoints that
+// resolve exclusively to public IP addresses. DNS is resolved again at dial
+// time and the validated IP is dialed directly, preventing DNS-rebinding
+// between URL validation and connection establishment. Environment proxies are
+// disabled; an explicitly configured URL proxy is retained and subject to the
+// same public-address dial guard.
+func WithPublicNetworkOnly() ClientOption {
+	return func(o *clientOptions) {
+		o.publicNetworkOnly = true
+	}
+}
+
+func withPublicNetworkResolver(resolver publicNetworkResolver) ClientOption {
+	return func(o *clientOptions) {
+		o.resolver = resolver
+	}
+}
+
+type publicNetworkResolver interface {
+	LookupIPAddr(context.Context, string) ([]net.IPAddr, error)
+}
+
+type contextDialer interface {
+	DialContext(context.Context, string, string) (net.Conn, error)
+}
+
+var restrictedPublicNetworkPrefixes = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),       // current network
+	netip.MustParsePrefix("100.64.0.0/10"),   // carrier-grade NAT
+	netip.MustParsePrefix("192.0.0.0/24"),    // IETF protocol assignments
+	netip.MustParsePrefix("192.0.2.0/24"),    // documentation
+	netip.MustParsePrefix("192.88.99.0/24"),  // deprecated 6to4 relay anycast
+	netip.MustParsePrefix("198.18.0.0/15"),   // benchmarking
+	netip.MustParsePrefix("198.51.100.0/24"), // documentation
+	netip.MustParsePrefix("203.0.113.0/24"),  // documentation
+	netip.MustParsePrefix("240.0.0.0/4"),     // reserved
+	netip.MustParsePrefix("64:ff9b:1::/48"),  // local-use NAT64
+	netip.MustParsePrefix("100::/64"),        // discard-only
+	netip.MustParsePrefix("2001:2::/48"),     // benchmarking
+	netip.MustParsePrefix("2001:10::/28"),    // deprecated ORCHID
+	netip.MustParsePrefix("2001:20::/28"),    // ORCHIDv2
+	netip.MustParsePrefix("2001:db8::/32"),   // documentation
+	netip.MustParsePrefix("2002::/16"),       // deprecated 6to4
+}
+
+func publicNetworkAddressRestricted(addr netip.Addr) bool {
+	addr = addr.Unmap()
+	if addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast() ||
+		addr.IsLinkLocalMulticast() || addr.IsUnspecified() || addr.IsMulticast() ||
+		!addr.IsGlobalUnicast() {
+		return true
+	}
+
+	for _, prefix := range restrictedPublicNetworkPrefixes {
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func validatePublicNetworkURLWithResolver(
+	ctx context.Context,
+	rawURL string,
+	resolver publicNetworkResolver,
+	allowedSchemes map[string]struct{},
+	allowUserinfo bool,
+) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+
+	if parsed.Opaque != "" || parsed.Host == "" {
+		return fmt.Errorf("URL must be absolute and include a host")
+	}
+
+	scheme := strings.ToLower(parsed.Scheme)
+	if _, ok := allowedSchemes[scheme]; !ok {
+		return fmt.Errorf("URL scheme %q is not supported", parsed.Scheme)
+	}
+
+	if parsed.User != nil && !allowUserinfo {
+		return fmt.Errorf("URL userinfo is not allowed")
+	}
+
+	host := strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
+	if host == "" {
+		return fmt.Errorf("URL host is required")
+	}
+
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") ||
+		host == "metadata.google.internal" || host == "metadata.tencentyun.com" {
+		return fmt.Errorf("URL host %q is not publicly routable", host)
+	}
+
+	if literal, parseErr := netip.ParseAddr(host); parseErr == nil {
+		if publicNetworkAddressRestricted(literal) {
+			return fmt.Errorf("URL host %q resolves to a restricted address", host)
+		}
+
+		return nil
+	}
+
+	addresses, err := resolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return fmt.Errorf("failed to resolve URL host %q: %w", host, err)
+	}
+	if len(addresses) == 0 {
+		return fmt.Errorf("URL host %q did not resolve to an address", host)
+	}
+
+	for _, resolved := range addresses {
+		addr, ok := netip.AddrFromSlice(resolved.IP)
+		if !ok || publicNetworkAddressRestricted(addr) {
+			return fmt.Errorf("URL host %q resolves to a restricted address", host)
+		}
+	}
+
+	return nil
+}
+
+var publicEndpointSchemes = map[string]struct{}{
+	"http": {}, "https": {}, "ws": {}, "wss": {},
+}
+
+var publicProxySchemes = map[string]struct{}{
+	"http": {}, "https": {},
+}
+
+func validatePublicURLWithResolver(ctx context.Context, rawURL string, resolver publicNetworkResolver) error {
+	return validatePublicNetworkURLWithResolver(ctx, rawURL, resolver, publicEndpointSchemes, false)
+}
+
+// ValidatePublicURL verifies that an HTTP(S)/WS(S) URL resolves only to public
+// network addresses.
+func ValidatePublicURL(ctx context.Context, rawURL string) error {
+	return validatePublicURLWithResolver(ctx, rawURL, net.DefaultResolver)
+}
+
+// ValidatePublicProxyURL verifies that an HTTP(S) proxy URL resolves only to
+// public network addresses. Proxy userinfo is permitted for compatibility with
+// standard authenticated proxy URLs.
+func ValidatePublicProxyURL(ctx context.Context, rawURL string) error {
+	return validatePublicNetworkURLWithResolver(ctx, rawURL, net.DefaultResolver, publicProxySchemes, true)
+}
+
+func publicNetworkDialContext(resolver publicNetworkResolver, dialer contextDialer) func(context.Context, string, string) (net.Conn, error) {
+	return func(ctx context.Context, network, address string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, fmt.Errorf("invalid dial address %q: %w", address, err)
+		}
+
+		host = strings.TrimSuffix(strings.ToLower(host), ".")
+		var addresses []net.IPAddr
+		if literal, parseErr := netip.ParseAddr(host); parseErr == nil {
+			addresses = []net.IPAddr{{IP: net.IP(literal.AsSlice())}}
+		} else {
+			addresses, err = resolver.LookupIPAddr(ctx, host)
+			if err != nil {
+				return nil, fmt.Errorf("failed to resolve dial host %q: %w", host, err)
+			}
+		}
+		if len(addresses) == 0 {
+			return nil, fmt.Errorf("dial host %q did not resolve to an address", host)
+		}
+
+		for _, resolved := range addresses {
+			addr, ok := netip.AddrFromSlice(resolved.IP)
+			if !ok || publicNetworkAddressRestricted(addr) {
+				return nil, fmt.Errorf("dial host %q resolves to a restricted address", host)
+			}
+		}
+
+		var dialErr error
+		for _, resolved := range addresses {
+			addr, _ := netip.AddrFromSlice(resolved.IP)
+			conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(addr.Unmap().String(), port))
+			if err == nil {
+				return conn, nil
+			}
+			dialErr = err
+		}
+
+		return nil, fmt.Errorf("failed to dial public host %q: %w", host, dialErr)
+	}
+}
+
+func applyClientOptions(client *http.Client, transport *http.Transport, options clientOptions, proxyConfig *ProxyConfig) {
+	if options.resolver == nil {
+		options.resolver = net.DefaultResolver
+	}
+
+	if options.publicNetworkOnly {
+		// Never inherit a server-side/environment proxy. Explicit URL proxies are
+		// useful for provider connectivity and are safe here because both the
+		// request target and the proxy dial are constrained to public addresses.
+		if proxyConfig != nil && proxyConfig.Type == ProxyTypeURL {
+			transport.Proxy = getProxyFunc(proxyConfig)
+		} else {
+			transport.Proxy = nil
+		}
+		transport.DialContext = publicNetworkDialContext(options.resolver, &net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		})
+		client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return errors.New("stopped after 10 redirects")
+			}
+
+			if err := validatePublicURLWithResolver(req.Context(), req.URL.String(), options.resolver); err != nil {
+				return fmt.Errorf("redirect target is not allowed: %w", err)
+			}
+
+			return nil
+		}
+	}
+
+	if options.insecureSkipVerify {
+		if transport.TLSClientConfig == nil {
+			transport.TLSClientConfig = &tls.Config{}
+		} else {
+			transport.TLSClientConfig = transport.TLSClientConfig.Clone()
+		}
+
+		transport.TLSClientConfig.InsecureSkipVerify = true //nolint:gosec // User-configured option for self-signed certificates
+	}
+}
+
+func normalizeClientOptions(options *clientOptions) {
+	if options.resolver == nil {
+		options.resolver = net.DefaultResolver
+	}
+}
+
 // NewHttpClientWithProxy creates a new HTTP client with proxy configuration.
 func NewHttpClientWithProxy(proxyConfig *ProxyConfig, opts ...ClientOption) *HttpClient {
 	var options clientOptions
 	for _, opt := range opts {
 		opt(&options)
 	}
+	normalizeClientOptions(&options)
 
 	transport := &http.Transport{
 		Proxy: getProxyFunc(proxyConfig),
@@ -64,19 +308,15 @@ func NewHttpClientWithProxy(proxyConfig *ProxyConfig, opts ...ClientOption) *Htt
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 	}
-
-	if options.insecureSkipVerify {
-		transport.TLSClientConfig = &tls.Config{
-			InsecureSkipVerify: true, //nolint:gosec // User-configured option for self-signed certificates
-		}
-	}
+	client := &http.Client{Transport: transport}
+	applyClientOptions(client, transport, options, proxyConfig)
 
 	return &HttpClient{
-		client: &http.Client{
-			Transport: transport,
-		},
-		proxyConfig: proxyConfig,
-		opts:        opts,
+		client:            client,
+		proxyConfig:       proxyConfig,
+		opts:              opts,
+		publicNetworkOnly: options.publicNetworkOnly,
+		resolver:          options.resolver,
 	}
 }
 
@@ -84,6 +324,15 @@ func NewHttpClientWithProxy(proxyConfig *ProxyConfig, opts ...ClientOption) *Htt
 // while preserving all other options (e.g., InsecureSkipVerify) from the original client.
 func (hc *HttpClient) WithProxy(proxyConfig *ProxyConfig) *HttpClient {
 	return NewHttpClientWithProxy(proxyConfig, hc.opts...)
+}
+
+// WithPublicNetworkOnly returns a copy of this client restricted to direct,
+// public-network destinations while preserving its TLS options.
+func (hc *HttpClient) WithPublicNetworkOnly() *HttpClient {
+	opts := append([]ClientOption{}, hc.opts...)
+	opts = append(opts, WithPublicNetworkOnly())
+
+	return NewHttpClientWithProxy(hc.proxyConfig, opts...)
 }
 
 // GetNativeClient returns the underlying *http.Client for advanced use cases.
@@ -94,6 +343,14 @@ func (hc *HttpClient) GetNativeClient() *http.Client {
 func (hc *HttpClient) ProxyFunc() func(*http.Request) (*url.URL, error) {
 	if hc == nil {
 		return http.ProxyFromEnvironment
+	}
+
+	if hc.publicNetworkOnly {
+		if hc.proxyConfig != nil && hc.proxyConfig.Type == ProxyTypeURL {
+			return getProxyFunc(hc.proxyConfig)
+		}
+
+		return func(*http.Request) (*url.URL, error) { return nil, nil }
 	}
 
 	return getProxyFunc(hc.proxyConfig)
@@ -152,10 +409,11 @@ func NewHttpClient(opts ...ClientOption) *HttpClient {
 	for _, opt := range opts {
 		opt(&options)
 	}
+	normalizeClientOptions(&options)
 
 	client := &http.Client{}
 
-	if options.insecureSkipVerify {
+	if options.insecureSkipVerify || options.publicNetworkOnly {
 		var transport *http.Transport
 		if defaultTransport, ok := http.DefaultTransport.(*http.Transport); ok {
 			transport = defaultTransport.Clone()
@@ -175,19 +433,15 @@ func NewHttpClient(opts ...ClientOption) *HttpClient {
 			})
 		}
 
-		if transport.TLSClientConfig == nil {
-			transport.TLSClientConfig = &tls.Config{}
-		} else {
-			transport.TLSClientConfig = transport.TLSClientConfig.Clone()
-		}
-
-		transport.TLSClientConfig.InsecureSkipVerify = true //nolint:gosec // User-configured option for self-signed certificates
+		applyClientOptions(client, transport, options, nil)
 		client.Transport = transport
 	}
 
 	return &HttpClient{
-		client: client,
-		opts:   opts,
+		client:            client,
+		opts:              opts,
+		publicNetworkOnly: options.publicNetworkOnly,
+		resolver:          options.resolver,
 	}
 }
 
@@ -205,6 +459,11 @@ func (hc *HttpClient) Do(ctx context.Context, request *Request) (*Response, erro
 	rawReq, err := hc.BuildHttpRequest(ctx, request)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build HTTP request: %w", err)
+	}
+	if hc.publicNetworkOnly {
+		if err := validatePublicURLWithResolver(ctx, rawReq.URL.String(), hc.resolver); err != nil {
+			return nil, fmt.Errorf("request URL is not allowed: %w", err)
+		}
 	}
 
 	// Only set the default Accept when the transformer did not specify one
@@ -288,6 +547,11 @@ func (hc *HttpClient) DoStream(ctx context.Context, request *Request) (streams.S
 	rawReq, err := hc.BuildHttpRequest(ctx, request)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build HTTP request: %w", err)
+	}
+	if hc.publicNetworkOnly {
+		if err := validatePublicURLWithResolver(ctx, rawReq.URL.String(), hc.resolver); err != nil {
+			return nil, fmt.Errorf("request URL is not allowed: %w", err)
+		}
 	}
 
 	// Add streaming headers. Force SSE Accept unless the outbound transformer

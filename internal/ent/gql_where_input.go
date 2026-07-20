@@ -901,6 +901,26 @@ type ChannelWhereInput struct {
 	StatusIn    []channel.Status `json:"statusIn,omitempty"`
 	StatusNotIn []channel.Status `json:"statusNotIn,omitempty"`
 
+	// "user_id" field predicates.
+	UserID       *int  `json:"userID,omitempty"`
+	UserIDNEQ    *int  `json:"userIDNEQ,omitempty"`
+	UserIDIn     []int `json:"userIDIn,omitempty"`
+	UserIDNotIn  []int `json:"userIDNotIn,omitempty"`
+	UserIDIsNil  bool  `json:"userIDIsNil,omitempty"`
+	UserIDNotNil bool  `json:"userIDNotNil,omitempty"`
+
+	// "expires_at" field predicates.
+	ExpiresAt       *time.Time  `json:"expiresAt,omitempty"`
+	ExpiresAtNEQ    *time.Time  `json:"expiresAtNEQ,omitempty"`
+	ExpiresAtIn     []time.Time `json:"expiresAtIn,omitempty"`
+	ExpiresAtNotIn  []time.Time `json:"expiresAtNotIn,omitempty"`
+	ExpiresAtGT     *time.Time  `json:"expiresAtGT,omitempty"`
+	ExpiresAtGTE    *time.Time  `json:"expiresAtGTE,omitempty"`
+	ExpiresAtLT     *time.Time  `json:"expiresAtLT,omitempty"`
+	ExpiresAtLTE    *time.Time  `json:"expiresAtLTE,omitempty"`
+	ExpiresAtIsNil  bool        `json:"expiresAtIsNil,omitempty"`
+	ExpiresAtNotNil bool        `json:"expiresAtNotNil,omitempty"`
+
 	// "auto_sync_supported_models" field predicates.
 	AutoSyncSupportedModels    *bool `json:"autoSyncSupportedModels,omitempty"`
 	AutoSyncSupportedModelsNEQ *bool `json:"autoSyncSupportedModelsNEQ,omitempty"`
@@ -980,6 +1000,10 @@ type ChannelWhereInput struct {
 	RemarkNotNil       bool     `json:"remarkNotNil,omitempty"`
 	RemarkEqualFold    *string  `json:"remarkEqualFold,omitempty"`
 	RemarkContainsFold *string  `json:"remarkContainsFold,omitempty"`
+
+	// "user" edge predicates.
+	HasUser     *bool             `json:"hasUser,omitempty"`
+	HasUserWith []*UserWhereInput `json:"hasUserWith,omitempty"`
 
 	// "requests" edge predicates.
 	HasRequests     *bool                `json:"hasRequests,omitempty"`
@@ -1257,6 +1281,54 @@ func (i *ChannelWhereInput) P() (predicate.Channel, error) {
 	if len(i.StatusNotIn) > 0 {
 		predicates = append(predicates, channel.StatusNotIn(i.StatusNotIn...))
 	}
+	if i.UserID != nil {
+		predicates = append(predicates, channel.UserIDEQ(*i.UserID))
+	}
+	if i.UserIDNEQ != nil {
+		predicates = append(predicates, channel.UserIDNEQ(*i.UserIDNEQ))
+	}
+	if len(i.UserIDIn) > 0 {
+		predicates = append(predicates, channel.UserIDIn(i.UserIDIn...))
+	}
+	if len(i.UserIDNotIn) > 0 {
+		predicates = append(predicates, channel.UserIDNotIn(i.UserIDNotIn...))
+	}
+	if i.UserIDIsNil {
+		predicates = append(predicates, channel.UserIDIsNil())
+	}
+	if i.UserIDNotNil {
+		predicates = append(predicates, channel.UserIDNotNil())
+	}
+	if i.ExpiresAt != nil {
+		predicates = append(predicates, channel.ExpiresAtEQ(*i.ExpiresAt))
+	}
+	if i.ExpiresAtNEQ != nil {
+		predicates = append(predicates, channel.ExpiresAtNEQ(*i.ExpiresAtNEQ))
+	}
+	if len(i.ExpiresAtIn) > 0 {
+		predicates = append(predicates, channel.ExpiresAtIn(i.ExpiresAtIn...))
+	}
+	if len(i.ExpiresAtNotIn) > 0 {
+		predicates = append(predicates, channel.ExpiresAtNotIn(i.ExpiresAtNotIn...))
+	}
+	if i.ExpiresAtGT != nil {
+		predicates = append(predicates, channel.ExpiresAtGT(*i.ExpiresAtGT))
+	}
+	if i.ExpiresAtGTE != nil {
+		predicates = append(predicates, channel.ExpiresAtGTE(*i.ExpiresAtGTE))
+	}
+	if i.ExpiresAtLT != nil {
+		predicates = append(predicates, channel.ExpiresAtLT(*i.ExpiresAtLT))
+	}
+	if i.ExpiresAtLTE != nil {
+		predicates = append(predicates, channel.ExpiresAtLTE(*i.ExpiresAtLTE))
+	}
+	if i.ExpiresAtIsNil {
+		predicates = append(predicates, channel.ExpiresAtIsNil())
+	}
+	if i.ExpiresAtNotNil {
+		predicates = append(predicates, channel.ExpiresAtNotNil())
+	}
 	if i.AutoSyncSupportedModels != nil {
 		predicates = append(predicates, channel.AutoSyncSupportedModelsEQ(*i.AutoSyncSupportedModels))
 	}
@@ -1462,6 +1534,24 @@ func (i *ChannelWhereInput) P() (predicate.Channel, error) {
 		predicates = append(predicates, channel.RemarkContainsFold(*i.RemarkContainsFold))
 	}
 
+	if i.HasUser != nil {
+		p := channel.HasUser()
+		if !*i.HasUser {
+			p = channel.Not(p)
+		}
+		predicates = append(predicates, p)
+	}
+	if len(i.HasUserWith) > 0 {
+		with := make([]predicate.User, 0, len(i.HasUserWith))
+		for _, w := range i.HasUserWith {
+			p, err := w.P()
+			if err != nil {
+				return nil, fmt.Errorf("%w: field 'HasUserWith'", err)
+			}
+			with = append(with, p)
+		}
+		predicates = append(predicates, channel.HasUserWith(with...))
+	}
 	if i.HasRequests != nil {
 		p := channel.HasRequests()
 		if !*i.HasRequests {
@@ -10881,6 +10971,16 @@ type UserWhereInput struct {
 	IsOwner    *bool `json:"isOwner,omitempty"`
 	IsOwnerNEQ *bool `json:"isOwnerNEQ,omitempty"`
 
+	// "daily_token_limit" field predicates.
+	DailyTokenLimit      *int64  `json:"dailyTokenLimit,omitempty"`
+	DailyTokenLimitNEQ   *int64  `json:"dailyTokenLimitNEQ,omitempty"`
+	DailyTokenLimitIn    []int64 `json:"dailyTokenLimitIn,omitempty"`
+	DailyTokenLimitNotIn []int64 `json:"dailyTokenLimitNotIn,omitempty"`
+	DailyTokenLimitGT    *int64  `json:"dailyTokenLimitGT,omitempty"`
+	DailyTokenLimitGTE   *int64  `json:"dailyTokenLimitGTE,omitempty"`
+	DailyTokenLimitLT    *int64  `json:"dailyTokenLimitLT,omitempty"`
+	DailyTokenLimitLTE   *int64  `json:"dailyTokenLimitLTE,omitempty"`
+
 	// "projects" edge predicates.
 	HasProjects     *bool                `json:"hasProjects,omitempty"`
 	HasProjectsWith []*ProjectWhereInput `json:"hasProjectsWith,omitempty"`
@@ -10888,6 +10988,10 @@ type UserWhereInput struct {
 	// "api_keys" edge predicates.
 	HasAPIKeys     *bool               `json:"hasAPIKeys,omitempty"`
 	HasAPIKeysWith []*APIKeyWhereInput `json:"hasAPIKeysWith,omitempty"`
+
+	// "donated_channels" edge predicates.
+	HasDonatedChannels     *bool                `json:"hasDonatedChannels,omitempty"`
+	HasDonatedChannelsWith []*ChannelWhereInput `json:"hasDonatedChannelsWith,omitempty"`
 
 	// "roles" edge predicates.
 	HasRoles     *bool             `json:"hasRoles,omitempty"`
@@ -11311,6 +11415,30 @@ func (i *UserWhereInput) P() (predicate.User, error) {
 	if i.IsOwnerNEQ != nil {
 		predicates = append(predicates, user.IsOwnerNEQ(*i.IsOwnerNEQ))
 	}
+	if i.DailyTokenLimit != nil {
+		predicates = append(predicates, user.DailyTokenLimitEQ(*i.DailyTokenLimit))
+	}
+	if i.DailyTokenLimitNEQ != nil {
+		predicates = append(predicates, user.DailyTokenLimitNEQ(*i.DailyTokenLimitNEQ))
+	}
+	if len(i.DailyTokenLimitIn) > 0 {
+		predicates = append(predicates, user.DailyTokenLimitIn(i.DailyTokenLimitIn...))
+	}
+	if len(i.DailyTokenLimitNotIn) > 0 {
+		predicates = append(predicates, user.DailyTokenLimitNotIn(i.DailyTokenLimitNotIn...))
+	}
+	if i.DailyTokenLimitGT != nil {
+		predicates = append(predicates, user.DailyTokenLimitGT(*i.DailyTokenLimitGT))
+	}
+	if i.DailyTokenLimitGTE != nil {
+		predicates = append(predicates, user.DailyTokenLimitGTE(*i.DailyTokenLimitGTE))
+	}
+	if i.DailyTokenLimitLT != nil {
+		predicates = append(predicates, user.DailyTokenLimitLT(*i.DailyTokenLimitLT))
+	}
+	if i.DailyTokenLimitLTE != nil {
+		predicates = append(predicates, user.DailyTokenLimitLTE(*i.DailyTokenLimitLTE))
+	}
 
 	if i.HasProjects != nil {
 		p := user.HasProjects()
@@ -11347,6 +11475,24 @@ func (i *UserWhereInput) P() (predicate.User, error) {
 			with = append(with, p)
 		}
 		predicates = append(predicates, user.HasAPIKeysWith(with...))
+	}
+	if i.HasDonatedChannels != nil {
+		p := user.HasDonatedChannels()
+		if !*i.HasDonatedChannels {
+			p = user.Not(p)
+		}
+		predicates = append(predicates, p)
+	}
+	if len(i.HasDonatedChannelsWith) > 0 {
+		with := make([]predicate.Channel, 0, len(i.HasDonatedChannelsWith))
+		for _, w := range i.HasDonatedChannelsWith {
+			p, err := w.P()
+			if err != nil {
+				return nil, fmt.Errorf("%w: field 'HasDonatedChannelsWith'", err)
+			}
+			with = append(with, p)
+		}
+		predicates = append(predicates, user.HasDonatedChannelsWith(with...))
 	}
 	if i.HasRoles != nil {
 		p := user.HasRoles()

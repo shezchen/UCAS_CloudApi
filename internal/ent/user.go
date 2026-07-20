@@ -40,6 +40,8 @@ type User struct {
 	Avatar string `json:"avatar,omitempty"`
 	// IsOwner holds the value of the "is_owner" field.
 	IsOwner bool `json:"is_owner,omitempty"`
+	// Maximum total tokens this user may consume per day
+	DailyTokenLimit int64 `json:"daily_token_limit,omitempty"`
 	// User scopes in system level: write_channels, read_channels, add_users, read_users, etc.
 	Scopes []string `json:"scopes,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
@@ -54,6 +56,8 @@ type UserEdges struct {
 	Projects []*Project `json:"projects,omitempty"`
 	// APIKeys holds the value of the api_keys edge.
 	APIKeys []*APIKey `json:"api_keys,omitempty"`
+	// DonatedChannels holds the value of the donated_channels edge.
+	DonatedChannels []*Channel `json:"donated_channels,omitempty"`
 	// Roles holds the value of the roles edge.
 	Roles []*Role `json:"roles,omitempty"`
 	// ChannelOverrideTemplates holds the value of the channel_override_templates edge.
@@ -66,12 +70,13 @@ type UserEdges struct {
 	UserRoles []*UserRole `json:"user_roles,omitempty"`
 	// loadedTypes holds the information for reporting if a
 	// type was loaded (or requested) in eager-loading or not.
-	loadedTypes [7]bool
+	loadedTypes [8]bool
 	// totalCount holds the count of the edges above.
-	totalCount [7]map[string]int
+	totalCount [8]map[string]int
 
 	namedProjects                 map[string][]*Project
 	namedAPIKeys                  map[string][]*APIKey
+	namedDonatedChannels          map[string][]*Channel
 	namedRoles                    map[string][]*Role
 	namedChannelOverrideTemplates map[string][]*ChannelOverrideTemplate
 	namedOidcIdentities           map[string][]*OIDCIdentity
@@ -97,10 +102,19 @@ func (e UserEdges) APIKeysOrErr() ([]*APIKey, error) {
 	return nil, &NotLoadedError{edge: "api_keys"}
 }
 
+// DonatedChannelsOrErr returns the DonatedChannels value or an error if the edge
+// was not loaded in eager-loading.
+func (e UserEdges) DonatedChannelsOrErr() ([]*Channel, error) {
+	if e.loadedTypes[2] {
+		return e.DonatedChannels, nil
+	}
+	return nil, &NotLoadedError{edge: "donated_channels"}
+}
+
 // RolesOrErr returns the Roles value or an error if the edge
 // was not loaded in eager-loading.
 func (e UserEdges) RolesOrErr() ([]*Role, error) {
-	if e.loadedTypes[2] {
+	if e.loadedTypes[3] {
 		return e.Roles, nil
 	}
 	return nil, &NotLoadedError{edge: "roles"}
@@ -109,7 +123,7 @@ func (e UserEdges) RolesOrErr() ([]*Role, error) {
 // ChannelOverrideTemplatesOrErr returns the ChannelOverrideTemplates value or an error if the edge
 // was not loaded in eager-loading.
 func (e UserEdges) ChannelOverrideTemplatesOrErr() ([]*ChannelOverrideTemplate, error) {
-	if e.loadedTypes[3] {
+	if e.loadedTypes[4] {
 		return e.ChannelOverrideTemplates, nil
 	}
 	return nil, &NotLoadedError{edge: "channel_override_templates"}
@@ -118,7 +132,7 @@ func (e UserEdges) ChannelOverrideTemplatesOrErr() ([]*ChannelOverrideTemplate, 
 // OidcIdentitiesOrErr returns the OidcIdentities value or an error if the edge
 // was not loaded in eager-loading.
 func (e UserEdges) OidcIdentitiesOrErr() ([]*OIDCIdentity, error) {
-	if e.loadedTypes[4] {
+	if e.loadedTypes[5] {
 		return e.OidcIdentities, nil
 	}
 	return nil, &NotLoadedError{edge: "oidc_identities"}
@@ -127,7 +141,7 @@ func (e UserEdges) OidcIdentitiesOrErr() ([]*OIDCIdentity, error) {
 // ProjectUsersOrErr returns the ProjectUsers value or an error if the edge
 // was not loaded in eager-loading.
 func (e UserEdges) ProjectUsersOrErr() ([]*UserProject, error) {
-	if e.loadedTypes[5] {
+	if e.loadedTypes[6] {
 		return e.ProjectUsers, nil
 	}
 	return nil, &NotLoadedError{edge: "project_users"}
@@ -136,7 +150,7 @@ func (e UserEdges) ProjectUsersOrErr() ([]*UserProject, error) {
 // UserRolesOrErr returns the UserRoles value or an error if the edge
 // was not loaded in eager-loading.
 func (e UserEdges) UserRolesOrErr() ([]*UserRole, error) {
-	if e.loadedTypes[6] {
+	if e.loadedTypes[7] {
 		return e.UserRoles, nil
 	}
 	return nil, &NotLoadedError{edge: "user_roles"}
@@ -151,7 +165,7 @@ func (*User) scanValues(columns []string) ([]any, error) {
 			values[i] = new([]byte)
 		case user.FieldIsOwner:
 			values[i] = new(sql.NullBool)
-		case user.FieldID, user.FieldDeletedAt:
+		case user.FieldID, user.FieldDeletedAt, user.FieldDailyTokenLimit:
 			values[i] = new(sql.NullInt64)
 		case user.FieldEmail, user.FieldStatus, user.FieldPreferLanguage, user.FieldPassword, user.FieldFirstName, user.FieldLastName, user.FieldAvatar:
 			values[i] = new(sql.NullString)
@@ -244,6 +258,12 @@ func (_m *User) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.IsOwner = value.Bool
 			}
+		case user.FieldDailyTokenLimit:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field daily_token_limit", values[i])
+			} else if value.Valid {
+				_m.DailyTokenLimit = value.Int64
+			}
 		case user.FieldScopes:
 			if value, ok := values[i].(*[]byte); !ok {
 				return fmt.Errorf("unexpected type %T for field scopes", values[i])
@@ -273,6 +293,11 @@ func (_m *User) QueryProjects() *ProjectQuery {
 // QueryAPIKeys queries the "api_keys" edge of the User entity.
 func (_m *User) QueryAPIKeys() *APIKeyQuery {
 	return NewUserClient(_m.config).QueryAPIKeys(_m)
+}
+
+// QueryDonatedChannels queries the "donated_channels" edge of the User entity.
+func (_m *User) QueryDonatedChannels() *ChannelQuery {
+	return NewUserClient(_m.config).QueryDonatedChannels(_m)
 }
 
 // QueryRoles queries the "roles" edge of the User entity.
@@ -355,6 +380,9 @@ func (_m *User) String() string {
 	builder.WriteString("is_owner=")
 	builder.WriteString(fmt.Sprintf("%v", _m.IsOwner))
 	builder.WriteString(", ")
+	builder.WriteString("daily_token_limit=")
+	builder.WriteString(fmt.Sprintf("%v", _m.DailyTokenLimit))
+	builder.WriteString(", ")
 	builder.WriteString("scopes=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Scopes))
 	builder.WriteByte(')')
@@ -406,6 +434,30 @@ func (_m *User) appendNamedAPIKeys(name string, edges ...*APIKey) {
 		_m.Edges.namedAPIKeys[name] = []*APIKey{}
 	} else {
 		_m.Edges.namedAPIKeys[name] = append(_m.Edges.namedAPIKeys[name], edges...)
+	}
+}
+
+// NamedDonatedChannels returns the DonatedChannels named value or an error if the edge was not
+// loaded in eager-loading with this name.
+func (_m *User) NamedDonatedChannels(name string) ([]*Channel, error) {
+	if _m.Edges.namedDonatedChannels == nil {
+		return nil, &NotLoadedError{edge: name}
+	}
+	nodes, ok := _m.Edges.namedDonatedChannels[name]
+	if !ok {
+		return nil, &NotLoadedError{edge: name}
+	}
+	return nodes, nil
+}
+
+func (_m *User) appendNamedDonatedChannels(name string, edges ...*Channel) {
+	if _m.Edges.namedDonatedChannels == nil {
+		_m.Edges.namedDonatedChannels = make(map[string][]*Channel)
+	}
+	if len(edges) == 0 {
+		_m.Edges.namedDonatedChannels[name] = []*Channel{}
+	} else {
+		_m.Edges.namedDonatedChannels[name] = append(_m.Edges.namedDonatedChannels[name], edges...)
 	}
 }
 

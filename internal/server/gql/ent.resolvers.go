@@ -70,6 +70,18 @@ func (r *channelResolver) ID(ctx context.Context, obj *ent.Channel) (*objects.GU
 	}, nil
 }
 
+// UserID is the resolver for the userID field.
+func (r *channelResolver) UserID(ctx context.Context, obj *ent.Channel) (*objects.GUID, error) {
+	if obj.UserID == nil {
+		return nil, nil
+	}
+
+	return &objects.GUID{
+		Type: ent.TypeUser,
+		ID:   *obj.UserID,
+	}, nil
+}
+
 // Policies is the resolver for the policies field.
 // It is used to return the default value if the field is not set.
 func (r *channelResolver) Policies(ctx context.Context, obj *ent.Channel) (*objects.ChannelPolicies, error) {

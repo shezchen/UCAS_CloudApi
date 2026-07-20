@@ -485,3 +485,89 @@ func TestQuotaService_CalendarDay_CostExceeded(t *testing.T) {
 	require.False(t, res.Allowed)
 	require.Contains(t, res.Message, "cost quota exceeded")
 }
+
+func TestQuotaService_UserDailyTokenQuotaAggregatesAllKeysIncludingDeleted(t *testing.T) {
+	client := enttest.NewEntClient(t, "sqlite3", "file:ent?mode=memory&_fk=0")
+	defer client.Close()
+
+	ctx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+
+	projectRow, err := client.Project.Create().
+		SetName("school").
+		SetStatus(project.StatusActive).
+		Save(ctx)
+	require.NoError(t, err)
+
+	member, err := client.User.Create().
+		SetEmail("member@example.edu").
+		SetPassword("password").
+		SetDailyTokenLimit(200).
+		Save(ctx)
+	require.NoError(t, err)
+
+	otherMember, err := client.User.Create().
+		SetEmail("other@example.edu").
+		SetPassword("password").
+		SetDailyTokenLimit(200).
+		Save(ctx)
+	require.NoError(t, err)
+
+	createKey := func(name, key string, userID int) *ent.APIKey {
+		t.Helper()
+		created, createErr := client.APIKey.Create().
+			SetName(name).
+			SetKey(key).
+			SetUserID(userID).
+			SetProjectID(projectRow.ID).
+			Save(ctx)
+		require.NoError(t, createErr)
+		return created
+	}
+
+	keyA := createKey("member-a", "sk-member-a", member.ID)
+	keyB := createKey("member-b", "sk-member-b", member.ID)
+	otherKey := createKey("other", "sk-other", otherMember.ID)
+
+	createUsage := func(apiKeyID int, totalTokens int64) {
+		t.Helper()
+		req, createErr := client.Request.Create().
+			SetProjectID(projectRow.ID).
+			SetAPIKeyID(apiKeyID).
+			SetModelID("model").
+			SetFormat("openai/chat_completions").
+			SetStatus(request.StatusCompleted).
+			SetRequestBody(objects.JSONRawMessage([]byte(`{}`))).
+			Save(ctx)
+		require.NoError(t, createErr)
+
+		_, createErr = client.UsageLog.Create().
+			SetRequestID(req.ID).
+			SetAPIKeyID(apiKeyID).
+			SetProjectID(projectRow.ID).
+			SetChannelID(1).
+			SetModelID("model").
+			SetTotalTokens(totalTokens).
+			Save(ctx)
+		require.NoError(t, createErr)
+	}
+
+	createUsage(keyA.ID, 120)
+	createUsage(keyB.ID, 80)
+	createUsage(otherKey.ID, 500)
+
+	// Deleting a key must not let the member reset today's aggregate usage.
+	require.NoError(t, client.APIKey.DeleteOne(keyB).Exec(ctx))
+
+	svc := NewQuotaService(client, NewSystemService(SystemServiceParams{Ent: client}))
+	result, err := svc.CheckUserDailyTokenQuota(ctx, member.ID)
+	require.NoError(t, err)
+	require.False(t, result.Allowed)
+	require.Contains(t, result.Message, "200/200")
+
+	_, err = client.User.UpdateOne(member).SetDailyTokenLimit(201).Save(ctx)
+	require.NoError(t, err)
+
+	result, err = svc.CheckUserDailyTokenQuota(ctx, member.ID)
+	require.NoError(t, err)
+	require.True(t, result.Allowed)
+}

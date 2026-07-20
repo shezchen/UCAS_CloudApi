@@ -1,8 +1,11 @@
 package httpclient
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -14,6 +17,25 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tmaxmax/go-sse"
 )
+
+type staticPublicNetworkResolver struct {
+	addresses []net.IPAddr
+	err       error
+}
+
+func (r staticPublicNetworkResolver) LookupIPAddr(context.Context, string) ([]net.IPAddr, error) {
+	return r.addresses, r.err
+}
+
+type recordingContextDialer struct {
+	addresses []string
+	err       error
+}
+
+func (d *recordingContextDialer) DialContext(_ context.Context, _, address string) (net.Conn, error) {
+	d.addresses = append(d.addresses, address)
+	return nil, d.err
+}
 
 func TestHttpClientImpl_Do(t *testing.T) {
 	tests := []struct {
@@ -279,6 +301,127 @@ func TestNewHttpClient_WithInsecureSkipVerify_PreservesDefaultTransportSettings(
 	require.NotNil(t, tr.Proxy)
 	require.NotNil(t, tr.TLSClientConfig)
 	require.True(t, tr.TLSClientConfig.InsecureSkipVerify)
+}
+
+func TestValidatePublicURLWithResolver(t *testing.T) {
+	publicResolver := staticPublicNetworkResolver{
+		addresses: []net.IPAddr{{IP: net.ParseIP("8.8.8.8")}},
+	}
+
+	for _, rawURL := range []string{
+		"http://provider.example/v1",
+		"https://provider.example/v1",
+		"ws://provider.example/realtime",
+		"wss://provider.example/realtime",
+		"https://8.8.8.8/v1",
+	} {
+		require.NoError(t, validatePublicURLWithResolver(t.Context(), rawURL, publicResolver), rawURL)
+	}
+
+	for _, rawURL := range []string{
+		"ftp://provider.example/v1",
+		"https://user:password@provider.example/v1",
+		"https://localhost/v1",
+		"https://127.0.0.1/v1",
+		"https://10.0.0.1/v1",
+		"https://169.254.169.254/latest/meta-data",
+		"https://0.0.0.0/v1",
+		"https://192.0.2.1/v1",
+		"https://198.51.100.1/v1",
+		"https://203.0.113.1/v1",
+		"https://240.0.0.1/v1",
+		"https://224.0.0.1/v1",
+		"https://[::1]/v1",
+		"https://[fe80::1]/v1",
+		"https://[2001:db8::1]/v1",
+		"https://[64:ff9b:1::1]/v1",
+	} {
+		require.Error(t, validatePublicURLWithResolver(t.Context(), rawURL, publicResolver), rawURL)
+	}
+
+	privateResolver := staticPublicNetworkResolver{
+		addresses: []net.IPAddr{{IP: net.ParseIP("192.168.1.10")}},
+	}
+	require.Error(t, validatePublicURLWithResolver(t.Context(), "https://rebinding.example/v1", privateResolver))
+
+	mixedResolver := staticPublicNetworkResolver{
+		addresses: []net.IPAddr{
+			{IP: net.ParseIP("8.8.8.8")},
+			{IP: net.ParseIP("10.0.0.2")},
+		},
+	}
+	require.Error(t, validatePublicURLWithResolver(t.Context(), "https://mixed.example/v1", mixedResolver))
+
+	failingResolver := staticPublicNetworkResolver{err: errors.New("resolver unavailable")}
+	require.Error(t, validatePublicURLWithResolver(t.Context(), "https://unresolved.example/v1", failingResolver))
+}
+
+func TestValidatePublicProxyURL(t *testing.T) {
+	require.NoError(t, ValidatePublicProxyURL(t.Context(), "http://user:password@8.8.8.8:8080"))
+	require.NoError(t, ValidatePublicProxyURL(t.Context(), "https://8.8.8.8:8443"))
+	require.ErrorContains(t, ValidatePublicProxyURL(t.Context(), "http://127.0.0.1:8080"), "restricted address")
+	require.Error(t, ValidatePublicProxyURL(t.Context(), "socks5://8.8.8.8:1080"))
+}
+
+func TestPublicNetworkDialContextPinsValidatedIPAddress(t *testing.T) {
+	sentinel := errors.New("dial stopped for test")
+	dialer := &recordingContextDialer{err: sentinel}
+	resolver := staticPublicNetworkResolver{addresses: []net.IPAddr{{IP: net.ParseIP("8.8.8.8")}}}
+
+	_, err := publicNetworkDialContext(resolver, dialer)(t.Context(), "tcp", "provider.example:443")
+	require.ErrorIs(t, err, sentinel)
+	require.Equal(t, []string{"8.8.8.8:443"}, dialer.addresses)
+
+	dialer.addresses = nil
+	privateResolver := staticPublicNetworkResolver{addresses: []net.IPAddr{{IP: net.ParseIP("127.0.0.1")}}}
+	_, err = publicNetworkDialContext(privateResolver, dialer)(t.Context(), "tcp", "provider.example:443")
+	require.ErrorContains(t, err, "restricted address")
+	require.Empty(t, dialer.addresses)
+}
+
+func TestPublicNetworkOnlyClientDisablesProxyAndRevalidatesRedirects(t *testing.T) {
+	resolver := staticPublicNetworkResolver{addresses: []net.IPAddr{{IP: net.ParseIP("8.8.8.8")}}}
+	hc := NewHttpClient(
+		WithPublicNetworkOnly(),
+		withPublicNetworkResolver(resolver),
+	)
+
+	transport, ok := hc.GetNativeClient().Transport.(*http.Transport)
+	require.True(t, ok)
+	require.Nil(t, transport.Proxy)
+	require.NotNil(t, transport.DialContext)
+	proxyURL, err := hc.ProxyFunc()(&http.Request{})
+	require.NoError(t, err)
+	require.Nil(t, proxyURL)
+
+	redirectRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://127.0.0.1/private", nil)
+	require.NoError(t, err)
+	err = hc.GetNativeClient().CheckRedirect(redirectRequest, []*http.Request{{}})
+	require.ErrorContains(t, err, "redirect target is not allowed")
+
+	publicRedirect, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://provider.example/next", nil)
+	require.NoError(t, err)
+	require.NoError(t, hc.GetNativeClient().CheckRedirect(publicRedirect, []*http.Request{{}}))
+
+	_, err = hc.Do(t.Context(), &Request{Method: http.MethodGet, URL: "https://169.254.169.254/latest/meta-data"})
+	require.ErrorContains(t, err, "request URL is not allowed")
+}
+
+func TestPublicNetworkOnlyClientRetainsExplicitPublicURLProxy(t *testing.T) {
+	resolver := staticPublicNetworkResolver{addresses: []net.IPAddr{{IP: net.ParseIP("8.8.8.8")}}}
+	hc := NewHttpClientWithProxy(
+		&ProxyConfig{Type: ProxyTypeURL, URL: "http://8.8.8.8:8080"},
+		WithPublicNetworkOnly(),
+		withPublicNetworkResolver(resolver),
+	)
+
+	transport, ok := hc.GetNativeClient().Transport.(*http.Transport)
+	require.True(t, ok)
+	require.NotNil(t, transport.Proxy)
+	require.NotNil(t, transport.DialContext)
+	proxyURL, err := hc.ProxyFunc()(&http.Request{})
+	require.NoError(t, err)
+	require.Equal(t, "http://8.8.8.8:8080", proxyURL.String())
 }
 
 func TestHttpClientImpl_buildHttpRequest(t *testing.T) {

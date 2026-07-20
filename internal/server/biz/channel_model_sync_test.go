@@ -1,12 +1,108 @@
 package biz
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/looplj/axonhub/internal/authz"
+	"github.com/looplj/axonhub/internal/contexts"
+	"github.com/looplj/axonhub/internal/ent"
+	"github.com/looplj/axonhub/internal/ent/channel"
+	"github.com/looplj/axonhub/internal/objects"
+	"github.com/looplj/axonhub/llm/httpclient"
 )
+
+func TestChannelService_DonationImmediatelySyncsDiscoverableModels(t *testing.T) {
+	svc, client := setupTestChannelService(t)
+	defer svc.Stop()
+	defer client.Close()
+
+	setupCtx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+	donor := createChannelTestUser(t, client, setupCtx, "model-sync-donor@example.com", false)
+	donorCtx := contexts.WithUser(ent.NewContext(context.Background(), client), donor)
+	expiresAt := time.Now().Add(time.Hour)
+
+	donated, err := svc.CreateChannel(donorCtx, ent.CreateChannelInput{
+		Type:    channel.TypeCodex,
+		Name:    "discoverable coding plan donation",
+		BaseURL: new("https://chatgpt.com/backend-api/codex"),
+		Credentials: objects.ChannelCredentials{OAuth: &objects.OAuthCredentials{
+			AccessToken: "test-access-token",
+			ExpiresAt:   time.Now().Add(time.Hour),
+		}},
+		SupportedModels:  []string{"stale-auto-model", "gpt-5.6-sol"},
+		ManualModels:     []string{"campus-manual-model", "gpt-5.6-sol"},
+		DefaultTestModel: "campus-manual-model",
+		ExpiresAt:        &expiresAt,
+	})
+	require.NoError(t, err)
+	require.True(t, donated.AutoSyncSupportedModels, "campus donations should opt into discovery by default")
+	require.Contains(t, donated.SupportedModels, "campus-manual-model")
+	require.Contains(t, donated.SupportedModels, "gpt-5.6-sol")
+	require.NotContains(t, donated.SupportedModels, "stale-auto-model")
+	require.Equal(t, 1, lo.CountBy(donated.SupportedModels, func(modelID string) bool {
+		return modelID == "gpt-5.6-sol"
+	}))
+
+	donated, err = svc.UpdateChannelStatus(donorCtx, donated.ID, channel.StatusEnabled)
+	require.NoError(t, err)
+	require.Equal(t, channel.StatusEnabled, donated.Status)
+
+	models, err := svc.ListModels(donorCtx, ListModelsInput{})
+	require.NoError(t, err)
+	require.Equal(t, 1, lo.CountBy(models, func(model *ModelIdentityWithStatus) bool {
+		return model.ID == "gpt-5.6-sol" && model.Status == channel.StatusEnabled
+	}))
+}
+
+func TestChannelService_ModelSyncReplacesAutomaticModelsAndClearsEmptyCatalog(t *testing.T) {
+	providerModels := `{"data":[{"id":"same-model"},{"id":"new-model"},{"id":"new-model"}]}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(providerModels))
+	}))
+	defer server.Close()
+
+	svc, client := setupTestChannelService(t)
+	defer svc.Stop()
+	defer client.Close()
+	svc.httpClient = httpclient.NewHttpClientWithClient(server.Client())
+
+	ctx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+	ch, err := client.Channel.Create().
+		SetType(channel.TypeOpenai).
+		SetName("model sync lifecycle").
+		SetBaseURL(server.URL + "/v1").
+		SetCredentials(objects.ChannelCredentials{APIKey: "test-key"}).
+		SetSupportedModels([]string{"same-model", "old-auto-model", "manual-model"}).
+		SetManualModels([]string{"manual-model", "same-model"}).
+		SetDefaultTestModel("old-auto-model").
+		SetStatus(channel.StatusEnabled).
+		Save(ctx)
+	require.NoError(t, err)
+
+	synced, err := svc.SyncChannelModels(ctx, ch.ID, nil)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{"manual-model", "same-model", "new-model"}, synced.SupportedModels)
+	require.Equal(t, "manual-model", synced.DefaultTestModel)
+
+	models, err := svc.ListModels(ctx, ListModelsInput{})
+	require.NoError(t, err)
+	require.Equal(t, 1, lo.CountBy(models, func(model *ModelIdentityWithStatus) bool { return model.ID == "same-model" }))
+	require.Equal(t, 1, lo.CountBy(models, func(model *ModelIdentityWithStatus) bool { return model.ID == "new-model" }))
+
+	providerModels = `{"data":[]}`
+	synced, err = svc.SyncChannelModels(ctx, ch.ID, nil)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{"manual-model", "same-model"}, synced.SupportedModels)
+}
 
 func TestPreserveManualModels(t *testing.T) {
 	tests := []struct {

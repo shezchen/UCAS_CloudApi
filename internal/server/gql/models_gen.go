@@ -111,6 +111,18 @@ type BulkUpdateChannelOrderingResult struct {
 	Channels []*ent.Channel `json:"channels"`
 }
 
+// Privacy-safe campus leaderboard entry for today's recorded usage.
+// The public alias is stable only within the current project and does not expose
+// the underlying user, API key, channel, model, request content, or cost.
+type CampusUsageLeaderboardEntry struct {
+	Rank                int     `json:"rank"`
+	PublicAlias         string  `json:"publicAlias"`
+	IsMe                bool    `json:"isMe"`
+	RecordedTokens      float64 `json:"recordedTokens"`
+	MeteredRequestCount int     `json:"meteredRequestCount"`
+	LimitPercent        float64 `json:"limitPercent"`
+}
+
 // ChannelLimiterStats is a point-in-time snapshot of the per-channel concurrency limiter.
 type ChannelLimiterStats struct {
 	// Number of requests currently holding a capacity slot.

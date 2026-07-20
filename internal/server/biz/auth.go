@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -84,6 +85,23 @@ type AuthService struct {
 	AllowNoAuth   bool
 }
 
+// RegisterCampusUser creates a non-owner campus member through the public
+// registration flow. The system bypass is deliberately scoped to this one
+// fixed-shape operation; callers cannot supply scopes, roles, ownership, or a
+// quota override.
+func (s *AuthService) RegisterCampusUser(ctx context.Context, email, password string) (*ent.User, error) {
+	if len(password) < 8 {
+		return nil, fmt.Errorf("password must be at least 8 characters")
+	}
+
+	return authz.RunWithSystemBypass(ctx, "campus-user-registration", func(registerCtx context.Context) (*ent.User, error) {
+		return s.UserService.CreateUser(registerCtx, ent.CreateUserInput{
+			Email:    email,
+			Password: password,
+		})
+	})
+}
+
 // GenerateSecretKey generates a random secret key for JWT.
 func GenerateSecretKey() (string, error) {
 	bytes := make([]byte, 32) // 256 bits
@@ -127,7 +145,7 @@ func (s *AuthService) AuthenticateUser(
 		client := s.entFromContext(bypassCtx)
 
 		return client.User.Query().
-			Where(user.EmailEQ(email)).
+			Where(user.EmailEqualFold(strings.TrimSpace(email))).
 			Where(user.StatusEQ(user.StatusActivated)).
 			WithRoles().
 			Only(bypassCtx)

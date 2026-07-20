@@ -136,6 +136,7 @@ type CreateChannelInput struct {
 	Type                    channel.Type
 	BaseURL                 *string
 	Name                    string
+	ExpiresAt               *time.Time
 	Credentials             objects.ChannelCredentials
 	SupportedModels         []string
 	ManualModels            []string
@@ -157,6 +158,9 @@ func (i *CreateChannelInput) Mutate(m *ChannelMutation) {
 		m.SetBaseURL(*v)
 	}
 	m.SetName(i.Name)
+	if v := i.ExpiresAt; v != nil {
+		m.SetExpiresAt(*v)
+	}
 	m.SetCredentials(i.Credentials)
 	if v := i.SupportedModels; v != nil {
 		m.SetSupportedModels(v)
@@ -204,6 +208,8 @@ type UpdateChannelInput struct {
 	BaseURL                   *string
 	Name                      *string
 	Status                    *channel.Status
+	ClearExpiresAt            bool
+	ExpiresAt                 *time.Time
 	Credentials               *objects.ChannelCredentials
 	SupportedModels           []string
 	AppendSupportedModels     []string
@@ -247,6 +253,12 @@ func (i *UpdateChannelInput) Mutate(m *ChannelMutation) {
 	}
 	if v := i.Status; v != nil {
 		m.SetStatus(*v)
+	}
+	if i.ClearExpiresAt {
+		m.ClearExpiresAt()
+	}
+	if v := i.ExpiresAt; v != nil {
+		m.SetExpiresAt(*v)
 	}
 	if v := i.Credentials; v != nil {
 		m.SetCredentials(*v)
@@ -1591,17 +1603,18 @@ func (c *UsageLogUpdateOne) SetInput(i UpdateUsageLogInput) *UsageLogUpdateOne {
 
 // CreateUserInput represents a mutation input for creating users.
 type CreateUserInput struct {
-	Email          string
-	Status         *user.Status
-	PreferLanguage *string
-	Password       string
-	FirstName      *string
-	LastName       *string
-	Avatar         *string
-	IsOwner        *bool
-	Scopes         []string
-	ProjectIDs     []int
-	RoleIDs        []int
+	Email           string
+	Status          *user.Status
+	PreferLanguage  *string
+	Password        string
+	FirstName       *string
+	LastName        *string
+	Avatar          *string
+	IsOwner         *bool
+	DailyTokenLimit *int64
+	Scopes          []string
+	ProjectIDs      []int
+	RoleIDs         []int
 }
 
 // Mutate applies the CreateUserInput on the UserMutation builder.
@@ -1625,6 +1638,9 @@ func (i *CreateUserInput) Mutate(m *UserMutation) {
 	}
 	if v := i.IsOwner; v != nil {
 		m.SetIsOwner(*v)
+	}
+	if v := i.DailyTokenLimit; v != nil {
+		m.SetDailyTokenLimit(*v)
 	}
 	if v := i.Scopes; v != nil {
 		m.SetScopes(v)
@@ -1654,6 +1670,7 @@ type UpdateUserInput struct {
 	ClearAvatar      bool
 	Avatar           *string
 	IsOwner          *bool
+	DailyTokenLimit  *int64
 	ClearScopes      bool
 	Scopes           []string
 	AppendScopes     []string
@@ -1693,6 +1710,9 @@ func (i *UpdateUserInput) Mutate(m *UserMutation) {
 	}
 	if v := i.IsOwner; v != nil {
 		m.SetIsOwner(*v)
+	}
+	if v := i.DailyTokenLimit; v != nil {
+		m.SetDailyTokenLimit(*v)
 	}
 	if i.ClearScopes {
 		m.ClearScopes()

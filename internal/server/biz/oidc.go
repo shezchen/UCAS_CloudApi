@@ -997,9 +997,9 @@ func (s *OIDCService) resolveUser(ctx context.Context, p *oidcProvider, subject,
 		return nil, fmt.Errorf("email not verified")
 	}
 
-	if email == "" {
-		// Generate placeholder email if none provided
-		email = fmt.Sprintf("%s@%s.oidc", subject, p.config.Name)
+	email, err = normalizeCampusRegistrationEmail(email)
+	if err != nil {
+		return nil, err
 	}
 
 	firstName := givenName
@@ -1040,6 +1040,11 @@ func (s *OIDCService) resolveUser(ctx context.Context, p *oidcProvider, subject,
 		createdUser, err = userCreate.Save(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to create user: %w", err)
+		}
+		if !createdUser.IsOwner {
+			if err := assignCampusMemberToDefaultProject(ctx, client, createdUser.ID); err != nil {
+				return err
+			}
 		}
 
 		// Create the Identity record

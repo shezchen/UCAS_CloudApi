@@ -222,6 +222,20 @@ type UsageStatsByUser {
   totalCost: Float!
 }
 
+"""
+Privacy-safe campus leaderboard entry for today's recorded usage.
+The public alias is stable only within the current project and does not expose
+the underlying user, API key, channel, model, request content, or cost.
+"""
+type CampusUsageLeaderboardEntry {
+  rank: Int!
+  publicAlias: String!
+  isMe: Boolean!
+  recordedTokens: Float!
+  meteredRequestCount: Int!
+  limitPercent: Float!
+}
+
 extend type Query {
   dashboardOverview: DashboardOverview!
   requestStats: RequestStats!
@@ -252,4 +266,9 @@ extend type Query {
   costStatsByModel(timeWindow: String): [CostStatsByModel!]!
   costStatsByAPIKey(timeWindow: String): [CostStatsByAPIKey!]!
   usageStatsByUser(timeWindow: String): [UsageStatsByUser!]!
+  """
+  Today's privacy-safe campus usage leaderboard in the system timezone.
+  Returns the top 50 entries plus the current member when outside the top 50.
+  """
+  campusUsageLeaderboard: [CampusUsageLeaderboardEntry!]!
 }

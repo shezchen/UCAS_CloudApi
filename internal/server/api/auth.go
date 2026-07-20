@@ -39,6 +39,47 @@ type SignInResponse struct {
 	Token string            `json:"token"`
 }
 
+// SignUpRequest is the fixed-shape public campus registration request.
+type SignUpRequest struct {
+	Email    string `json:"email"    binding:"required,email"`
+	Password string `json:"password" binding:"required,min=8"`
+}
+
+// SignUp creates a non-owner member account restricted to UCAS email domains.
+func (h *AuthHandlers) SignUp(c *gin.Context) {
+	var req SignUpRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		JSONError(c, http.StatusBadRequest, errors.New("Invalid registration request"))
+		return
+	}
+
+	ctx := c.Request.Context()
+	user, err := h.AuthService.RegisterCampusUser(ctx, req.Email, req.Password)
+	if err != nil {
+		switch {
+		case errors.Is(err, biz.ErrCampusEmailRequired):
+			JSONError(c, http.StatusBadRequest, err)
+		case errors.Is(err, biz.ErrEmailAlreadyRegistered):
+			JSONError(c, http.StatusConflict, err)
+		default:
+			JSONError(c, http.StatusInternalServerError, errors.New("Failed to create account"))
+		}
+
+		return
+	}
+
+	token, err := h.AuthService.GenerateJWTToken(ctx, user)
+	if err != nil {
+		JSONError(c, http.StatusInternalServerError, errors.New("Failed to create account"))
+		return
+	}
+
+	c.JSON(http.StatusCreated, SignInResponse{
+		User:  biz.ConvertUserToUserInfo(ctx, user),
+		Token: token,
+	})
+}
+
 // SignIn handles user authentication.
 func (h *AuthHandlers) SignIn(c *gin.Context) {
 	var (

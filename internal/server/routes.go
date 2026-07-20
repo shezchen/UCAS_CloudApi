@@ -41,10 +41,11 @@ type Handlers struct {
 type Services struct {
 	fx.In
 
-	TraceService  *biz.TraceService
-	ThreadService *biz.ThreadService
-	AuthService   *biz.AuthService
-	SystemService *biz.SystemService
+	TraceService           *biz.TraceService
+	ThreadService          *biz.ThreadService
+	AuthService            *biz.AuthService
+	SystemService          *biz.SystemService
+	UserConcurrencyLimiter *middleware.UserConcurrencyLimiter
 }
 
 func SetupRoutes(server *Server, handlers Handlers, client *ent.Client, services Services) {
@@ -93,6 +94,8 @@ func SetupRoutes(server *Server, handlers Handlers, client *ent.Client, services
 		unSecureAdminGroup.POST("/system/initialize", handlers.System.InitializeSystem)
 		// User Login - DO NOT AUTH
 		unSecureAdminGroup.POST("/auth/signin", handlers.Auth.SignIn)
+		// Campus registration - UCAS email domains only, always non-owner.
+		unSecureAdminGroup.POST("/auth/signup", handlers.Auth.SignUp)
 	}
 
 	oauthGroup := server.Group("/oauth", middleware.WithTimeout(server.Config.RequestTimeout))
@@ -129,6 +132,7 @@ func SetupRoutes(server *Server, handlers Handlers, client *ent.Client, services
 		// Playground API with channel specification support
 		adminGroup.POST(
 			"/playground/chat",
+			middleware.WithOwnerOnly(),
 			middleware.WithTimeout(server.Config.LLMRequestTimeout),
 			middleware.WithSource(request.SourcePlayground),
 			handlers.Playground.ChatCompletion,
@@ -167,6 +171,7 @@ func SetupRoutes(server *Server, handlers Handlers, client *ent.Client, services
 		middleware.WithTimeout(server.Config.LLMRequestTimeout),
 		middleware.WithIPBlocklist(services.SystemService),
 		middleware.WithAPIKeyConfig(services.AuthService, nil),
+		middleware.WithUserConcurrencyLimit(services.UserConcurrencyLimiter),
 		middleware.WithSource(request.SourceAPI),
 		middleware.WithThread(server.Config.Trace, services.ThreadService),
 		middleware.WithTrace(server.Config.Trace, services.TraceService),
@@ -228,6 +233,7 @@ func SetupRoutes(server *Server, handlers Handlers, client *ent.Client, services
 			middleware.WithTimeout(server.Config.LLMRequestTimeout),
 			middleware.WithIPBlocklist(services.SystemService),
 			middleware.WithGeminiKeyAuth(services.AuthService),
+			middleware.WithUserConcurrencyLimit(services.UserConcurrencyLimiter),
 			middleware.WithSource(request.SourceAPI),
 			middleware.WithThread(server.Config.Trace, services.ThreadService),
 			middleware.WithTrace(server.Config.Trace, services.TraceService),
@@ -240,6 +246,7 @@ func SetupRoutes(server *Server, handlers Handlers, client *ent.Client, services
 			middleware.WithTimeout(server.Config.LLMRequestTimeout),
 			middleware.WithIPBlocklist(services.SystemService),
 			middleware.WithGeminiKeyAuth(services.AuthService),
+			middleware.WithUserConcurrencyLimit(services.UserConcurrencyLimiter),
 			middleware.WithSource(request.SourceAPI),
 			middleware.WithThread(server.Config.Trace, services.ThreadService),
 			middleware.WithTrace(server.Config.Trace, services.TraceService),

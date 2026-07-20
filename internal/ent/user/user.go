@@ -40,12 +40,16 @@ const (
 	FieldAvatar = "avatar"
 	// FieldIsOwner holds the string denoting the is_owner field in the database.
 	FieldIsOwner = "is_owner"
+	// FieldDailyTokenLimit holds the string denoting the daily_token_limit field in the database.
+	FieldDailyTokenLimit = "daily_token_limit"
 	// FieldScopes holds the string denoting the scopes field in the database.
 	FieldScopes = "scopes"
 	// EdgeProjects holds the string denoting the projects edge name in mutations.
 	EdgeProjects = "projects"
 	// EdgeAPIKeys holds the string denoting the api_keys edge name in mutations.
 	EdgeAPIKeys = "api_keys"
+	// EdgeDonatedChannels holds the string denoting the donated_channels edge name in mutations.
+	EdgeDonatedChannels = "donated_channels"
 	// EdgeRoles holds the string denoting the roles edge name in mutations.
 	EdgeRoles = "roles"
 	// EdgeChannelOverrideTemplates holds the string denoting the channel_override_templates edge name in mutations.
@@ -70,6 +74,13 @@ const (
 	APIKeysInverseTable = "api_keys"
 	// APIKeysColumn is the table column denoting the api_keys relation/edge.
 	APIKeysColumn = "user_id"
+	// DonatedChannelsTable is the table that holds the donated_channels relation/edge.
+	DonatedChannelsTable = "channels"
+	// DonatedChannelsInverseTable is the table name for the Channel entity.
+	// It exists in this package in order to avoid circular dependency with the "channel" package.
+	DonatedChannelsInverseTable = "channels"
+	// DonatedChannelsColumn is the table column denoting the donated_channels relation/edge.
+	DonatedChannelsColumn = "user_id"
 	// RolesTable is the table that holds the roles relation/edge. The primary key declared below.
 	RolesTable = "user_roles"
 	// RolesInverseTable is the table name for the Role entity.
@@ -119,6 +130,7 @@ var Columns = []string{
 	FieldLastName,
 	FieldAvatar,
 	FieldIsOwner,
+	FieldDailyTokenLimit,
 	FieldScopes,
 }
 
@@ -166,6 +178,10 @@ var (
 	DefaultLastName string
 	// DefaultIsOwner holds the default value on creation for the "is_owner" field.
 	DefaultIsOwner bool
+	// DefaultDailyTokenLimit holds the default value on creation for the "daily_token_limit" field.
+	DefaultDailyTokenLimit int64
+	// DailyTokenLimitValidator is a validator for the "daily_token_limit" field. It is called by the builders before save.
+	DailyTokenLimitValidator func(int64) error
 	// DefaultScopes holds the default value on creation for the "scopes" field.
 	DefaultScopes []string
 )
@@ -259,6 +275,11 @@ func ByIsOwner(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldIsOwner, opts...).ToFunc()
 }
 
+// ByDailyTokenLimit orders the results by the daily_token_limit field.
+func ByDailyTokenLimit(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldDailyTokenLimit, opts...).ToFunc()
+}
+
 // ByProjectsCount orders the results by projects count.
 func ByProjectsCount(opts ...sql.OrderTermOption) OrderOption {
 	return func(s *sql.Selector) {
@@ -284,6 +305,20 @@ func ByAPIKeysCount(opts ...sql.OrderTermOption) OrderOption {
 func ByAPIKeys(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
 	return func(s *sql.Selector) {
 		sqlgraph.OrderByNeighborTerms(s, newAPIKeysStep(), append([]sql.OrderTerm{term}, terms...)...)
+	}
+}
+
+// ByDonatedChannelsCount orders the results by donated_channels count.
+func ByDonatedChannelsCount(opts ...sql.OrderTermOption) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborsCount(s, newDonatedChannelsStep(), opts...)
+	}
+}
+
+// ByDonatedChannels orders the results by donated_channels terms.
+func ByDonatedChannels(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborTerms(s, newDonatedChannelsStep(), append([]sql.OrderTerm{term}, terms...)...)
 	}
 }
 
@@ -368,6 +403,13 @@ func newAPIKeysStep() *sqlgraph.Step {
 		sqlgraph.From(Table, FieldID),
 		sqlgraph.To(APIKeysInverseTable, FieldID),
 		sqlgraph.Edge(sqlgraph.O2M, false, APIKeysTable, APIKeysColumn),
+	)
+}
+func newDonatedChannelsStep() *sqlgraph.Step {
+	return sqlgraph.NewStep(
+		sqlgraph.From(Table, FieldID),
+		sqlgraph.To(DonatedChannelsInverseTable, FieldID),
+		sqlgraph.Edge(sqlgraph.O2M, false, DonatedChannelsTable, DonatedChannelsColumn),
 	)
 }
 func newRolesStep() *sqlgraph.Step {

@@ -1,6 +1,7 @@
 package biz
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -9,6 +10,7 @@ import (
 	"github.com/looplj/axonhub/internal/ent/channel"
 	"github.com/looplj/axonhub/internal/objects"
 	"github.com/looplj/axonhub/llm"
+	"github.com/looplj/axonhub/llm/httpclient"
 )
 
 func TestDefaultEndpointsForChannelType_UseLLMAPIFormatValues(t *testing.T) {
@@ -222,6 +224,105 @@ func TestValidateEndpoints(t *testing.T) {
 		err := ValidateEndpoints(nil)
 		require.NoError(t, err)
 	})
+}
+
+func TestValidateDonationChannelConfigurationAllowsPublicProxyAndRejectsPrivateDestinations(t *testing.T) {
+	publicBaseURL := "https://8.8.8.8/v1"
+
+	err := ValidateDonationChannelConfiguration(context.Background(), channel.TypeOpenai, &publicBaseURL, nil, &objects.ChannelSettings{
+		Proxy: &httpclient.ProxyConfig{
+			Type: httpclient.ProxyTypeURL,
+			URL:  "http://127.0.0.1:8080",
+		},
+	}, nil)
+	require.ErrorContains(t, err, "restricted address")
+
+	err = ValidateDonationChannelConfiguration(context.Background(), channel.TypeOpenai, &publicBaseURL, nil, &objects.ChannelSettings{
+		Proxy: &httpclient.ProxyConfig{
+			Type: httpclient.ProxyTypeURL,
+			URL:  "http://8.8.8.8:8080",
+		},
+	}, nil)
+	require.NoError(t, err)
+
+	err = ValidateDonationChannelConfiguration(context.Background(), channel.TypeOpenai, &publicBaseURL, nil, nil, []objects.ChannelEndpoint{
+		{BaseURL: "https://169.254.169.254/latest/meta-data"},
+	})
+	require.ErrorContains(t, err, "endpoint[0]")
+}
+
+func TestValidateDonationChannelConfigurationValidatesGCPServiceAccountURLs(t *testing.T) {
+	valid := objects.ChannelCredentials{GCP: &objects.GCPCredential{
+		Region: "us-central1",
+		JSONData: `{
+			"type":"service_account",
+			"token_uri":"https://oauth2.googleapis.com/token",
+			"auth_uri":"https://accounts.google.com/o/oauth2/auth",
+			"auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs",
+			"client_x509_cert_url":"https://www.googleapis.com/robot/v1/metadata/x509/test%40example.com",
+			"universe_domain":"googleapis.com"
+		}`,
+	}}
+	require.NoError(t, ValidateDonationChannelConfiguration(
+		context.Background(), channel.TypeAnthropicGcp, nil, &valid, nil, nil,
+	))
+
+	tests := []struct {
+		name       string
+		region     string
+		credential string
+		errorText  string
+	}{
+		{
+			name:       "region cannot inject a host",
+			region:     "us-central1.evil.example",
+			credential: valid.GCP.JSONData,
+			errorText:  "GCP region",
+		},
+		{
+			name:       "external account credential source is rejected",
+			region:     "global",
+			credential: `{"type":"external_account","token_url":"http://169.254.169.254/token"}`,
+			errorText:  "service_account",
+		},
+		{
+			name:       "token URI cannot target metadata",
+			region:     "global",
+			credential: `{"type":"service_account","token_uri":"https://169.254.169.254/token"}`,
+			errorText:  "token_uri",
+		},
+		{
+			name:       "token URI path must be canonical",
+			region:     "global",
+			credential: `{"type":"service_account","token_uri":"https://oauth2.googleapis.com/redirect"}`,
+			errorText:  "token_uri",
+		},
+		{
+			name:       "auth URI cannot target another host",
+			region:     "global",
+			credential: `{"type":"service_account","token_uri":"https://oauth2.googleapis.com/token","auth_uri":"https://example.com/o/oauth2/auth"}`,
+			errorText:  "auth_uri",
+		},
+		{
+			name:       "certificate URL cannot target another host",
+			region:     "global",
+			credential: `{"type":"service_account","token_uri":"https://oauth2.googleapis.com/token","client_x509_cert_url":"https://example.com/robot/v1/metadata/x509/a"}`,
+			errorText:  "client_x509_cert_url",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			credentials := objects.ChannelCredentials{GCP: &objects.GCPCredential{
+				Region:   tt.region,
+				JSONData: tt.credential,
+			}}
+			err := ValidateDonationChannelConfiguration(
+				context.Background(), channel.TypeAnthropicGcp, nil, &credentials, nil, nil,
+			)
+			require.ErrorContains(t, err, tt.errorText)
+		})
+	}
 }
 
 func TestPrimaryEndpointTransport(t *testing.T) {

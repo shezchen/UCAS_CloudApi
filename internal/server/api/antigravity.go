@@ -184,6 +184,12 @@ func (h *AntigravityHandlers) Exchange(c *gin.Context) {
 		return
 	}
 
+	httpClient, err := oauthHTTPClientForCaller(ctx, h.httpClient, req.Proxy)
+	if err != nil {
+		JSONError(c, http.StatusForbidden, err)
+		return
+	}
+
 	cacheKey := antigravityOAuthCacheKey(req.SessionID)
 
 	state, err := h.stateCache.Get(ctx, cacheKey)
@@ -206,12 +212,6 @@ func (h *AntigravityHandlers) Exchange(c *gin.Context) {
 	// Delete state after validation succeeds
 	if err := h.stateCache.Delete(ctx, cacheKey); err != nil {
 		log.Warn(ctx, "failed to delete used oauth state from cache", log.String("session_id", req.SessionID), log.Cause(err))
-	}
-
-	// Create HTTP client with proxy if provided
-	httpClient := h.httpClient
-	if req.Proxy != nil && req.Proxy.Type == httpclient.ProxyTypeURL && req.Proxy.URL != "" {
-		httpClient = h.httpClient.WithProxy(req.Proxy)
 	}
 
 	tokenProvider := antigravity.NewTokenProvider(oauth.TokenProviderParams{

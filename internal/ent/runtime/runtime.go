@@ -166,39 +166,39 @@ func init() {
 	// channel.DefaultDeletedAt holds the default value on creation for the deleted_at field.
 	channel.DefaultDeletedAt = channelDescDeletedAt.Default.(int)
 	// channelDescDisabledAPIKeys is the schema descriptor for disabled_api_keys field.
-	channelDescDisabledAPIKeys := channelFields[5].Descriptor()
+	channelDescDisabledAPIKeys := channelFields[7].Descriptor()
 	// channel.DefaultDisabledAPIKeys holds the default value on creation for the disabled_api_keys field.
 	channel.DefaultDisabledAPIKeys = channelDescDisabledAPIKeys.Default.([]objects.DisabledAPIKey)
 	// channelDescManualModels is the schema descriptor for manual_models field.
-	channelDescManualModels := channelFields[7].Descriptor()
+	channelDescManualModels := channelFields[9].Descriptor()
 	// channel.DefaultManualModels holds the default value on creation for the manual_models field.
 	channel.DefaultManualModels = channelDescManualModels.Default.([]string)
 	// channelDescAutoSyncSupportedModels is the schema descriptor for auto_sync_supported_models field.
-	channelDescAutoSyncSupportedModels := channelFields[8].Descriptor()
+	channelDescAutoSyncSupportedModels := channelFields[10].Descriptor()
 	// channel.DefaultAutoSyncSupportedModels holds the default value on creation for the auto_sync_supported_models field.
 	channel.DefaultAutoSyncSupportedModels = channelDescAutoSyncSupportedModels.Default.(bool)
 	// channelDescAutoSyncModelPattern is the schema descriptor for auto_sync_model_pattern field.
-	channelDescAutoSyncModelPattern := channelFields[9].Descriptor()
+	channelDescAutoSyncModelPattern := channelFields[11].Descriptor()
 	// channel.DefaultAutoSyncModelPattern holds the default value on creation for the auto_sync_model_pattern field.
 	channel.DefaultAutoSyncModelPattern = channelDescAutoSyncModelPattern.Default.(string)
 	// channelDescTags is the schema descriptor for tags field.
-	channelDescTags := channelFields[10].Descriptor()
+	channelDescTags := channelFields[12].Descriptor()
 	// channel.DefaultTags holds the default value on creation for the tags field.
 	channel.DefaultTags = channelDescTags.Default.([]string)
 	// channelDescPolicies is the schema descriptor for policies field.
-	channelDescPolicies := channelFields[12].Descriptor()
+	channelDescPolicies := channelFields[14].Descriptor()
 	// channel.DefaultPolicies holds the default value on creation for the policies field.
 	channel.DefaultPolicies = channelDescPolicies.Default.(objects.ChannelPolicies)
 	// channelDescSettings is the schema descriptor for settings field.
-	channelDescSettings := channelFields[13].Descriptor()
+	channelDescSettings := channelFields[15].Descriptor()
 	// channel.DefaultSettings holds the default value on creation for the settings field.
 	channel.DefaultSettings = channelDescSettings.Default.(*objects.ChannelSettings)
 	// channelDescOrderingWeight is the schema descriptor for ordering_weight field.
-	channelDescOrderingWeight := channelFields[14].Descriptor()
+	channelDescOrderingWeight := channelFields[16].Descriptor()
 	// channel.DefaultOrderingWeight holds the default value on creation for the ordering_weight field.
 	channel.DefaultOrderingWeight = channelDescOrderingWeight.Default.(int)
 	// channelDescEndpoints is the schema descriptor for endpoints field.
-	channelDescEndpoints := channelFields[17].Descriptor()
+	channelDescEndpoints := channelFields[19].Descriptor()
 	// channel.DefaultEndpoints holds the default value on creation for the endpoints field.
 	channel.DefaultEndpoints = channelDescEndpoints.Default.([]objects.ChannelEndpoint)
 	channelmodelpriceMixin := schema.ChannelModelPrice{}.Mixin()
@@ -918,8 +918,14 @@ func init() {
 	userDescIsOwner := userFields[7].Descriptor()
 	// user.DefaultIsOwner holds the default value on creation for the is_owner field.
 	user.DefaultIsOwner = userDescIsOwner.Default.(bool)
+	// userDescDailyTokenLimit is the schema descriptor for daily_token_limit field.
+	userDescDailyTokenLimit := userFields[8].Descriptor()
+	// user.DefaultDailyTokenLimit holds the default value on creation for the daily_token_limit field.
+	user.DefaultDailyTokenLimit = userDescDailyTokenLimit.Default.(int64)
+	// user.DailyTokenLimitValidator is a validator for the "daily_token_limit" field. It is called by the builders before save.
+	user.DailyTokenLimitValidator = userDescDailyTokenLimit.Validators[0].(func(int64) error)
 	// userDescScopes is the schema descriptor for scopes field.
-	userDescScopes := userFields[8].Descriptor()
+	userDescScopes := userFields[9].Descriptor()
 	// user.DefaultScopes holds the default value on creation for the scopes field.
 	user.DefaultScopes = userDescScopes.Default.([]string)
 	userprojectMixin := schema.UserProject{}.Mixin()

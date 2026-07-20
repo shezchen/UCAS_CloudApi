@@ -7,6 +7,7 @@ import (
 
 	"github.com/looplj/axonhub/internal/authz"
 	"github.com/looplj/axonhub/internal/ent"
+	"github.com/looplj/axonhub/internal/ent/channel"
 	"github.com/looplj/axonhub/internal/log"
 	"github.com/looplj/axonhub/internal/pkg/xtime"
 	"github.com/looplj/axonhub/llm/oauth"
@@ -28,6 +29,45 @@ func (svc *ChannelService) runSyncChannelModelsPeriodically(ctx context.Context)
 	}
 
 	svc.syncChannelModels(ctx)
+}
+
+func (svc *ChannelService) runExpireChannelsPeriodically(ctx context.Context) {
+	ctx = authz.WithSystemBypass(ctx, "channel-expiry-cleanup")
+	if err := svc.expireChannels(ctx, time.Now()); err != nil {
+		log.Error(ctx, "failed to clean up expired channels", log.Cause(err))
+	}
+}
+
+func (svc *ChannelService) expireChannels(ctx context.Context, now time.Time) error {
+	expiredChannels, err := svc.entFromContext(ctx).Channel.Query().
+		Where(
+			channel.ExpiresAtNotNil(),
+			channel.ExpiresAtLTE(now),
+		).
+		All(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to query expired channels: %w", err)
+	}
+
+	ids := make([]int, 0, len(expiredChannels))
+	for _, ch := range expiredChannels {
+		ids = append(ids, ch.ID)
+	}
+
+	if _, err := svc.scrubAndSoftDeleteChannels(ctx, ids); err != nil {
+		return err
+	}
+
+	for _, ch := range expiredChannels {
+		svc.forgetLimiter(ch.ID)
+	}
+
+	if len(expiredChannels) > 0 {
+		svc.asyncReloadChannels()
+		log.Info(ctx, "cleaned up expired channels", log.Int("count", len(expiredChannels)))
+	}
+
+	return nil
 }
 
 func (svc *ChannelService) shouldRunModelSync(now time.Time, frequency AutoSyncFrequency) bool {

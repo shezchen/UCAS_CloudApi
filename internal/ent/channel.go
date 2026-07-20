@@ -12,6 +12,7 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"github.com/looplj/axonhub/internal/ent/channel"
 	"github.com/looplj/axonhub/internal/ent/providerquotastatus"
+	"github.com/looplj/axonhub/internal/ent/user"
 	"github.com/looplj/axonhub/internal/objects"
 )
 
@@ -34,6 +35,10 @@ type Channel struct {
 	Name string `json:"name,omitempty"`
 	// Status holds the value of the "status" field.
 	Status channel.Status `json:"status,omitempty"`
+	// User who donated this channel; null for owner-managed global channels
+	UserID *int `json:"user_id,omitempty"`
+	// Donation expiry time; null means the channel does not expire
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	// Credentials holds the value of the "credentials" field.
 	Credentials objects.ChannelCredentials `json:"-"`
 	// Disabled API keys with metadata (sensitive; requires channel write permission)
@@ -70,6 +75,8 @@ type Channel struct {
 
 // ChannelEdges holds the relations/edges for other nodes in the graph.
 type ChannelEdges struct {
+	// User holds the value of the user edge.
+	User *User `json:"user,omitempty"`
 	// Requests holds the value of the requests edge.
 	Requests []*Request `json:"requests,omitempty"`
 	// Executions holds the value of the executions edge.
@@ -84,9 +91,9 @@ type ChannelEdges struct {
 	ProviderQuotaStatus *ProviderQuotaStatus `json:"provider_quota_status,omitempty"`
 	// loadedTypes holds the information for reporting if a
 	// type was loaded (or requested) in eager-loading or not.
-	loadedTypes [6]bool
+	loadedTypes [7]bool
 	// totalCount holds the count of the edges above.
-	totalCount [6]map[string]int
+	totalCount [7]map[string]int
 
 	namedRequests           map[string][]*Request
 	namedExecutions         map[string][]*RequestExecution
@@ -95,10 +102,21 @@ type ChannelEdges struct {
 	namedChannelModelPrices map[string][]*ChannelModelPrice
 }
 
+// UserOrErr returns the User value or an error if the edge
+// was not loaded in eager-loading, or loaded but was not found.
+func (e ChannelEdges) UserOrErr() (*User, error) {
+	if e.User != nil {
+		return e.User, nil
+	} else if e.loadedTypes[0] {
+		return nil, &NotFoundError{label: user.Label}
+	}
+	return nil, &NotLoadedError{edge: "user"}
+}
+
 // RequestsOrErr returns the Requests value or an error if the edge
 // was not loaded in eager-loading.
 func (e ChannelEdges) RequestsOrErr() ([]*Request, error) {
-	if e.loadedTypes[0] {
+	if e.loadedTypes[1] {
 		return e.Requests, nil
 	}
 	return nil, &NotLoadedError{edge: "requests"}
@@ -107,7 +125,7 @@ func (e ChannelEdges) RequestsOrErr() ([]*Request, error) {
 // ExecutionsOrErr returns the Executions value or an error if the edge
 // was not loaded in eager-loading.
 func (e ChannelEdges) ExecutionsOrErr() ([]*RequestExecution, error) {
-	if e.loadedTypes[1] {
+	if e.loadedTypes[2] {
 		return e.Executions, nil
 	}
 	return nil, &NotLoadedError{edge: "executions"}
@@ -116,7 +134,7 @@ func (e ChannelEdges) ExecutionsOrErr() ([]*RequestExecution, error) {
 // UsageLogsOrErr returns the UsageLogs value or an error if the edge
 // was not loaded in eager-loading.
 func (e ChannelEdges) UsageLogsOrErr() ([]*UsageLog, error) {
-	if e.loadedTypes[2] {
+	if e.loadedTypes[3] {
 		return e.UsageLogs, nil
 	}
 	return nil, &NotLoadedError{edge: "usage_logs"}
@@ -125,7 +143,7 @@ func (e ChannelEdges) UsageLogsOrErr() ([]*UsageLog, error) {
 // ChannelProbesOrErr returns the ChannelProbes value or an error if the edge
 // was not loaded in eager-loading.
 func (e ChannelEdges) ChannelProbesOrErr() ([]*ChannelProbe, error) {
-	if e.loadedTypes[3] {
+	if e.loadedTypes[4] {
 		return e.ChannelProbes, nil
 	}
 	return nil, &NotLoadedError{edge: "channel_probes"}
@@ -134,7 +152,7 @@ func (e ChannelEdges) ChannelProbesOrErr() ([]*ChannelProbe, error) {
 // ChannelModelPricesOrErr returns the ChannelModelPrices value or an error if the edge
 // was not loaded in eager-loading.
 func (e ChannelEdges) ChannelModelPricesOrErr() ([]*ChannelModelPrice, error) {
-	if e.loadedTypes[4] {
+	if e.loadedTypes[5] {
 		return e.ChannelModelPrices, nil
 	}
 	return nil, &NotLoadedError{edge: "channel_model_prices"}
@@ -145,7 +163,7 @@ func (e ChannelEdges) ChannelModelPricesOrErr() ([]*ChannelModelPrice, error) {
 func (e ChannelEdges) ProviderQuotaStatusOrErr() (*ProviderQuotaStatus, error) {
 	if e.ProviderQuotaStatus != nil {
 		return e.ProviderQuotaStatus, nil
-	} else if e.loadedTypes[5] {
+	} else if e.loadedTypes[6] {
 		return nil, &NotFoundError{label: providerquotastatus.Label}
 	}
 	return nil, &NotLoadedError{edge: "provider_quota_status"}
@@ -160,11 +178,11 @@ func (*Channel) scanValues(columns []string) ([]any, error) {
 			values[i] = new([]byte)
 		case channel.FieldAutoSyncSupportedModels:
 			values[i] = new(sql.NullBool)
-		case channel.FieldID, channel.FieldDeletedAt, channel.FieldOrderingWeight:
+		case channel.FieldID, channel.FieldDeletedAt, channel.FieldUserID, channel.FieldOrderingWeight:
 			values[i] = new(sql.NullInt64)
 		case channel.FieldType, channel.FieldBaseURL, channel.FieldName, channel.FieldStatus, channel.FieldAutoSyncModelPattern, channel.FieldDefaultTestModel, channel.FieldErrorMessage, channel.FieldRemark:
 			values[i] = new(sql.NullString)
-		case channel.FieldCreatedAt, channel.FieldUpdatedAt:
+		case channel.FieldCreatedAt, channel.FieldUpdatedAt, channel.FieldExpiresAt:
 			values[i] = new(sql.NullTime)
 		default:
 			values[i] = new(sql.UnknownType)
@@ -228,6 +246,20 @@ func (_m *Channel) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field status", values[i])
 			} else if value.Valid {
 				_m.Status = channel.Status(value.String)
+			}
+		case channel.FieldUserID:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field user_id", values[i])
+			} else if value.Valid {
+				_m.UserID = new(int)
+				*_m.UserID = int(value.Int64)
+			}
+		case channel.FieldExpiresAt:
+			if value, ok := values[i].(*sql.NullTime); !ok {
+				return fmt.Errorf("unexpected type %T for field expires_at", values[i])
+			} else if value.Valid {
+				_m.ExpiresAt = new(time.Time)
+				*_m.ExpiresAt = value.Time
 			}
 		case channel.FieldCredentials:
 			if value, ok := values[i].(*[]byte); !ok {
@@ -344,6 +376,11 @@ func (_m *Channel) Value(name string) (ent.Value, error) {
 	return _m.selectValues.Get(name)
 }
 
+// QueryUser queries the "user" edge of the Channel entity.
+func (_m *Channel) QueryUser() *UserQuery {
+	return NewChannelClient(_m.config).QueryUser(_m)
+}
+
 // QueryRequests queries the "requests" edge of the Channel entity.
 func (_m *Channel) QueryRequests() *RequestQuery {
 	return NewChannelClient(_m.config).QueryRequests(_m)
@@ -417,6 +454,16 @@ func (_m *Channel) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("status=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Status))
+	builder.WriteString(", ")
+	if v := _m.UserID; v != nil {
+		builder.WriteString("user_id=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
+	if v := _m.ExpiresAt; v != nil {
+		builder.WriteString("expires_at=")
+		builder.WriteString(v.Format(time.ANSIC))
+	}
 	builder.WriteString(", ")
 	builder.WriteString("credentials=<sensitive>")
 	builder.WriteString(", ")

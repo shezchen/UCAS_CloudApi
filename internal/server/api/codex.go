@@ -210,6 +210,12 @@ func (h *CodexHandlers) Exchange(c *gin.Context) {
 		return
 	}
 
+	httpClient, err := oauthHTTPClientForCaller(ctx, h.httpClient, req.Proxy)
+	if err != nil {
+		JSONError(c, http.StatusForbidden, err)
+		return
+	}
+
 	cacheKey := codexOAuthCacheKey(req.SessionID)
 
 	state, err := h.stateCache.Get(ctx, cacheKey)
@@ -231,12 +237,6 @@ func (h *CodexHandlers) Exchange(c *gin.Context) {
 	if callbackState != req.SessionID {
 		JSONError(c, http.StatusBadRequest, errors.New("oauth state mismatch"))
 		return
-	}
-
-	// Create HTTP client with proxy if provided
-	httpClient := h.httpClient
-	if req.Proxy != nil && req.Proxy.Type == httpclient.ProxyTypeURL && req.Proxy.URL != "" {
-		httpClient = h.httpClient.WithProxy(req.Proxy)
 	}
 
 	tokenProvider := codex.NewTokenProvider(codex.TokenProviderParams{

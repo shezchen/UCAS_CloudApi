@@ -1,14 +1,213 @@
 package biz
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/looplj/axonhub/internal/ent/channel"
 	"github.com/looplj/axonhub/internal/objects"
 	"github.com/looplj/axonhub/llm"
+	"github.com/looplj/axonhub/llm/httpclient"
 	"github.com/looplj/axonhub/llm/transformer/gemini"
 )
+
+// ValidateDonationURL rejects URLs that could let a donor reach services on
+// the AxonHub host or its cloud metadata network.
+func ValidateDonationURL(ctx context.Context, rawURL string) error {
+	return httpclient.ValidatePublicURL(ctx, rawURL)
+}
+
+var donationGCPRegionPattern = regexp.MustCompile(`^(?:global|[a-z][a-z0-9]*(?:-[a-z0-9]+)*)$`)
+
+type donationGCPServiceAccountJSON struct {
+	Type                    string `json:"type"`
+	AuthURI                 string `json:"auth_uri"`
+	TokenURI                string `json:"token_uri"`
+	AuthProviderX509CertURL string `json:"auth_provider_x509_cert_url"`
+	ClientX509CertURL       string `json:"client_x509_cert_url"`
+	UniverseDomain          string `json:"universe_domain"`
+}
+
+func parseTrustedGCPURL(rawURL, field string, allowedHost string) (*url.URL, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("GCP credential %s is invalid: %w", field, err)
+	}
+	if parsed.Scheme != "https" || parsed.Opaque != "" || parsed.User != nil || parsed.Port() != "" ||
+		!strings.EqualFold(strings.TrimSuffix(parsed.Hostname(), "."), allowedHost) || parsed.Fragment != "" {
+		return nil, fmt.Errorf("GCP credential %s must use the trusted host %s over HTTPS", field, allowedHost)
+	}
+
+	return parsed, nil
+}
+
+func validateDonationGCPCredentials(credentials *objects.ChannelCredentials) error {
+	if credentials == nil || credentials.GCP == nil {
+		return fmt.Errorf("GCP credentials are required")
+	}
+
+	region := strings.TrimSpace(credentials.GCP.Region)
+	if len(region) > 63 || !donationGCPRegionPattern.MatchString(region) {
+		return fmt.Errorf("GCP region must be 'global' or a lowercase region identifier")
+	}
+
+	var serviceAccount donationGCPServiceAccountJSON
+	if err := json.Unmarshal([]byte(credentials.GCP.JSONData), &serviceAccount); err != nil {
+		return fmt.Errorf("GCP credential JSON is invalid: %w", err)
+	}
+	if serviceAccount.Type != "service_account" {
+		return fmt.Errorf("only GCP service_account credential JSON is allowed for donated channels")
+	}
+	if serviceAccount.UniverseDomain != "" && serviceAccount.UniverseDomain != "googleapis.com" {
+		return fmt.Errorf("GCP credential universe_domain must be googleapis.com")
+	}
+
+	tokenURI, err := parseTrustedGCPURL(serviceAccount.TokenURI, "token_uri", "oauth2.googleapis.com")
+	if err != nil {
+		return err
+	}
+	if tokenURI.EscapedPath() != "/token" || tokenURI.RawQuery != "" {
+		return fmt.Errorf("GCP credential token_uri must be https://oauth2.googleapis.com/token")
+	}
+
+	if serviceAccount.AuthURI != "" {
+		authURI, err := parseTrustedGCPURL(serviceAccount.AuthURI, "auth_uri", "accounts.google.com")
+		if err != nil {
+			return err
+		}
+		if authURI.EscapedPath() != "/o/oauth2/auth" || authURI.RawQuery != "" {
+			return fmt.Errorf("GCP credential auth_uri must be https://accounts.google.com/o/oauth2/auth")
+		}
+	}
+
+	if serviceAccount.AuthProviderX509CertURL != "" {
+		certURL, err := parseTrustedGCPURL(serviceAccount.AuthProviderX509CertURL, "auth_provider_x509_cert_url", "www.googleapis.com")
+		if err != nil {
+			return err
+		}
+		if certURL.EscapedPath() != "/oauth2/v1/certs" || certURL.RawQuery != "" {
+			return fmt.Errorf("GCP credential auth_provider_x509_cert_url is not canonical")
+		}
+	}
+
+	if serviceAccount.ClientX509CertURL != "" {
+		clientCertURL, err := parseTrustedGCPURL(serviceAccount.ClientX509CertURL, "client_x509_cert_url", "www.googleapis.com")
+		if err != nil {
+			return err
+		}
+		if !strings.HasPrefix(clientCertURL.EscapedPath(), "/robot/v1/metadata/x509/") || clientCertURL.RawQuery != "" {
+			return fmt.Errorf("GCP credential client_x509_cert_url is not canonical")
+		}
+	}
+
+	return nil
+}
+
+func validateDonationProxySyntax(proxy *httpclient.ProxyConfig) error {
+	if proxy == nil {
+		return nil
+	}
+
+	switch proxy.Type {
+	case "", httpclient.ProxyTypeDisabled, httpclient.ProxyTypeEnvironment:
+		return nil
+	case httpclient.ProxyTypeURL:
+		parsed, err := url.Parse(proxy.URL)
+		if err != nil {
+			return fmt.Errorf("invalid custom proxy URL: %w", err)
+		}
+		if parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+			return fmt.Errorf("custom proxy URL must be an absolute HTTP or HTTPS URL")
+		}
+
+		return nil
+	default:
+		return fmt.Errorf("unsupported proxy type %q", proxy.Type)
+	}
+}
+
+// ValidateDonationProxy preserves AxonHub's explicit custom proxy mode while
+// preventing a donated channel from using it to reach loopback, private, link-
+// local, metadata, or otherwise non-public addresses.
+func ValidateDonationProxy(ctx context.Context, proxy *httpclient.ProxyConfig) error {
+	if err := validateDonationProxySyntax(proxy); err != nil {
+		return err
+	}
+	if proxy != nil && proxy.Type == httpclient.ProxyTypeURL {
+		if err := httpclient.ValidatePublicProxyURL(ctx, proxy.URL); err != nil {
+			return fmt.Errorf("custom proxy URL: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func validateDonationRuntimeConfiguration(
+	typ channel.Type,
+	credentials *objects.ChannelCredentials,
+	settings *objects.ChannelSettings,
+) error {
+	if typ == channel.TypeAnthropicGcp && credentials != nil {
+		if err := validateDonationGCPCredentials(credentials); err != nil {
+			return err
+		}
+	}
+
+	if settings != nil && settings.Proxy != nil {
+		if err := validateDonationProxySyntax(settings.Proxy); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func ValidateDonationChannelConfiguration(
+	ctx context.Context,
+	typ channel.Type,
+	baseURL *string,
+	credentials *objects.ChannelCredentials,
+	settings *objects.ChannelSettings,
+	endpoints []objects.ChannelEndpoint,
+) error {
+	if typ == channel.TypeOpenaiFake || typ == channel.TypeAnthropicFake {
+		return fmt.Errorf("test-only channel type %q can not be donated", typ)
+	}
+
+	if baseURL != nil && *baseURL != "" {
+		if err := ValidateDonationURL(ctx, *baseURL); err != nil {
+			return fmt.Errorf("base URL: %w", err)
+		}
+	}
+
+	// Fetch-models probes do not carry a full ChannelCredentials object. Every
+	// persistence/runtime path passes it, so nil means "not consumed here" rather
+	// than an incomplete GCP channel configuration.
+	if err := validateDonationRuntimeConfiguration(typ, credentials, settings); err != nil {
+		return err
+	}
+	if settings != nil && settings.Proxy != nil {
+		if err := ValidateDonationProxy(ctx, settings.Proxy); err != nil {
+			return err
+		}
+	}
+
+	for i, endpoint := range endpoints {
+		if endpoint.BaseURL == "" {
+			continue
+		}
+
+		if err := ValidateDonationURL(ctx, endpoint.BaseURL); err != nil {
+			return fmt.Errorf("endpoint[%d] base URL: %w", i, err)
+		}
+	}
+
+	return nil
+}
 
 // SupportedAPIFormats lists the API formats that are recognized as valid endpoint api_format values.
 var SupportedAPIFormats = map[string]struct{}{

@@ -20,4 +20,6 @@ var (
 	ErrSystemNotInitialized   = errors.New("system not initialized")
 	ErrOIDCLoginRequired      = errors.New("OIDC user without password, please login via OIDC or set a password")
 	ErrProjectNotFound        = errors.New("project not found")
+	ErrCampusEmailRequired    = errors.New("registration requires a UCAS email address")
+	ErrEmailAlreadyRegistered = errors.New("email is already registered")
 )

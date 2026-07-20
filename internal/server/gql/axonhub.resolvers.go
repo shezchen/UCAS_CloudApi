@@ -18,7 +18,6 @@ import (
 	"github.com/looplj/axonhub/internal/ent/request"
 	"github.com/looplj/axonhub/internal/ent/user"
 	"github.com/looplj/axonhub/internal/objects"
-	"github.com/looplj/axonhub/internal/scopes"
 	"github.com/looplj/axonhub/internal/server/biz"
 	"github.com/looplj/axonhub/llm/httpclient"
 	"github.com/samber/lo"
@@ -49,8 +48,7 @@ func (r *channelResolver) AllModelEntries(ctx context.Context, obj *ent.Channel)
 
 // Credentials is the resolver for the credentials field.
 func (r *channelResolver) Credentials(ctx context.Context, obj *ent.Channel) (*objects.ChannelCredentials, error) {
-	hasScope := scopes.UserHasScope(ctx, scopes.ScopeWriteChannels)
-	if !hasScope {
+	if !canReadChannelSecrets(ctx, obj) {
 		return nil, nil
 	}
 
@@ -72,8 +70,7 @@ func (r *channelResolver) Credentials(ctx context.Context, obj *ent.Channel) (*o
 
 // DisabledAPIKeys is the resolver for the disabledAPIKeys field.
 func (r *channelResolver) DisabledAPIKeys(ctx context.Context, obj *ent.Channel) ([]*objects.DisabledAPIKey, error) {
-	hasScope := scopes.UserHasScope(ctx, scopes.ScopeWriteChannels)
-	if !hasScope {
+	if !canReadChannelSecrets(ctx, obj) {
 		return nil, nil
 	}
 
@@ -250,6 +247,11 @@ func (r *mutationResolver) BulkDeleteChannels(ctx context.Context, ids []*object
 func (r *mutationResolver) TestChannel(ctx context.Context, input TestChannelInput) (*TestChannelPayload, error) {
 	// Set test source context for test channel requests
 	ctx = contexts.WithSource(ctx, request.SourceTest)
+	if currentUser, ok := contexts.GetUser(ctx); ok && currentUser != nil && !currentUser.IsOwner {
+		if err := biz.ValidateDonationProxy(ctx, input.Proxy); err != nil {
+			return nil, fmt.Errorf("invalid donated channel test proxy: %w", err)
+		}
+	}
 
 	result, err := r.TestChannelOrchestrator.TestChannel(ctx, input.ChannelID, input.ModelID, input.Proxy)
 	if err != nil {

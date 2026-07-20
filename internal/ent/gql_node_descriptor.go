@@ -248,8 +248,8 @@ func (_m *Channel) Node(ctx context.Context) (node *Node, err error) {
 	node = &Node{
 		ID:     _m.ID,
 		Type:   "Channel",
-		Fields: make([]*Field, 20),
-		Edges:  make([]*Edge, 6),
+		Fields: make([]*Field, 22),
+		Edges:  make([]*Edge, 7),
 	}
 	var buf []byte
 	if buf, err = json.Marshal(_m.CreatedAt); err != nil {
@@ -300,10 +300,26 @@ func (_m *Channel) Node(ctx context.Context) (node *Node, err error) {
 		Name:  "status",
 		Value: string(buf),
 	}
-	if buf, err = json.Marshal(_m.Credentials); err != nil {
+	if buf, err = json.Marshal(_m.UserID); err != nil {
 		return nil, err
 	}
 	node.Fields[6] = &Field{
+		Type:  "int",
+		Name:  "user_id",
+		Value: string(buf),
+	}
+	if buf, err = json.Marshal(_m.ExpiresAt); err != nil {
+		return nil, err
+	}
+	node.Fields[7] = &Field{
+		Type:  "time.Time",
+		Name:  "expires_at",
+		Value: string(buf),
+	}
+	if buf, err = json.Marshal(_m.Credentials); err != nil {
+		return nil, err
+	}
+	node.Fields[8] = &Field{
 		Type:  "objects.ChannelCredentials",
 		Name:  "credentials",
 		Value: string(buf),
@@ -311,7 +327,7 @@ func (_m *Channel) Node(ctx context.Context) (node *Node, err error) {
 	if buf, err = json.Marshal(_m.DisabledAPIKeys); err != nil {
 		return nil, err
 	}
-	node.Fields[7] = &Field{
+	node.Fields[9] = &Field{
 		Type:  "[]objects.DisabledAPIKey",
 		Name:  "disabled_api_keys",
 		Value: string(buf),
@@ -319,7 +335,7 @@ func (_m *Channel) Node(ctx context.Context) (node *Node, err error) {
 	if buf, err = json.Marshal(_m.SupportedModels); err != nil {
 		return nil, err
 	}
-	node.Fields[8] = &Field{
+	node.Fields[10] = &Field{
 		Type:  "[]string",
 		Name:  "supported_models",
 		Value: string(buf),
@@ -327,7 +343,7 @@ func (_m *Channel) Node(ctx context.Context) (node *Node, err error) {
 	if buf, err = json.Marshal(_m.ManualModels); err != nil {
 		return nil, err
 	}
-	node.Fields[9] = &Field{
+	node.Fields[11] = &Field{
 		Type:  "[]string",
 		Name:  "manual_models",
 		Value: string(buf),
@@ -335,7 +351,7 @@ func (_m *Channel) Node(ctx context.Context) (node *Node, err error) {
 	if buf, err = json.Marshal(_m.AutoSyncSupportedModels); err != nil {
 		return nil, err
 	}
-	node.Fields[10] = &Field{
+	node.Fields[12] = &Field{
 		Type:  "bool",
 		Name:  "auto_sync_supported_models",
 		Value: string(buf),
@@ -343,7 +359,7 @@ func (_m *Channel) Node(ctx context.Context) (node *Node, err error) {
 	if buf, err = json.Marshal(_m.AutoSyncModelPattern); err != nil {
 		return nil, err
 	}
-	node.Fields[11] = &Field{
+	node.Fields[13] = &Field{
 		Type:  "string",
 		Name:  "auto_sync_model_pattern",
 		Value: string(buf),
@@ -351,7 +367,7 @@ func (_m *Channel) Node(ctx context.Context) (node *Node, err error) {
 	if buf, err = json.Marshal(_m.Tags); err != nil {
 		return nil, err
 	}
-	node.Fields[12] = &Field{
+	node.Fields[14] = &Field{
 		Type:  "[]string",
 		Name:  "tags",
 		Value: string(buf),
@@ -359,7 +375,7 @@ func (_m *Channel) Node(ctx context.Context) (node *Node, err error) {
 	if buf, err = json.Marshal(_m.DefaultTestModel); err != nil {
 		return nil, err
 	}
-	node.Fields[13] = &Field{
+	node.Fields[15] = &Field{
 		Type:  "string",
 		Name:  "default_test_model",
 		Value: string(buf),
@@ -367,7 +383,7 @@ func (_m *Channel) Node(ctx context.Context) (node *Node, err error) {
 	if buf, err = json.Marshal(_m.Policies); err != nil {
 		return nil, err
 	}
-	node.Fields[14] = &Field{
+	node.Fields[16] = &Field{
 		Type:  "objects.ChannelPolicies",
 		Name:  "policies",
 		Value: string(buf),
@@ -375,7 +391,7 @@ func (_m *Channel) Node(ctx context.Context) (node *Node, err error) {
 	if buf, err = json.Marshal(_m.Settings); err != nil {
 		return nil, err
 	}
-	node.Fields[15] = &Field{
+	node.Fields[17] = &Field{
 		Type:  "*objects.ChannelSettings",
 		Name:  "settings",
 		Value: string(buf),
@@ -383,7 +399,7 @@ func (_m *Channel) Node(ctx context.Context) (node *Node, err error) {
 	if buf, err = json.Marshal(_m.OrderingWeight); err != nil {
 		return nil, err
 	}
-	node.Fields[16] = &Field{
+	node.Fields[18] = &Field{
 		Type:  "int",
 		Name:  "ordering_weight",
 		Value: string(buf),
@@ -391,7 +407,7 @@ func (_m *Channel) Node(ctx context.Context) (node *Node, err error) {
 	if buf, err = json.Marshal(_m.ErrorMessage); err != nil {
 		return nil, err
 	}
-	node.Fields[17] = &Field{
+	node.Fields[19] = &Field{
 		Type:  "string",
 		Name:  "error_message",
 		Value: string(buf),
@@ -399,7 +415,7 @@ func (_m *Channel) Node(ctx context.Context) (node *Node, err error) {
 	if buf, err = json.Marshal(_m.Remark); err != nil {
 		return nil, err
 	}
-	node.Fields[18] = &Field{
+	node.Fields[20] = &Field{
 		Type:  "string",
 		Name:  "remark",
 		Value: string(buf),
@@ -407,68 +423,78 @@ func (_m *Channel) Node(ctx context.Context) (node *Node, err error) {
 	if buf, err = json.Marshal(_m.Endpoints); err != nil {
 		return nil, err
 	}
-	node.Fields[19] = &Field{
+	node.Fields[21] = &Field{
 		Type:  "[]objects.ChannelEndpoint",
 		Name:  "endpoints",
 		Value: string(buf),
 	}
 	node.Edges[0] = &Edge{
-		Type: "Request",
-		Name: "requests",
+		Type: "User",
+		Name: "user",
 	}
-	err = _m.QueryRequests().
-		Select(request.FieldID).
+	err = _m.QueryUser().
+		Select(user.FieldID).
 		Scan(ctx, &node.Edges[0].IDs)
 	if err != nil {
 		return nil, err
 	}
 	node.Edges[1] = &Edge{
-		Type: "RequestExecution",
-		Name: "executions",
+		Type: "Request",
+		Name: "requests",
 	}
-	err = _m.QueryExecutions().
-		Select(requestexecution.FieldID).
+	err = _m.QueryRequests().
+		Select(request.FieldID).
 		Scan(ctx, &node.Edges[1].IDs)
 	if err != nil {
 		return nil, err
 	}
 	node.Edges[2] = &Edge{
-		Type: "UsageLog",
-		Name: "usage_logs",
+		Type: "RequestExecution",
+		Name: "executions",
 	}
-	err = _m.QueryUsageLogs().
-		Select(usagelog.FieldID).
+	err = _m.QueryExecutions().
+		Select(requestexecution.FieldID).
 		Scan(ctx, &node.Edges[2].IDs)
 	if err != nil {
 		return nil, err
 	}
 	node.Edges[3] = &Edge{
-		Type: "ChannelProbe",
-		Name: "channel_probes",
+		Type: "UsageLog",
+		Name: "usage_logs",
 	}
-	err = _m.QueryChannelProbes().
-		Select(channelprobe.FieldID).
+	err = _m.QueryUsageLogs().
+		Select(usagelog.FieldID).
 		Scan(ctx, &node.Edges[3].IDs)
 	if err != nil {
 		return nil, err
 	}
 	node.Edges[4] = &Edge{
-		Type: "ChannelModelPrice",
-		Name: "channel_model_prices",
+		Type: "ChannelProbe",
+		Name: "channel_probes",
 	}
-	err = _m.QueryChannelModelPrices().
-		Select(channelmodelprice.FieldID).
+	err = _m.QueryChannelProbes().
+		Select(channelprobe.FieldID).
 		Scan(ctx, &node.Edges[4].IDs)
 	if err != nil {
 		return nil, err
 	}
 	node.Edges[5] = &Edge{
+		Type: "ChannelModelPrice",
+		Name: "channel_model_prices",
+	}
+	err = _m.QueryChannelModelPrices().
+		Select(channelmodelprice.FieldID).
+		Scan(ctx, &node.Edges[5].IDs)
+	if err != nil {
+		return nil, err
+	}
+	node.Edges[6] = &Edge{
 		Type: "ProviderQuotaStatus",
 		Name: "provider_quota_status",
 	}
 	err = _m.QueryProviderQuotaStatus().
 		Select(providerquotastatus.FieldID).
-		Scan(ctx, &node.Edges[5].IDs)
+		Scan(ctx, &node.Edges[6].IDs)
 	if err != nil {
 		return nil, err
 	}
@@ -2562,8 +2588,8 @@ func (_m *User) Node(ctx context.Context) (node *Node, err error) {
 	node = &Node{
 		ID:     _m.ID,
 		Type:   "User",
-		Fields: make([]*Field, 11),
-		Edges:  make([]*Edge, 7),
+		Fields: make([]*Field, 12),
+		Edges:  make([]*Edge, 8),
 	}
 	var buf []byte
 	if buf, err = json.Marshal(_m.CreatedAt); err != nil {
@@ -2646,10 +2672,18 @@ func (_m *User) Node(ctx context.Context) (node *Node, err error) {
 		Name:  "is_owner",
 		Value: string(buf),
 	}
-	if buf, err = json.Marshal(_m.Scopes); err != nil {
+	if buf, err = json.Marshal(_m.DailyTokenLimit); err != nil {
 		return nil, err
 	}
 	node.Fields[10] = &Field{
+		Type:  "int64",
+		Name:  "daily_token_limit",
+		Value: string(buf),
+	}
+	if buf, err = json.Marshal(_m.Scopes); err != nil {
+		return nil, err
+	}
+	node.Fields[11] = &Field{
 		Type:  "[]string",
 		Name:  "scopes",
 		Value: string(buf),
@@ -2675,52 +2709,62 @@ func (_m *User) Node(ctx context.Context) (node *Node, err error) {
 		return nil, err
 	}
 	node.Edges[2] = &Edge{
-		Type: "Role",
-		Name: "roles",
+		Type: "Channel",
+		Name: "donated_channels",
 	}
-	err = _m.QueryRoles().
-		Select(role.FieldID).
+	err = _m.QueryDonatedChannels().
+		Select(channel.FieldID).
 		Scan(ctx, &node.Edges[2].IDs)
 	if err != nil {
 		return nil, err
 	}
 	node.Edges[3] = &Edge{
-		Type: "ChannelOverrideTemplate",
-		Name: "channel_override_templates",
+		Type: "Role",
+		Name: "roles",
 	}
-	err = _m.QueryChannelOverrideTemplates().
-		Select(channeloverridetemplate.FieldID).
+	err = _m.QueryRoles().
+		Select(role.FieldID).
 		Scan(ctx, &node.Edges[3].IDs)
 	if err != nil {
 		return nil, err
 	}
 	node.Edges[4] = &Edge{
-		Type: "OIDCIdentity",
-		Name: "oidc_identities",
+		Type: "ChannelOverrideTemplate",
+		Name: "channel_override_templates",
 	}
-	err = _m.QueryOidcIdentities().
-		Select(oidcidentity.FieldID).
+	err = _m.QueryChannelOverrideTemplates().
+		Select(channeloverridetemplate.FieldID).
 		Scan(ctx, &node.Edges[4].IDs)
 	if err != nil {
 		return nil, err
 	}
 	node.Edges[5] = &Edge{
-		Type: "UserProject",
-		Name: "project_users",
+		Type: "OIDCIdentity",
+		Name: "oidc_identities",
 	}
-	err = _m.QueryProjectUsers().
-		Select(userproject.FieldID).
+	err = _m.QueryOidcIdentities().
+		Select(oidcidentity.FieldID).
 		Scan(ctx, &node.Edges[5].IDs)
 	if err != nil {
 		return nil, err
 	}
 	node.Edges[6] = &Edge{
+		Type: "UserProject",
+		Name: "project_users",
+	}
+	err = _m.QueryProjectUsers().
+		Select(userproject.FieldID).
+		Scan(ctx, &node.Edges[6].IDs)
+	if err != nil {
+		return nil, err
+	}
+	node.Edges[7] = &Edge{
 		Type: "UserRole",
 		Name: "user_roles",
 	}
 	err = _m.QueryUserRoles().
 		Select(userrole.FieldID).
-		Scan(ctx, &node.Edges[6].IDs)
+		Scan(ctx, &node.Edges[7].IDs)
 	if err != nil {
 		return nil, err
 	}

@@ -14,6 +14,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 
+	"github.com/looplj/axonhub/internal/contexts"
+	"github.com/looplj/axonhub/internal/ent"
 	"github.com/looplj/axonhub/internal/pkg/xcache"
 	"github.com/looplj/axonhub/llm/httpclient"
 )
@@ -226,6 +228,64 @@ func TestCopilotHandlers_StartOAuth_WithProxy(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestCopilotHandlers_StartOAuth_RejectsDonorURLProxy(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	h := NewCopilotHandlers(CopilotHandlersParams{
+		CacheConfig: xcache.Config{Mode: xcache.ModeMemory},
+		HttpClient:  httpclient.NewHttpClient(),
+	})
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		ctx := contexts.WithUser(c.Request.Context(), &ent.User{ID: 41})
+		c.Request = c.Request.WithContext(ctx)
+		c.Next()
+	})
+	router.POST("/admin/copilot/oauth/start", h.StartOAuth)
+
+	reqBody, err := json.Marshal(StartCopilotOAuthRequest{Proxy: &httpclient.ProxyConfig{
+		Type: httpclient.ProxyTypeURL,
+		URL:  "http://127.0.0.1:8080",
+	}})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/admin/copilot/oauth/start", bytes.NewBuffer(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+	require.Contains(t, w.Body.String(), "OAuth proxy is not allowed")
+	require.Contains(t, w.Body.String(), "restricted address")
+}
+
+func TestOAuthHTTPClientForCaller_AllowsDonorPublicURLProxy(t *testing.T) {
+	donorCtx := contexts.WithUser(t.Context(), &ent.User{ID: 41})
+	client, err := oauthHTTPClientForCaller(donorCtx, httpclient.NewHttpClient(), &httpclient.ProxyConfig{
+		Type: httpclient.ProxyTypeURL,
+		URL:  "http://8.8.8.8:8080",
+	})
+	require.NoError(t, err)
+
+	proxyURL, err := client.ProxyFunc()(&http.Request{})
+	require.NoError(t, err)
+	require.Equal(t, "http://8.8.8.8:8080", proxyURL.String())
+}
+
+func TestOAuthHTTPClientForCaller_AllowsOwnerURLProxy(t *testing.T) {
+	ownerCtx := contexts.WithUser(t.Context(), &ent.User{ID: 1, IsOwner: true})
+	client, err := oauthHTTPClientForCaller(ownerCtx, httpclient.NewHttpClient(), &httpclient.ProxyConfig{
+		Type: httpclient.ProxyTypeURL,
+		URL:  "http://127.0.0.1:8080",
+	})
+	require.NoError(t, err)
+
+	proxyURL, err := client.ProxyFunc()(&http.Request{})
+	require.NoError(t, err)
+	require.Equal(t, "http://127.0.0.1:8080", proxyURL.String())
 }
 
 func TestCopilotHandlers_PollOAuth_Success(t *testing.T) {

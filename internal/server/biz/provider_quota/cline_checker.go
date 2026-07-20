@@ -120,10 +120,7 @@ func (c *ClineQuotaChecker) CheckQuota(ctx context.Context, ch *ent.Channel) (Qu
 		return QuotaData{}, fmt.Errorf("channel has no API key")
 	}
 
-	hc := c.httpClient
-	if ch.Settings != nil && ch.Settings.Proxy != nil {
-		hc = c.httpClient.WithProxy(ch.Settings.Proxy)
-	}
+	hc := httpClientForChannel(c.httpClient, ch)
 
 	var me clineEnvelope[clineMeData]
 	if err := c.getJSON(ctx, hc, ch.BaseURL, "/api/v1/users/me", nil, apiKey, &me); err != nil {

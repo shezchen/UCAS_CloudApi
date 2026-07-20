@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/looplj/axonhub/internal/contexts"
+	"github.com/looplj/axonhub/internal/ent"
 	"github.com/looplj/axonhub/internal/server/biz"
 )
 
@@ -65,4 +68,58 @@ func TestWithAPIKeyConfig_AllowsMissingAuthorizationWhenNoAuthAllowed(t *testing
 	}
 }
 
+func TestWithOwnerOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
 
+	tests := []struct {
+		name       string
+		user       *ent.User
+		wantStatus int
+		wantCalled bool
+	}{
+		{
+			name:       "owner allowed",
+			user:       &ent.User{ID: 1, IsOwner: true},
+			wantStatus: http.StatusNoContent,
+			wantCalled: true,
+		},
+		{
+			name:       "non-owner forbidden",
+			user:       &ent.User{ID: 2},
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "missing authenticated user",
+			wantStatus: http.StatusUnauthorized,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			called := false
+			router := gin.New()
+			router.Use(func(c *gin.Context) {
+				if tt.user != nil {
+					ctx := contexts.WithUser(c.Request.Context(), tt.user)
+					c.Request = c.Request.WithContext(ctx)
+				}
+				c.Next()
+			})
+			router.POST("/playground", WithOwnerOnly(), func(c *gin.Context) {
+				called = true
+				c.Status(http.StatusNoContent)
+			})
+
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/playground", nil)
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, req)
+
+			if recorder.Code != tt.wantStatus {
+				t.Fatalf("expected status %d, got %d", tt.wantStatus, recorder.Code)
+			}
+			if called != tt.wantCalled {
+				t.Fatalf("expected handler called=%t, got %t", tt.wantCalled, called)
+			}
+		})
+	}
+}

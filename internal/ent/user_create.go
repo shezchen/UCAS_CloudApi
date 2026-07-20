@@ -12,6 +12,7 @@ import (
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/looplj/axonhub/internal/ent/apikey"
+	"github.com/looplj/axonhub/internal/ent/channel"
 	"github.com/looplj/axonhub/internal/ent/channeloverridetemplate"
 	"github.com/looplj/axonhub/internal/ent/oidcidentity"
 	"github.com/looplj/axonhub/internal/ent/project"
@@ -167,6 +168,20 @@ func (_c *UserCreate) SetNillableIsOwner(v *bool) *UserCreate {
 	return _c
 }
 
+// SetDailyTokenLimit sets the "daily_token_limit" field.
+func (_c *UserCreate) SetDailyTokenLimit(v int64) *UserCreate {
+	_c.mutation.SetDailyTokenLimit(v)
+	return _c
+}
+
+// SetNillableDailyTokenLimit sets the "daily_token_limit" field if the given value is not nil.
+func (_c *UserCreate) SetNillableDailyTokenLimit(v *int64) *UserCreate {
+	if v != nil {
+		_c.SetDailyTokenLimit(*v)
+	}
+	return _c
+}
+
 // SetScopes sets the "scopes" field.
 func (_c *UserCreate) SetScopes(v []string) *UserCreate {
 	_c.mutation.SetScopes(v)
@@ -201,6 +216,21 @@ func (_c *UserCreate) AddAPIKeys(v ...*APIKey) *UserCreate {
 		ids[i] = v[i].ID
 	}
 	return _c.AddAPIKeyIDs(ids...)
+}
+
+// AddDonatedChannelIDs adds the "donated_channels" edge to the Channel entity by IDs.
+func (_c *UserCreate) AddDonatedChannelIDs(ids ...int) *UserCreate {
+	_c.mutation.AddDonatedChannelIDs(ids...)
+	return _c
+}
+
+// AddDonatedChannels adds the "donated_channels" edges to the Channel entity.
+func (_c *UserCreate) AddDonatedChannels(v ...*Channel) *UserCreate {
+	ids := make([]int, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _c.AddDonatedChannelIDs(ids...)
 }
 
 // AddRoleIDs adds the "roles" edge to the Role entity by IDs.
@@ -353,6 +383,10 @@ func (_c *UserCreate) defaults() error {
 		v := user.DefaultIsOwner
 		_c.mutation.SetIsOwner(v)
 	}
+	if _, ok := _c.mutation.DailyTokenLimit(); !ok {
+		v := user.DefaultDailyTokenLimit
+		_c.mutation.SetDailyTokenLimit(v)
+	}
 	if _, ok := _c.mutation.Scopes(); !ok {
 		v := user.DefaultScopes
 		_c.mutation.SetScopes(v)
@@ -390,6 +424,14 @@ func (_c *UserCreate) check() error {
 	}
 	if _, ok := _c.mutation.IsOwner(); !ok {
 		return &ValidationError{Name: "is_owner", err: errors.New(`ent: missing required field "User.is_owner"`)}
+	}
+	if _, ok := _c.mutation.DailyTokenLimit(); !ok {
+		return &ValidationError{Name: "daily_token_limit", err: errors.New(`ent: missing required field "User.daily_token_limit"`)}
+	}
+	if v, ok := _c.mutation.DailyTokenLimit(); ok {
+		if err := user.DailyTokenLimitValidator(v); err != nil {
+			return &ValidationError{Name: "daily_token_limit", err: fmt.Errorf(`ent: validator failed for field "User.daily_token_limit": %w`, err)}
+		}
 	}
 	return nil
 }
@@ -462,6 +504,10 @@ func (_c *UserCreate) createSpec() (*User, *sqlgraph.CreateSpec) {
 		_spec.SetField(user.FieldIsOwner, field.TypeBool, value)
 		_node.IsOwner = value
 	}
+	if value, ok := _c.mutation.DailyTokenLimit(); ok {
+		_spec.SetField(user.FieldDailyTokenLimit, field.TypeInt64, value)
+		_node.DailyTokenLimit = value
+	}
 	if value, ok := _c.mutation.Scopes(); ok {
 		_spec.SetField(user.FieldScopes, field.TypeJSON, value)
 		_node.Scopes = value
@@ -495,6 +541,22 @@ func (_c *UserCreate) createSpec() (*User, *sqlgraph.CreateSpec) {
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(apikey.FieldID, field.TypeInt),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges = append(_spec.Edges, edge)
+	}
+	if nodes := _c.mutation.DonatedChannelsIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.DonatedChannelsTable,
+			Columns: []string{user.DonatedChannelsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(channel.FieldID, field.TypeInt),
 			},
 		}
 		for _, k := range nodes {
@@ -770,6 +832,24 @@ func (u *UserUpsert) UpdateIsOwner() *UserUpsert {
 	return u
 }
 
+// SetDailyTokenLimit sets the "daily_token_limit" field.
+func (u *UserUpsert) SetDailyTokenLimit(v int64) *UserUpsert {
+	u.Set(user.FieldDailyTokenLimit, v)
+	return u
+}
+
+// UpdateDailyTokenLimit sets the "daily_token_limit" field to the value that was provided on create.
+func (u *UserUpsert) UpdateDailyTokenLimit() *UserUpsert {
+	u.SetExcluded(user.FieldDailyTokenLimit)
+	return u
+}
+
+// AddDailyTokenLimit adds v to the "daily_token_limit" field.
+func (u *UserUpsert) AddDailyTokenLimit(v int64) *UserUpsert {
+	u.Add(user.FieldDailyTokenLimit, v)
+	return u
+}
+
 // SetScopes sets the "scopes" field.
 func (u *UserUpsert) SetScopes(v []string) *UserUpsert {
 	u.Set(user.FieldScopes, v)
@@ -984,6 +1064,27 @@ func (u *UserUpsertOne) SetIsOwner(v bool) *UserUpsertOne {
 func (u *UserUpsertOne) UpdateIsOwner() *UserUpsertOne {
 	return u.Update(func(s *UserUpsert) {
 		s.UpdateIsOwner()
+	})
+}
+
+// SetDailyTokenLimit sets the "daily_token_limit" field.
+func (u *UserUpsertOne) SetDailyTokenLimit(v int64) *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.SetDailyTokenLimit(v)
+	})
+}
+
+// AddDailyTokenLimit adds v to the "daily_token_limit" field.
+func (u *UserUpsertOne) AddDailyTokenLimit(v int64) *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.AddDailyTokenLimit(v)
+	})
+}
+
+// UpdateDailyTokenLimit sets the "daily_token_limit" field to the value that was provided on create.
+func (u *UserUpsertOne) UpdateDailyTokenLimit() *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateDailyTokenLimit()
 	})
 }
 
@@ -1370,6 +1471,27 @@ func (u *UserUpsertBulk) SetIsOwner(v bool) *UserUpsertBulk {
 func (u *UserUpsertBulk) UpdateIsOwner() *UserUpsertBulk {
 	return u.Update(func(s *UserUpsert) {
 		s.UpdateIsOwner()
+	})
+}
+
+// SetDailyTokenLimit sets the "daily_token_limit" field.
+func (u *UserUpsertBulk) SetDailyTokenLimit(v int64) *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.SetDailyTokenLimit(v)
+	})
+}
+
+// AddDailyTokenLimit adds v to the "daily_token_limit" field.
+func (u *UserUpsertBulk) AddDailyTokenLimit(v int64) *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.AddDailyTokenLimit(v)
+	})
+}
+
+// UpdateDailyTokenLimit sets the "daily_token_limit" field to the value that was provided on create.
+func (u *UserUpsertBulk) UpdateDailyTokenLimit() *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateDailyTokenLimit()
 	})
 }
 

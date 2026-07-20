@@ -407,6 +407,14 @@ type Channel implements Node {
   baseURL: String
   name: String!
   status: ChannelStatus!
+  """
+  User who donated this channel; null for owner-managed global channels
+  """
+  userID: ID
+  """
+  Donation expiry time; null means the channel does not expire
+  """
+  expiresAt: Time
   supportedModels: [String!]!
   manualModels: [String!]
   autoSyncSupportedModels: Boolean!
@@ -431,6 +439,7 @@ type Channel implements Node {
   Outbound API endpoints for this channel. Each endpoint specifies api_format and optional path. When empty, defaults are derived from channel type.
   """
   endpoints: [ChannelEndpoint!]
+  user: User
   requests(
     """
     Returns the elements in the list that come after the specified cursor.
@@ -1404,6 +1413,28 @@ input ChannelWhereInput {
   statusIn: [ChannelStatus!]
   statusNotIn: [ChannelStatus!]
   """
+  user_id field predicates
+  """
+  userID: ID
+  userIDNEQ: ID
+  userIDIn: [ID!]
+  userIDNotIn: [ID!]
+  userIDIsNil: Boolean
+  userIDNotNil: Boolean
+  """
+  expires_at field predicates
+  """
+  expiresAt: Time
+  expiresAtNEQ: Time
+  expiresAtIn: [Time!]
+  expiresAtNotIn: [Time!]
+  expiresAtGT: Time
+  expiresAtGTE: Time
+  expiresAtLT: Time
+  expiresAtLTE: Time
+  expiresAtIsNil: Boolean
+  expiresAtNotNil: Boolean
+  """
   auto_sync_supported_models field predicates
   """
   autoSyncSupportedModels: Boolean
@@ -1490,6 +1521,11 @@ input ChannelWhereInput {
   remarkEqualFold: String
   remarkContainsFold: String
   """
+  user edge predicates
+  """
+  hasUser: Boolean
+  hasUserWith: [UserWhereInput!]
+  """
   requests edge predicates
   """
   hasRequests: Boolean
@@ -1559,6 +1595,10 @@ input CreateChannelInput {
   type: ChannelType!
   baseURL: String
   name: String!
+  """
+  Donation expiry time; null means the channel does not expire
+  """
+  expiresAt: Time
   credentials: ChannelCredentialsInput!
   supportedModels: [String!]!
   manualModels: [String!]
@@ -1967,6 +2007,10 @@ input CreateUserInput {
   """
   avatar: String
   isOwner: Boolean
+  """
+  Maximum total tokens this user may consume per day
+  """
+  dailyTokenLimit: Int
   """
   User scopes in system level: write_channels, read_channels, add_users, read_users, etc.
   """
@@ -5996,6 +6040,11 @@ input UpdateChannelInput {
   clearBaseURL: Boolean
   name: String
   status: ChannelStatus
+  """
+  Donation expiry time; null means the channel does not expire
+  """
+  expiresAt: Time
+  clearExpiresAt: Boolean
   credentials: ChannelCredentialsInput
   supportedModels: [String!]
   appendSupportedModels: [String!]
@@ -6424,6 +6473,10 @@ input UpdateUserInput {
   avatar: String
   clearAvatar: Boolean
   isOwner: Boolean
+  """
+  Maximum total tokens this user may consume per day
+  """
+  dailyTokenLimit: Int
   """
   User scopes in system level: write_channels, read_channels, add_users, read_users, etc.
   """
@@ -6919,6 +6972,10 @@ type User implements Node {
   avatar: String
   isOwner: Boolean!
   """
+  Maximum total tokens this user may consume per day
+  """
+  dailyTokenLimit: Int!
+  """
   User scopes in system level: write_channels, read_channels, add_users, read_users, etc.
   """
   scopes: [String!]
@@ -6984,6 +7041,37 @@ type User implements Node {
     """
     where: APIKeyWhereInput
   ): APIKeyConnection!
+  donatedChannels(
+    """
+    Returns the elements in the list that come after the specified cursor.
+    """
+    after: Cursor
+
+    """
+    Returns the first _n_ elements from the list.
+    """
+    first: Int
+
+    """
+    Returns the elements in the list that come before the specified cursor.
+    """
+    before: Cursor
+
+    """
+    Returns the last _n_ elements from the list.
+    """
+    last: Int
+
+    """
+    Ordering options for Channels returned from the connection.
+    """
+    orderBy: ChannelOrder
+
+    """
+    Filtering options for Channels returned from the connection.
+    """
+    where: ChannelWhereInput
+  ): ChannelConnection!
   roles(
     """
     Returns the elements in the list that come after the specified cursor.
@@ -7432,6 +7520,17 @@ input UserWhereInput {
   isOwner: Boolean
   isOwnerNEQ: Boolean
   """
+  daily_token_limit field predicates
+  """
+  dailyTokenLimit: Int
+  dailyTokenLimitNEQ: Int
+  dailyTokenLimitIn: [Int!]
+  dailyTokenLimitNotIn: [Int!]
+  dailyTokenLimitGT: Int
+  dailyTokenLimitGTE: Int
+  dailyTokenLimitLT: Int
+  dailyTokenLimitLTE: Int
+  """
   projects edge predicates
   """
   hasProjects: Boolean
@@ -7441,6 +7540,11 @@ input UserWhereInput {
   """
   hasAPIKeys: Boolean
   hasAPIKeysWith: [APIKeyWhereInput!]
+  """
+  donated_channels edge predicates
+  """
+  hasDonatedChannels: Boolean
+  hasDonatedChannelsWith: [ChannelWhereInput!]
   """
   roles edge predicates
   """

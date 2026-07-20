@@ -15,6 +15,7 @@ import (
 
 	"github.com/samber/lo"
 
+	"github.com/looplj/axonhub/internal/contexts"
 	"github.com/looplj/axonhub/internal/ent"
 	"github.com/looplj/axonhub/internal/ent/channel"
 	"github.com/looplj/axonhub/llm/httpclient"
@@ -246,8 +247,9 @@ func (f *ModelFetcher) FetchModels(ctx context.Context, input FetchModelsInput) 
 	}
 
 	var (
-		apiKey      string
-		proxyConfig *httpclient.ProxyConfig
+		apiKey         string
+		proxyConfig    *httpclient.ProxyConfig
+		donatedChannel bool
 	)
 
 	if input.APIKey != nil && *input.APIKey != "" {
@@ -262,6 +264,7 @@ func (f *ModelFetcher) FetchModels(ctx context.Context, input FetchModelsInput) 
 				Error:  lo.ToPtr(fmt.Sprintf("failed to get channel: %v", err)),
 			}, nil
 		}
+		donatedChannel = ch.UserID != nil
 
 		if ch.Credentials.IsOAuth() {
 			if models := f.getDefaultModelsByType(ctx, ch.Type); models != nil {
@@ -358,6 +361,10 @@ func (f *ModelFetcher) FetchModels(ctx context.Context, input FetchModelsInput) 
 	httpClient := f.httpClient
 	if proxyConfig != nil {
 		httpClient = f.httpClient.WithProxy(proxyConfig)
+	}
+	currentUser, hasCurrentUser := contexts.GetUser(ctx)
+	if donatedChannel || hasCurrentUser && currentUser != nil && !currentUser.IsOwner {
+		httpClient = httpClient.WithPublicNetworkOnly()
 	}
 
 	if channelType.IsGemini() {

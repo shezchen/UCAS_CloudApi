@@ -126,6 +126,26 @@ func (_u *ChannelUpdate) SetNillableStatus(v *channel.Status) *ChannelUpdate {
 	return _u
 }
 
+// SetExpiresAt sets the "expires_at" field.
+func (_u *ChannelUpdate) SetExpiresAt(v time.Time) *ChannelUpdate {
+	_u.mutation.SetExpiresAt(v)
+	return _u
+}
+
+// SetNillableExpiresAt sets the "expires_at" field if the given value is not nil.
+func (_u *ChannelUpdate) SetNillableExpiresAt(v *time.Time) *ChannelUpdate {
+	if v != nil {
+		_u.SetExpiresAt(*v)
+	}
+	return _u
+}
+
+// ClearExpiresAt clears the value of the "expires_at" field.
+func (_u *ChannelUpdate) ClearExpiresAt() *ChannelUpdate {
+	_u.mutation.ClearExpiresAt()
+	return _u
+}
+
 // SetCredentials sets the "credentials" field.
 func (_u *ChannelUpdate) SetCredentials(v objects.ChannelCredentials) *ChannelUpdate {
 	_u.mutation.SetCredentials(v)
@@ -674,6 +694,12 @@ func (_u *ChannelUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(channel.FieldStatus, field.TypeEnum, value)
 	}
+	if value, ok := _u.mutation.ExpiresAt(); ok {
+		_spec.SetField(channel.FieldExpiresAt, field.TypeTime, value)
+	}
+	if _u.mutation.ExpiresAtCleared() {
+		_spec.ClearField(channel.FieldExpiresAt, field.TypeTime)
+	}
 	if value, ok := _u.mutation.Credentials(); ok {
 		_spec.SetField(channel.FieldCredentials, field.TypeJSON, value)
 	}
@@ -1133,6 +1159,26 @@ func (_u *ChannelUpdateOne) SetNillableStatus(v *channel.Status) *ChannelUpdateO
 	if v != nil {
 		_u.SetStatus(*v)
 	}
+	return _u
+}
+
+// SetExpiresAt sets the "expires_at" field.
+func (_u *ChannelUpdateOne) SetExpiresAt(v time.Time) *ChannelUpdateOne {
+	_u.mutation.SetExpiresAt(v)
+	return _u
+}
+
+// SetNillableExpiresAt sets the "expires_at" field if the given value is not nil.
+func (_u *ChannelUpdateOne) SetNillableExpiresAt(v *time.Time) *ChannelUpdateOne {
+	if v != nil {
+		_u.SetExpiresAt(*v)
+	}
+	return _u
+}
+
+// ClearExpiresAt clears the value of the "expires_at" field.
+func (_u *ChannelUpdateOne) ClearExpiresAt() *ChannelUpdateOne {
+	_u.mutation.ClearExpiresAt()
 	return _u
 }
 
@@ -1713,6 +1759,12 @@ func (_u *ChannelUpdateOne) sqlSave(ctx context.Context) (_node *Channel, err er
 	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(channel.FieldStatus, field.TypeEnum, value)
+	}
+	if value, ok := _u.mutation.ExpiresAt(); ok {
+		_spec.SetField(channel.FieldExpiresAt, field.TypeTime, value)
+	}
+	if _u.mutation.ExpiresAtCleared() {
+		_spec.ClearField(channel.FieldExpiresAt, field.TypeTime)
 	}
 	if value, ok := _u.mutation.Credentials(); ok {
 		_spec.SetField(channel.FieldCredentials, field.TypeJSON, value)

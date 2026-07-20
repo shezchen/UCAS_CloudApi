@@ -22,22 +22,25 @@ import (
 	"github.com/looplj/axonhub/internal/server/biz"
 	"github.com/looplj/axonhub/internal/server/db"
 	"github.com/looplj/axonhub/internal/server/gc"
+	servermail "github.com/looplj/axonhub/internal/server/mail"
 )
 
 type Config struct {
 	fx.Out `yaml:"-" json:"-"`
 
-	DB               db.Config           `conf:"db" yaml:"db" json:"db"`
-	Log              log.Config          `conf:"log" yaml:"log" json:"log"`
-	APIServer        server.Config       `conf:"server" yaml:"server" json:"server"`
-	Metrics          metrics.Config      `conf:"metrics" yaml:"metrics" json:"metrics"`
-	GC               gc.Config           `conf:"gc" yaml:"gc" json:"gc"`
-	Cache            xcache.Config       `conf:"cache" yaml:"cache" json:"cache"`
-	ProviderQuota    providerQuotaConfig `conf:"provider_quota" yaml:"provider_quota" json:"provider_quota"`
-	OIDC             biz.OIDCConfig      `conf:"oidc" yaml:"oidc" json:"oidc"`
-	DisableSSLVerify bool                `name:"disable_ssl_verify" yaml:"-" json:"-"`
-	AllowNoAuth      bool                `name:"allow_no_auth" yaml:"-" json:"-"`
-	APIKeyPrefix     string              `name:"api_key_prefix" yaml:"-" json:"-"`
+	DB                      db.Config                         `conf:"db" yaml:"db" json:"db"`
+	Log                     log.Config                        `conf:"log" yaml:"log" json:"log"`
+	APIServer               server.Config                     `conf:"server" yaml:"server" json:"server"`
+	Metrics                 metrics.Config                    `conf:"metrics" yaml:"metrics" json:"metrics"`
+	GC                      gc.Config                         `conf:"gc" yaml:"gc" json:"gc"`
+	Cache                   xcache.Config                     `conf:"cache" yaml:"cache" json:"cache"`
+	ProviderQuota           providerQuotaConfig               `conf:"provider_quota" yaml:"provider_quota" json:"provider_quota"`
+	OIDC                    biz.OIDCConfig                    `conf:"oidc" yaml:"oidc" json:"oidc"`
+	CampusEmailVerification biz.CampusEmailVerificationConfig `conf:"campus_email_verification" yaml:"campus_email_verification" json:"campus_email_verification"`
+	SMTP                    servermail.Config                 `conf:"smtp" yaml:"smtp" json:"smtp"`
+	DisableSSLVerify        bool                              `name:"disable_ssl_verify" yaml:"-" json:"-"`
+	AllowNoAuth             bool                              `name:"allow_no_auth" yaml:"-" json:"-"`
+	APIKeyPrefix            string                            `name:"api_key_prefix" yaml:"-" json:"-"`
 }
 
 type providerQuotaConfig struct {
@@ -158,6 +161,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.public_url", "")
 	v.SetDefault("server.name", "AxonHub")
 	v.SetDefault("server.base_path", "")
+	v.SetDefault("server.trusted_proxies", []string{})
 	v.SetDefault("server.request_timeout", "30s")
 	v.SetDefault("server.llm_request_timeout", "600s")
 	v.SetDefault("server.trace.thread_header", "AH-Thread-Id")
@@ -251,6 +255,23 @@ func setDefaults(v *viper.Viper) {
 
 	// OIDC defaults
 	v.SetDefault("oidc.providers", []biz.OIDCProvider{})
+
+	// Campus email verification defaults. SMTP stays unavailable until the
+	// operator supplies a host and sender address.
+	v.SetDefault("campus_email_verification.code_ttl", "10m")
+	v.SetDefault("campus_email_verification.resend_cooldown", "1m")
+	v.SetDefault("campus_email_verification.email_hourly_limit", 3)
+	v.SetDefault("campus_email_verification.source_hourly_limit", 20)
+	v.SetDefault("campus_email_verification.global_hourly_limit", 200)
+	v.SetDefault("campus_email_verification.max_attempts", 5)
+	v.SetDefault("smtp.host", "")
+	v.SetDefault("smtp.port", 587)
+	v.SetDefault("smtp.username", "")
+	v.SetDefault("smtp.password", "")
+	v.SetDefault("smtp.from", "")
+	v.SetDefault("smtp.sender_name", "AxonHub 校内共享")
+	v.SetDefault("smtp.tls_mode", servermail.TLSModeSTARTTLS)
+	v.SetDefault("smtp.timeout", "10s")
 }
 
 // parseLogLevel converts a string log level to zapcore.Level.

@@ -10920,6 +10920,21 @@ type UserWhereInput struct {
 	PasswordEqualFold    *string  `json:"passwordEqualFold,omitempty"`
 	PasswordContainsFold *string  `json:"passwordContainsFold,omitempty"`
 
+	// "nickname" field predicates.
+	Nickname             *string  `json:"nickname,omitempty"`
+	NicknameNEQ          *string  `json:"nicknameNEQ,omitempty"`
+	NicknameIn           []string `json:"nicknameIn,omitempty"`
+	NicknameNotIn        []string `json:"nicknameNotIn,omitempty"`
+	NicknameGT           *string  `json:"nicknameGT,omitempty"`
+	NicknameGTE          *string  `json:"nicknameGTE,omitempty"`
+	NicknameLT           *string  `json:"nicknameLT,omitempty"`
+	NicknameLTE          *string  `json:"nicknameLTE,omitempty"`
+	NicknameContains     *string  `json:"nicknameContains,omitempty"`
+	NicknameHasPrefix    *string  `json:"nicknameHasPrefix,omitempty"`
+	NicknameHasSuffix    *string  `json:"nicknameHasSuffix,omitempty"`
+	NicknameEqualFold    *string  `json:"nicknameEqualFold,omitempty"`
+	NicknameContainsFold *string  `json:"nicknameContainsFold,omitempty"`
+
 	// "first_name" field predicates.
 	FirstName             *string  `json:"firstName,omitempty"`
 	FirstNameNEQ          *string  `json:"firstNameNEQ,omitempty"`
@@ -11285,6 +11300,45 @@ func (i *UserWhereInput) P() (predicate.User, error) {
 	}
 	if i.PasswordContainsFold != nil {
 		predicates = append(predicates, user.PasswordContainsFold(*i.PasswordContainsFold))
+	}
+	if i.Nickname != nil {
+		predicates = append(predicates, user.NicknameEQ(*i.Nickname))
+	}
+	if i.NicknameNEQ != nil {
+		predicates = append(predicates, user.NicknameNEQ(*i.NicknameNEQ))
+	}
+	if len(i.NicknameIn) > 0 {
+		predicates = append(predicates, user.NicknameIn(i.NicknameIn...))
+	}
+	if len(i.NicknameNotIn) > 0 {
+		predicates = append(predicates, user.NicknameNotIn(i.NicknameNotIn...))
+	}
+	if i.NicknameGT != nil {
+		predicates = append(predicates, user.NicknameGT(*i.NicknameGT))
+	}
+	if i.NicknameGTE != nil {
+		predicates = append(predicates, user.NicknameGTE(*i.NicknameGTE))
+	}
+	if i.NicknameLT != nil {
+		predicates = append(predicates, user.NicknameLT(*i.NicknameLT))
+	}
+	if i.NicknameLTE != nil {
+		predicates = append(predicates, user.NicknameLTE(*i.NicknameLTE))
+	}
+	if i.NicknameContains != nil {
+		predicates = append(predicates, user.NicknameContains(*i.NicknameContains))
+	}
+	if i.NicknameHasPrefix != nil {
+		predicates = append(predicates, user.NicknameHasPrefix(*i.NicknameHasPrefix))
+	}
+	if i.NicknameHasSuffix != nil {
+		predicates = append(predicates, user.NicknameHasSuffix(*i.NicknameHasSuffix))
+	}
+	if i.NicknameEqualFold != nil {
+		predicates = append(predicates, user.NicknameEqualFold(*i.NicknameEqualFold))
+	}
+	if i.NicknameContainsFold != nil {
+		predicates = append(predicates, user.NicknameContainsFold(*i.NicknameContainsFold))
 	}
 	if i.FirstName != nil {
 		predicates = append(predicates, user.FirstNameEQ(*i.FirstName))

@@ -40,6 +40,8 @@ func (User) Fields() []ent.Field {
 		field.Enum("status").Values("activated", "deactivated").Default("activated"),
 		field.String("prefer_language").Default("en").Comment("用户偏好语言"),
 		field.String("password").Sensitive(),
+		field.String("nickname").Default("").MaxLen(24).
+			Comment("Voluntary public nickname; never derived from OIDC profile names"),
 		field.String("first_name").Default(""),
 		field.String("last_name").Default(""),
 		field.String("avatar").Optional().Comment("用户头像URL").SchemaType(

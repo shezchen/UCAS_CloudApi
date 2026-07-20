@@ -100,6 +100,12 @@ func TestResolveUser_AccountFirstAndMultipleOIDC(t *testing.T) {
 	p4 := &oidcProvider{config: OIDCProvider{ID: "external", Name: "external", JITEnabled: true}}
 	_, err = svc.resolveUser(ctx, p4, "sub-4", "outsider@example.com", true, "", "", "", "", nil)
 	require.ErrorIs(t, err, ErrCampusEmailRequired)
+
+	// Provider configuration cannot create a new campus account from an
+	// unverified email claim.
+	p5 := &oidcProvider{config: OIDCProvider{ID: "unverified", Name: "unverified", JITEnabled: true}}
+	_, err = svc.resolveUser(ctx, p5, "sub-5", "student@mails.ucas.ac.cn", false, "", "", "", "", nil)
+	require.ErrorContains(t, err, "email not verified")
 }
 
 func TestResolveUser_CascadeDelete(t *testing.T) {

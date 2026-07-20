@@ -303,6 +303,30 @@ func (f DataStorageMutationRuleFunc) EvalMutation(ctx context.Context, m ent.Mut
 	return Denyf("ent/privacy: unexpected mutation type %T, expect *ent.DataStorageMutation", m)
 }
 
+// The EmailVerificationChallengeQueryRuleFunc type is an adapter to allow the use of ordinary
+// functions as a query rule.
+type EmailVerificationChallengeQueryRuleFunc func(context.Context, *ent.EmailVerificationChallengeQuery) error
+
+// EvalQuery return f(ctx, q).
+func (f EmailVerificationChallengeQueryRuleFunc) EvalQuery(ctx context.Context, q ent.Query) error {
+	if q, ok := q.(*ent.EmailVerificationChallengeQuery); ok {
+		return f(ctx, q)
+	}
+	return Denyf("ent/privacy: unexpected query type %T, expect *ent.EmailVerificationChallengeQuery", q)
+}
+
+// The EmailVerificationChallengeMutationRuleFunc type is an adapter to allow the use of ordinary
+// functions as a mutation rule.
+type EmailVerificationChallengeMutationRuleFunc func(context.Context, *ent.EmailVerificationChallengeMutation) error
+
+// EvalMutation calls f(ctx, m).
+func (f EmailVerificationChallengeMutationRuleFunc) EvalMutation(ctx context.Context, m ent.Mutation) error {
+	if m, ok := m.(*ent.EmailVerificationChallengeMutation); ok {
+		return f(ctx, m)
+	}
+	return Denyf("ent/privacy: unexpected mutation type %T, expect *ent.EmailVerificationChallengeMutation", m)
+}
+
 // The ModelQueryRuleFunc type is an adapter to allow the use of ordinary
 // functions as a query rule.
 type ModelQueryRuleFunc func(context.Context, *ent.ModelQuery) error
@@ -738,6 +762,8 @@ func queryFilter(q ent.Query) (Filter, error) {
 		return q.Filter(), nil
 	case *ent.DataStorageQuery:
 		return q.Filter(), nil
+	case *ent.EmailVerificationChallengeQuery:
+		return q.Filter(), nil
 	case *ent.ModelQuery:
 		return q.Filter(), nil
 	case *ent.OIDCIdentityQuery:
@@ -792,6 +818,8 @@ func mutationFilter(m ent.Mutation) (Filter, error) {
 	case *ent.ChannelProbeMutation:
 		return m.Filter(), nil
 	case *ent.DataStorageMutation:
+		return m.Filter(), nil
+	case *ent.EmailVerificationChallengeMutation:
 		return m.Filter(), nil
 	case *ent.ModelMutation:
 		return m.Filter(), nil

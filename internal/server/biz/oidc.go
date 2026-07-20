@@ -51,17 +51,16 @@ type ProviderInfo struct {
 }
 
 type OIDCProvider struct {
-	ID                   string   `conf:"id" yaml:"id" json:"id"`
-	Name                 string   `conf:"name" yaml:"name" json:"name"`
-	DisplayName          string   `conf:"display_name" yaml:"display_name" json:"display_name"`
-	IssuerURL            string   `conf:"issuer_url" yaml:"issuer_url" json:"issuer_url"`
-	ClientID             string   `conf:"client_id" yaml:"client_id" json:"client_id"`
-	ClientSecret         string   `conf:"client_secret" yaml:"client_secret" json:"client_secret"`
-	ExtraScopes          []string `conf:"extra_scopes" yaml:"extra_scopes" json:"extra_scopes"`
-	JITEnabled           bool     `conf:"jit_enabled" yaml:"jit_enabled" json:"jit_enabled"`
-	AutoLinkByEmail      bool     `conf:"auto_link_by_email" yaml:"auto_link_by_email" json:"auto_link_by_email"`
-	RequireEmailVerified bool     `conf:"require_email_verified" yaml:"require_email_verified" json:"require_email_verified"`
-	EnablePKCE           bool     `conf:"enable_pkce" yaml:"enable_pkce" json:"enable_pkce"`
+	ID              string   `conf:"id" yaml:"id" json:"id"`
+	Name            string   `conf:"name" yaml:"name" json:"name"`
+	DisplayName     string   `conf:"display_name" yaml:"display_name" json:"display_name"`
+	IssuerURL       string   `conf:"issuer_url" yaml:"issuer_url" json:"issuer_url"`
+	ClientID        string   `conf:"client_id" yaml:"client_id" json:"client_id"`
+	ClientSecret    string   `conf:"client_secret" yaml:"client_secret" json:"client_secret"`
+	ExtraScopes     []string `conf:"extra_scopes" yaml:"extra_scopes" json:"extra_scopes"`
+	JITEnabled      bool     `conf:"jit_enabled" yaml:"jit_enabled" json:"jit_enabled"`
+	AutoLinkByEmail bool     `conf:"auto_link_by_email" yaml:"auto_link_by_email" json:"auto_link_by_email"`
+	EnablePKCE      bool     `conf:"enable_pkce" yaml:"enable_pkce" json:"enable_pkce"`
 	// UI customization
 	IconURL      string `conf:"icon_url" yaml:"icon_url" json:"icon_url"`
 	ButtonColor  string `conf:"button_color" yaml:"button_color" json:"button_color"`
@@ -992,8 +991,10 @@ func (s *OIDCService) resolveUser(ctx context.Context, p *oidcProvider, subject,
 		return nil, fmt.Errorf("account not found and JIT provisioning is disabled")
 	}
 
-	// Check if email verification is required for new accounts
-	if p.config.RequireEmailVerified && !emailVerified {
+	// New campus accounts must always arrive with a provider-verified email.
+	// Provider configuration may be more permissive for existing linked users,
+	// but it cannot bypass the UCAS registration proof for JIT provisioning.
+	if !emailVerified {
 		return nil, fmt.Errorf("email not verified")
 	}
 

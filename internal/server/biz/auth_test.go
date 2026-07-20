@@ -2,7 +2,9 @@ package biz
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,12 +16,14 @@ import (
 	"github.com/looplj/axonhub/internal/authz"
 	"github.com/looplj/axonhub/internal/ent"
 	"github.com/looplj/axonhub/internal/ent/apikey"
+	"github.com/looplj/axonhub/internal/ent/emailverificationchallenge"
 	"github.com/looplj/axonhub/internal/ent/enttest"
 	"github.com/looplj/axonhub/internal/ent/project"
 	"github.com/looplj/axonhub/internal/ent/user"
 	"github.com/looplj/axonhub/internal/ent/userproject"
 	"github.com/looplj/axonhub/internal/pkg/xcache"
 	"github.com/looplj/axonhub/internal/pkg/xredis"
+	servermail "github.com/looplj/axonhub/internal/server/mail"
 )
 
 func TestHashPassword(t *testing.T) {
@@ -128,7 +132,79 @@ func setupTestAuthService(t *testing.T, cacheConfig xcache.Config) (*AuthService
 	return authService, client, cleanup
 }
 
-func setupCampusRegistrationAuthService(t *testing.T) (*AuthService, *ent.Client, context.Context) {
+type capturedVerificationMessage struct {
+	to   string
+	code string
+	ttl  time.Duration
+}
+
+type capturingVerificationSender struct {
+	mu       sync.Mutex
+	messages []capturedVerificationMessage
+	sendErr  error
+}
+
+var _ servermail.VerificationSender = (*capturingVerificationSender)(nil)
+
+func (s *capturingVerificationSender) SendVerificationCode(_ context.Context, to, code string, ttl time.Duration) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.sendErr != nil {
+		return s.sendErr
+	}
+	s.messages = append(s.messages, capturedVerificationMessage{to: to, code: code, ttl: ttl})
+
+	return nil
+}
+
+func (s *capturingVerificationSender) latestCode(t *testing.T, email string) string {
+	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for i := len(s.messages) - 1; i >= 0; i-- {
+		if s.messages[i].to == email {
+			return s.messages[i].code
+		}
+	}
+	t.Fatalf("no verification message captured for requested email")
+
+	return ""
+}
+
+func (s *capturingVerificationSender) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return len(s.messages)
+}
+
+func codeDifferentFrom(code string) string {
+	if code == "000000" {
+		return "000001"
+	}
+
+	return "000000"
+}
+
+type mutableAuthClock struct {
+	now time.Time
+}
+
+func (c *mutableAuthClock) Now() time.Time {
+	return c.now
+}
+
+type campusRegistrationFixture struct {
+	auth     *AuthService
+	client   *ent.Client
+	setupCtx context.Context
+	sender   *capturingVerificationSender
+	clock    *mutableAuthClock
+}
+
+func setupCampusRegistrationAuthService(t *testing.T, config CampusEmailVerificationConfig) *campusRegistrationFixture {
 	t.Helper()
 
 	client := setupTestDB(t)
@@ -141,31 +217,54 @@ func setupCampusRegistrationAuthService(t *testing.T) (*AuthService, *ent.Client
 		CacheConfig: cacheConfig,
 		Ent:         client,
 	})
+	sender := &capturingVerificationSender{}
 	authService := NewAuthService(AuthServiceParams{
-		SystemService: systemService,
-		UserService:   userService,
-		Ent:           client,
+		SystemService:           systemService,
+		UserService:             userService,
+		Ent:                     client,
+		EmailVerificationConfig: config,
+		VerificationSender:      sender,
 	})
 	setupCtx := ent.NewContext(authz.WithTestBypass(t.Context()), client)
+	secretKey, err := GenerateSecretKey()
+	require.NoError(t, err)
+	require.NoError(t, systemService.SetSecretKey(setupCtx, secretKey))
 
-	return authService, client, setupCtx
+	clock := &mutableAuthClock{now: time.Now().UTC()}
+	authService.now = clock.Now
+
+	return &campusRegistrationFixture{
+		auth:     authService,
+		client:   client,
+		setupCtx: setupCtx,
+		sender:   sender,
+		clock:    clock,
+	}
 }
 
-func TestAuthService_RegisterCampusUser_AllUCASDomains(t *testing.T) {
-	authService, client, setupCtx := setupCampusRegistrationAuthService(t)
-	defer client.Close()
+func createCampusRegistrationProject(t *testing.T, fixture *campusRegistrationFixture) *ent.Project {
+	t.Helper()
 
-	archivedProject, err := client.Project.Create().
-		SetName("Archived").
-		SetStatus(project.StatusArchived).
-		Save(setupCtx)
-	require.NoError(t, err)
-
-	defaultProject, err := client.Project.Create().
+	created, err := fixture.client.Project.Create().
 		SetName("Campus Sharing").
 		SetStatus(project.StatusActive).
-		Save(setupCtx)
+		Save(fixture.setupCtx)
 	require.NoError(t, err)
+
+	return created
+}
+
+func TestAuthService_CampusEmailVerification_AllUCASDomainsAndNickname(t *testing.T) {
+	fixture := setupCampusRegistrationAuthService(t, CampusEmailVerificationConfig{})
+	defer fixture.client.Close()
+
+	archivedProject, err := fixture.client.Project.Create().
+		SetName("Archived").
+		SetStatus(project.StatusArchived).
+		Save(fixture.setupCtx)
+	require.NoError(t, err)
+
+	defaultProject := createCampusRegistrationProject(t, fixture)
 	require.Greater(t, defaultProject.ID, archivedProject.ID)
 
 	testCases := []struct {
@@ -181,16 +280,21 @@ func TestAuthService_RegisterCampusUser_AllUCASDomains(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			created, err := authService.RegisterCampusUser(t.Context(), tc.email, "password-123")
+			err := fixture.auth.RequestCampusEmailVerification(t.Context(), tc.email, "198.51.100.10")
+			require.NoError(t, err)
+			code := fixture.sender.latestCode(t, tc.normalizedEmail)
+
+			created, err := fixture.auth.RegisterCampusUser(t.Context(), tc.email, "password-123", "  星河同学  ", code)
 			require.NoError(t, err)
 			require.Equal(t, tc.normalizedEmail, created.Email)
+			require.Equal(t, "星河同学", created.Nickname)
 			require.False(t, created.IsOwner)
 			require.Equal(t, int64(200_000_000), created.DailyTokenLimit)
 			require.Empty(t, created.Scopes)
 
-			membership, err := client.UserProject.Query().
+			membership, err := fixture.client.UserProject.Query().
 				Where(userproject.UserIDEQ(created.ID)).
-				Only(setupCtx)
+				Only(fixture.setupCtx)
 			require.NoError(t, err)
 			require.Equal(t, defaultProject.ID, membership.ProjectID)
 			require.False(t, membership.IsOwner)
@@ -199,12 +303,201 @@ func TestAuthService_RegisterCampusUser_AllUCASDomains(t *testing.T) {
 	}
 }
 
-func TestAuthService_RegisterCampusUser_RejectsNonUCASDomains(t *testing.T) {
-	authService, client, setupCtx := setupCampusRegistrationAuthService(t)
-	defer client.Close()
+func TestAuthService_CampusEmailVerification_DoesNotPersistPlaintextSecrets(t *testing.T) {
+	fixture := setupCampusRegistrationAuthService(t, CampusEmailVerificationConfig{})
+	defer fixture.client.Close()
 
-	_, err := client.Project.Create().SetName("Campus Sharing").Save(setupCtx)
+	email := "digest@mails.ucas.ac.cn"
+	source := "203.0.113.42"
+	require.NoError(t, fixture.auth.RequestCampusEmailVerification(t.Context(), email, source))
+	code := fixture.sender.latestCode(t, email)
+
+	challenge, err := fixture.client.EmailVerificationChallenge.Query().
+		Where(emailverificationchallenge.EmailEQ(email)).
+		Only(fixture.setupCtx)
 	require.NoError(t, err)
+	require.NotEqual(t, code, challenge.CodeDigest)
+	require.NotEqual(t, source, challenge.SourceHash)
+	require.Len(t, challenge.CodeDigest, 64)
+	require.Len(t, challenge.SourceHash, 64)
+}
+
+func TestAuthService_RegisterCampusUser_RejectsMissingWrongExpiredAndReusedCodes(t *testing.T) {
+	t.Run("not requested", func(t *testing.T) {
+		fixture := setupCampusRegistrationAuthService(t, CampusEmailVerificationConfig{})
+		defer fixture.client.Close()
+		createCampusRegistrationProject(t, fixture)
+
+		created, err := fixture.auth.RegisterCampusUser(t.Context(), "unsent@mails.ucas.ac.cn", "password-123", "无邮件同学", "000000")
+		require.ErrorIs(t, err, ErrVerificationInvalid)
+		require.Nil(t, created)
+		require.Equal(t, 0, fixture.sender.count())
+	})
+
+	t.Run("wrong code records attempt", func(t *testing.T) {
+		fixture := setupCampusRegistrationAuthService(t, CampusEmailVerificationConfig{})
+		defer fixture.client.Close()
+		createCampusRegistrationProject(t, fixture)
+
+		email := "wrong@mails.ucas.ac.cn"
+		require.NoError(t, fixture.auth.RequestCampusEmailVerification(t.Context(), email, "198.51.100.11"))
+		correctCode := fixture.sender.latestCode(t, email)
+		_, err := fixture.auth.RegisterCampusUser(t.Context(), email, "password-123", "错误码同学", codeDifferentFrom(correctCode))
+		require.ErrorIs(t, err, ErrVerificationInvalid)
+
+		challenge, queryErr := fixture.client.EmailVerificationChallenge.Query().
+			Where(emailverificationchallenge.EmailEQ(email)).
+			Only(fixture.setupCtx)
+		require.NoError(t, queryErr)
+		require.Equal(t, 1, challenge.Attempts)
+	})
+
+	t.Run("expired", func(t *testing.T) {
+		fixture := setupCampusRegistrationAuthService(t, CampusEmailVerificationConfig{CodeTTL: time.Minute})
+		defer fixture.client.Close()
+		createCampusRegistrationProject(t, fixture)
+
+		email := "expired@mails.ucas.ac.cn"
+		require.NoError(t, fixture.auth.RequestCampusEmailVerification(t.Context(), email, "198.51.100.12"))
+		code := fixture.sender.latestCode(t, email)
+		fixture.clock.now = fixture.clock.now.Add(time.Minute + time.Second)
+
+		_, err := fixture.auth.RegisterCampusUser(t.Context(), email, "password-123", "过期码同学", code)
+		require.ErrorIs(t, err, ErrVerificationInvalid)
+	})
+
+	t.Run("one time", func(t *testing.T) {
+		fixture := setupCampusRegistrationAuthService(t, CampusEmailVerificationConfig{})
+		defer fixture.client.Close()
+		createCampusRegistrationProject(t, fixture)
+
+		email := "once@mails.ucas.ac.cn"
+		require.NoError(t, fixture.auth.RequestCampusEmailVerification(t.Context(), email, "198.51.100.13"))
+		code := fixture.sender.latestCode(t, email)
+		_, err := fixture.auth.RegisterCampusUser(t.Context(), email, "password-123", "一次性同学", code)
+		require.NoError(t, err)
+
+		_, err = fixture.auth.RegisterCampusUser(t.Context(), email, "password-456", "重复使用同学", code)
+		require.ErrorIs(t, err, ErrVerificationInvalid)
+
+		challenge, queryErr := fixture.client.EmailVerificationChallenge.Query().
+			Where(emailverificationchallenge.EmailEQ(email)).
+			Only(fixture.setupCtx)
+		require.NoError(t, queryErr)
+		require.NotNil(t, challenge.ConsumedAt)
+	})
+}
+
+func TestAuthService_RegisterCampusUser_MaxVerificationAttempts(t *testing.T) {
+	fixture := setupCampusRegistrationAuthService(t, CampusEmailVerificationConfig{MaxAttempts: 3})
+	defer fixture.client.Close()
+	createCampusRegistrationProject(t, fixture)
+
+	email := "attempts@mails.ucas.ac.cn"
+	require.NoError(t, fixture.auth.RequestCampusEmailVerification(t.Context(), email, "198.51.100.14"))
+	correctCode := fixture.sender.latestCode(t, email)
+	wrongCode := codeDifferentFrom(correctCode)
+	for range 3 {
+		_, err := fixture.auth.RegisterCampusUser(t.Context(), email, "password-123", "尝试次数同学", wrongCode)
+		require.ErrorIs(t, err, ErrVerificationInvalid)
+	}
+
+	_, err := fixture.auth.RegisterCampusUser(t.Context(), email, "password-123", "尝试次数同学", correctCode)
+	require.ErrorIs(t, err, ErrVerificationInvalid)
+	challenge, queryErr := fixture.client.EmailVerificationChallenge.Query().
+		Where(emailverificationchallenge.EmailEQ(email)).
+		Only(fixture.setupCtx)
+	require.NoError(t, queryErr)
+	require.Equal(t, 3, challenge.Attempts)
+}
+
+func TestAuthService_RequestCampusEmailVerification_RateLimits(t *testing.T) {
+	t.Run("email", func(t *testing.T) {
+		fixture := setupCampusRegistrationAuthService(t, CampusEmailVerificationConfig{
+			ResendCooldown:    time.Second,
+			EmailHourlyLimit:  1,
+			SourceHourlyLimit: 10,
+			GlobalHourlyLimit: 10,
+		})
+		defer fixture.client.Close()
+
+		email := "email-limit@mails.ucas.ac.cn"
+		require.NoError(t, fixture.auth.RequestCampusEmailVerification(t.Context(), email, "198.51.100.21"))
+		fixture.clock.now = fixture.clock.now.Add(2 * time.Second)
+		err := fixture.auth.RequestCampusEmailVerification(t.Context(), email, "198.51.100.22")
+		require.ErrorIs(t, err, ErrVerificationRateLimit)
+		require.Equal(t, 1, fixture.sender.count())
+	})
+
+	t.Run("source", func(t *testing.T) {
+		fixture := setupCampusRegistrationAuthService(t, CampusEmailVerificationConfig{
+			EmailHourlyLimit:  10,
+			SourceHourlyLimit: 1,
+			GlobalHourlyLimit: 10,
+		})
+		defer fixture.client.Close()
+
+		source := "198.51.100.23"
+		require.NoError(t, fixture.auth.RequestCampusEmailVerification(t.Context(), "source-one@mails.ucas.ac.cn", source))
+		err := fixture.auth.RequestCampusEmailVerification(t.Context(), "source-two@mails.ucas.ac.cn", source)
+		require.ErrorIs(t, err, ErrVerificationRateLimit)
+		require.Equal(t, 1, fixture.sender.count())
+	})
+
+	t.Run("global", func(t *testing.T) {
+		fixture := setupCampusRegistrationAuthService(t, CampusEmailVerificationConfig{
+			EmailHourlyLimit:  10,
+			SourceHourlyLimit: 10,
+			GlobalHourlyLimit: 1,
+		})
+		defer fixture.client.Close()
+
+		require.NoError(t, fixture.auth.RequestCampusEmailVerification(t.Context(), "global-one@mails.ucas.ac.cn", "198.51.100.24"))
+		err := fixture.auth.RequestCampusEmailVerification(t.Context(), "global-two@mails.ucas.ac.cn", "198.51.100.25")
+		require.ErrorIs(t, err, ErrVerificationRateLimit)
+		require.Equal(t, 1, fixture.sender.count())
+	})
+}
+
+func TestAuthService_RequestCampusEmailVerification_SMTPFailureFailsClosed(t *testing.T) {
+	fixture := setupCampusRegistrationAuthService(t, CampusEmailVerificationConfig{})
+	defer fixture.client.Close()
+	fixture.sender.sendErr = errors.New("smtp unavailable")
+
+	err := fixture.auth.RequestCampusEmailVerification(t.Context(), "smtp-failure@mails.ucas.ac.cn", "198.51.100.26")
+	require.ErrorIs(t, err, ErrVerificationUnavailable)
+	require.Equal(t, 0, fixture.sender.count())
+	count, queryErr := fixture.client.EmailVerificationChallenge.Query().Count(fixture.setupCtx)
+	require.NoError(t, queryErr)
+	require.Equal(t, 1, count, "the failed sender must not fall back to unverified registration")
+}
+
+func TestAuthService_RegisterCampusUser_DuplicateIsGenericVerificationFailure(t *testing.T) {
+	fixture := setupCampusRegistrationAuthService(t, CampusEmailVerificationConfig{})
+	defer fixture.client.Close()
+	createCampusRegistrationProject(t, fixture)
+
+	hashedPassword, err := HashPassword("existing-password")
+	require.NoError(t, err)
+	_, err = fixture.client.User.Create().
+		SetEmail("existing@mails.ucas.ac.cn").
+		SetPassword(hashedPassword).
+		Save(fixture.setupCtx)
+	require.NoError(t, err)
+
+	require.NoError(t, fixture.auth.RequestCampusEmailVerification(t.Context(), "existing@mails.ucas.ac.cn", "198.51.100.27"))
+	code := fixture.sender.latestCode(t, "existing@mails.ucas.ac.cn")
+	_, err = fixture.auth.RegisterCampusUser(t.Context(), "existing@mails.ucas.ac.cn", "password-123", "已有账户同学", code)
+	require.ErrorIs(t, err, ErrVerificationInvalid)
+	require.NotErrorIs(t, err, ErrEmailAlreadyRegistered)
+	require.NotContains(t, err.Error(), "already registered")
+}
+
+func TestAuthService_RegisterCampusUser_RejectsNonUCASDomains(t *testing.T) {
+	fixture := setupCampusRegistrationAuthService(t, CampusEmailVerificationConfig{})
+	defer fixture.client.Close()
+
+	createCampusRegistrationProject(t, fixture)
 
 	for _, email := range []string{
 		"student@example.com",
@@ -212,45 +505,40 @@ func TestAuthService_RegisterCampusUser_RejectsNonUCASDomains(t *testing.T) {
 		"student@department.ucas.ac.cn",
 	} {
 		t.Run(email, func(t *testing.T) {
-			_, err := authService.RegisterCampusUser(t.Context(), email, "password-123")
+			err := fixture.auth.RequestCampusEmailVerification(t.Context(), email, "198.51.100.28")
 			require.ErrorIs(t, err, ErrCampusEmailRequired)
 		})
 	}
 }
 
-func TestAuthService_RegisterCampusUser_DuplicateEmail(t *testing.T) {
-	authService, client, setupCtx := setupCampusRegistrationAuthService(t)
-	defer client.Close()
-
-	_, err := client.Project.Create().SetName("Campus Sharing").Save(setupCtx)
-	require.NoError(t, err)
-
-	_, err = authService.RegisterCampusUser(t.Context(), "duplicate@mails.ucas.ac.cn", "password-123")
-	require.NoError(t, err)
-
-	_, err = authService.RegisterCampusUser(t.Context(), "DUPLICATE@MAILS.UCAS.AC.CN", "password-456")
-	require.ErrorIs(t, err, ErrEmailAlreadyRegistered)
-}
-
 func TestAuthService_RegisterCampusUser_RequiresActiveProject(t *testing.T) {
-	authService, client, setupCtx := setupCampusRegistrationAuthService(t)
-	defer client.Close()
+	fixture := setupCampusRegistrationAuthService(t, CampusEmailVerificationConfig{})
+	defer fixture.client.Close()
 
-	_, err := client.Project.Create().
+	_, err := fixture.client.Project.Create().
 		SetName("Archived").
 		SetStatus(project.StatusArchived).
-		Save(setupCtx)
+		Save(fixture.setupCtx)
 	require.NoError(t, err)
 
-	_, err = authService.RegisterCampusUser(t.Context(), "no-project@ucas.edu.cn", "password-123")
+	email := "no-project@ucas.edu.cn"
+	require.NoError(t, fixture.auth.RequestCampusEmailVerification(t.Context(), email, "198.51.100.29"))
+	code := fixture.sender.latestCode(t, email)
+	_, err = fixture.auth.RegisterCampusUser(t.Context(), email, "password-123", "无项目同学", code)
 	require.Error(t, err)
 	require.ErrorContains(t, err, "failed to find the campus sharing project")
 
-	count, queryErr := client.User.Query().
-		Where(user.EmailEQ("no-project@ucas.edu.cn")).
-		Count(setupCtx)
+	count, queryErr := fixture.client.User.Query().
+		Where(user.EmailEQ(email)).
+		Count(fixture.setupCtx)
 	require.NoError(t, queryErr)
 	require.Zero(t, count, "the user insert must roll back when project assignment fails")
+
+	challenge, queryErr := fixture.client.EmailVerificationChallenge.Query().
+		Where(emailverificationchallenge.EmailEQ(email)).
+		Only(fixture.setupCtx)
+	require.NoError(t, queryErr)
+	require.Nil(t, challenge.ConsumedAt, "challenge consumption must roll back with account creation")
 }
 
 func TestAuthService_GenerateJWTToken(t *testing.T) {

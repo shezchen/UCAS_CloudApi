@@ -32,6 +32,8 @@ const (
 	FieldPreferLanguage = "prefer_language"
 	// FieldPassword holds the string denoting the password field in the database.
 	FieldPassword = "password"
+	// FieldNickname holds the string denoting the nickname field in the database.
+	FieldNickname = "nickname"
 	// FieldFirstName holds the string denoting the first_name field in the database.
 	FieldFirstName = "first_name"
 	// FieldLastName holds the string denoting the last_name field in the database.
@@ -126,6 +128,7 @@ var Columns = []string{
 	FieldStatus,
 	FieldPreferLanguage,
 	FieldPassword,
+	FieldNickname,
 	FieldFirstName,
 	FieldLastName,
 	FieldAvatar,
@@ -172,6 +175,10 @@ var (
 	DefaultDeletedAt int
 	// DefaultPreferLanguage holds the default value on creation for the "prefer_language" field.
 	DefaultPreferLanguage string
+	// DefaultNickname holds the default value on creation for the "nickname" field.
+	DefaultNickname string
+	// NicknameValidator is a validator for the "nickname" field. It is called by the builders before save.
+	NicknameValidator func(string) error
 	// DefaultFirstName holds the default value on creation for the "first_name" field.
 	DefaultFirstName string
 	// DefaultLastName holds the default value on creation for the "last_name" field.
@@ -253,6 +260,11 @@ func ByPreferLanguage(opts ...sql.OrderTermOption) OrderOption {
 // ByPassword orders the results by the password field.
 func ByPassword(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldPassword, opts...).ToFunc()
+}
+
+// ByNickname orders the results by the nickname field.
+func ByNickname(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldNickname, opts...).ToFunc()
 }
 
 // ByFirstName orders the results by the first_name field.

@@ -3,6 +3,7 @@ package objects
 type UserInfo struct {
 	ID             GUID               `json:"id"`
 	Email          string             `json:"email"`
+	Nickname       string             `json:"nickname"`
 	FirstName      string             `json:"firstName"`
 	LastName       string             `json:"lastName"`
 	IsOwner        bool               `json:"isOwner"`

@@ -95,6 +95,7 @@ func SetupRoutes(server *Server, handlers Handlers, client *ent.Client, services
 		// User Login - DO NOT AUTH
 		unSecureAdminGroup.POST("/auth/signin", handlers.Auth.SignIn)
 		// Campus registration - UCAS email domains only, always non-owner.
+		unSecureAdminGroup.POST("/auth/signup/verification", handlers.Auth.RequestSignUpVerification)
 		unSecureAdminGroup.POST("/auth/signup", handlers.Auth.SignUp)
 	}
 

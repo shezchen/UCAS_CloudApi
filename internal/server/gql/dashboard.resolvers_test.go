@@ -353,12 +353,15 @@ func TestRankCampusUsageReturnsTop50PlusSelf(t *testing.T) {
 		})
 	}
 
-	entries := rankCampusUsage(7, 999, aggregates)
+	entries := rankCampusUsage(7, 999, "末位同学", aggregates)
 	require.Len(t, entries, 51)
 	require.True(t, entries[50].IsMe)
 	require.Equal(t, 52, entries[50].Rank)
 	require.Equal(t, campusPublicAlias(7, 999), entries[50].PublicAlias)
+	require.Equal(t, "末位同学", entries[50].DisplayName)
 	require.NotEqual(t, campusPublicAlias(7, 999), campusPublicAlias(8, 999))
+	require.Equal(t, "末位同学", campusDisplayName(" 末位同学 ", "fallback"))
+	require.Equal(t, "fallback", campusDisplayName("Owner", "fallback"))
 }
 
 func TestQueryResolverCampusUsageLeaderboardPrivacyAndDeletedKeys(t *testing.T) {
@@ -374,6 +377,7 @@ func TestQueryResolverCampusUsageLeaderboardPrivacyAndDeletedKeys(t *testing.T) 
 
 	member, err := client.User.Create().
 		SetEmail("member@mails.ucas.ac.cn").
+		SetNickname("普通同学").
 		SetPassword("password").
 		SetStatus(user.StatusActivated).
 		SetDailyTokenLimit(100).
@@ -387,6 +391,7 @@ func TestQueryResolverCampusUsageLeaderboardPrivacyAndDeletedKeys(t *testing.T) 
 
 	leader, err := client.User.Create().
 		SetEmail("leader@mails.ucas.ac.cn").
+		SetNickname("今日榜首").
 		SetPassword("password").
 		SetStatus(user.StatusActivated).
 		SetDailyTokenLimit(200).
@@ -441,12 +446,14 @@ func TestQueryResolverCampusUsageLeaderboardPrivacyAndDeletedKeys(t *testing.T) 
 	require.Len(t, entries, 2)
 	require.Equal(t, 1, entries[0].Rank)
 	require.Equal(t, campusPublicAlias(projectRow.ID, leader.ID), entries[0].PublicAlias)
+	require.Equal(t, "今日榜首", entries[0].DisplayName)
 	require.False(t, entries[0].IsMe)
 	require.Equal(t, float64(100), entries[0].RecordedTokens)
 	require.Equal(t, 1, entries[0].MeteredRequestCount)
 
 	require.Equal(t, 2, entries[1].Rank)
 	require.Equal(t, campusPublicAlias(projectRow.ID, member.ID), entries[1].PublicAlias)
+	require.Equal(t, "普通同学", entries[1].DisplayName)
 	require.True(t, entries[1].IsMe)
 	require.Equal(t, float64(25), entries[1].RecordedTokens)
 	require.Equal(t, 1, entries[1].MeteredRequestCount)
@@ -488,6 +495,6 @@ func TestQueryResolverCampusUsageLeaderboardPrivacyAndDeletedKeys(t *testing.T) 
 		fieldNames = append(fieldNames, entryType.Field(i).Name)
 	}
 	require.Equal(t, []string{
-		"Rank", "PublicAlias", "IsMe", "RecordedTokens", "MeteredRequestCount", "LimitPercent",
+		"Rank", "DisplayName", "PublicAlias", "IsMe", "RecordedTokens", "MeteredRequestCount", "LimitPercent",
 	}, fieldNames)
 }

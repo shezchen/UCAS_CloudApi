@@ -2588,7 +2588,7 @@ func (_m *User) Node(ctx context.Context) (node *Node, err error) {
 	node = &Node{
 		ID:     _m.ID,
 		Type:   "User",
-		Fields: make([]*Field, 12),
+		Fields: make([]*Field, 13),
 		Edges:  make([]*Edge, 8),
 	}
 	var buf []byte
@@ -2640,10 +2640,18 @@ func (_m *User) Node(ctx context.Context) (node *Node, err error) {
 		Name:  "password",
 		Value: string(buf),
 	}
-	if buf, err = json.Marshal(_m.FirstName); err != nil {
+	if buf, err = json.Marshal(_m.Nickname); err != nil {
 		return nil, err
 	}
 	node.Fields[6] = &Field{
+		Type:  "string",
+		Name:  "nickname",
+		Value: string(buf),
+	}
+	if buf, err = json.Marshal(_m.FirstName); err != nil {
+		return nil, err
+	}
+	node.Fields[7] = &Field{
 		Type:  "string",
 		Name:  "first_name",
 		Value: string(buf),
@@ -2651,7 +2659,7 @@ func (_m *User) Node(ctx context.Context) (node *Node, err error) {
 	if buf, err = json.Marshal(_m.LastName); err != nil {
 		return nil, err
 	}
-	node.Fields[7] = &Field{
+	node.Fields[8] = &Field{
 		Type:  "string",
 		Name:  "last_name",
 		Value: string(buf),
@@ -2659,7 +2667,7 @@ func (_m *User) Node(ctx context.Context) (node *Node, err error) {
 	if buf, err = json.Marshal(_m.Avatar); err != nil {
 		return nil, err
 	}
-	node.Fields[8] = &Field{
+	node.Fields[9] = &Field{
 		Type:  "string",
 		Name:  "avatar",
 		Value: string(buf),
@@ -2667,7 +2675,7 @@ func (_m *User) Node(ctx context.Context) (node *Node, err error) {
 	if buf, err = json.Marshal(_m.IsOwner); err != nil {
 		return nil, err
 	}
-	node.Fields[9] = &Field{
+	node.Fields[10] = &Field{
 		Type:  "bool",
 		Name:  "is_owner",
 		Value: string(buf),
@@ -2675,7 +2683,7 @@ func (_m *User) Node(ctx context.Context) (node *Node, err error) {
 	if buf, err = json.Marshal(_m.DailyTokenLimit); err != nil {
 		return nil, err
 	}
-	node.Fields[10] = &Field{
+	node.Fields[11] = &Field{
 		Type:  "int64",
 		Name:  "daily_token_limit",
 		Value: string(buf),
@@ -2683,7 +2691,7 @@ func (_m *User) Node(ctx context.Context) (node *Node, err error) {
 	if buf, err = json.Marshal(_m.Scopes); err != nil {
 		return nil, err
 	}
-	node.Fields[11] = &Field{
+	node.Fields[12] = &Field{
 		Type:  "[]string",
 		Name:  "scopes",
 		Value: string(buf),

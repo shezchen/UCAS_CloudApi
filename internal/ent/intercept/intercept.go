@@ -16,6 +16,7 @@ import (
 	"github.com/looplj/axonhub/internal/ent/channeloverridetemplate"
 	"github.com/looplj/axonhub/internal/ent/channelprobe"
 	"github.com/looplj/axonhub/internal/ent/datastorage"
+	"github.com/looplj/axonhub/internal/ent/emailverificationchallenge"
 	"github.com/looplj/axonhub/internal/ent/model"
 	"github.com/looplj/axonhub/internal/ent/oidcidentity"
 	"github.com/looplj/axonhub/internal/ent/predicate"
@@ -305,6 +306,33 @@ func (f TraverseDataStorage) Traverse(ctx context.Context, q ent.Query) error {
 		return f(ctx, q)
 	}
 	return fmt.Errorf("unexpected query type %T. expect *ent.DataStorageQuery", q)
+}
+
+// The EmailVerificationChallengeFunc type is an adapter to allow the use of ordinary function as a Querier.
+type EmailVerificationChallengeFunc func(context.Context, *ent.EmailVerificationChallengeQuery) (ent.Value, error)
+
+// Query calls f(ctx, q).
+func (f EmailVerificationChallengeFunc) Query(ctx context.Context, q ent.Query) (ent.Value, error) {
+	if q, ok := q.(*ent.EmailVerificationChallengeQuery); ok {
+		return f(ctx, q)
+	}
+	return nil, fmt.Errorf("unexpected query type %T. expect *ent.EmailVerificationChallengeQuery", q)
+}
+
+// The TraverseEmailVerificationChallenge type is an adapter to allow the use of ordinary function as Traverser.
+type TraverseEmailVerificationChallenge func(context.Context, *ent.EmailVerificationChallengeQuery) error
+
+// Intercept is a dummy implementation of Intercept that returns the next Querier in the pipeline.
+func (f TraverseEmailVerificationChallenge) Intercept(next ent.Querier) ent.Querier {
+	return next
+}
+
+// Traverse calls f(ctx, q).
+func (f TraverseEmailVerificationChallenge) Traverse(ctx context.Context, q ent.Query) error {
+	if q, ok := q.(*ent.EmailVerificationChallengeQuery); ok {
+		return f(ctx, q)
+	}
+	return fmt.Errorf("unexpected query type %T. expect *ent.EmailVerificationChallengeQuery", q)
 }
 
 // The ModelFunc type is an adapter to allow the use of ordinary function as a Querier.
@@ -758,6 +786,8 @@ func NewQuery(q ent.Query) (Query, error) {
 		return &query[*ent.ChannelProbeQuery, predicate.ChannelProbe, channelprobe.OrderOption]{typ: ent.TypeChannelProbe, tq: q}, nil
 	case *ent.DataStorageQuery:
 		return &query[*ent.DataStorageQuery, predicate.DataStorage, datastorage.OrderOption]{typ: ent.TypeDataStorage, tq: q}, nil
+	case *ent.EmailVerificationChallengeQuery:
+		return &query[*ent.EmailVerificationChallengeQuery, predicate.EmailVerificationChallenge, emailverificationchallenge.OrderOption]{typ: ent.TypeEmailVerificationChallenge, tq: q}, nil
 	case *ent.ModelQuery:
 		return &query[*ent.ModelQuery, predicate.Model, model.OrderOption]{typ: ent.TypeModel, tq: q}, nil
 	case *ent.OIDCIdentityQuery:

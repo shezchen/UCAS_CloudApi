@@ -2000,6 +2000,10 @@ input CreateUserInput {
   """
   preferLanguage: String
   password: String!
+  """
+  Voluntary public nickname; never derived from OIDC profile names
+  """
+  nickname: String
   firstName: String
   lastName: String
   """
@@ -6465,6 +6469,10 @@ input UpdateUserInput {
   """
   preferLanguage: String
   password: String
+  """
+  Voluntary public nickname; never derived from OIDC profile names
+  """
+  nickname: String
   firstName: String
   lastName: String
   """
@@ -6964,6 +6972,10 @@ type User implements Node {
   用户偏好语言
   """
   preferLanguage: String!
+  """
+  Voluntary public nickname; never derived from OIDC profile names
+  """
+  nickname: String!
   firstName: String!
   lastName: String!
   """
@@ -7464,6 +7476,22 @@ input UserWhereInput {
   preferLanguageHasSuffix: String
   preferLanguageEqualFold: String
   preferLanguageContainsFold: String
+  """
+  nickname field predicates
+  """
+  nickname: String
+  nicknameNEQ: String
+  nicknameIn: [String!]
+  nicknameNotIn: [String!]
+  nicknameGT: String
+  nicknameGTE: String
+  nicknameLT: String
+  nicknameLTE: String
+  nicknameContains: String
+  nicknameHasPrefix: String
+  nicknameHasSuffix: String
+  nicknameEqualFold: String
+  nicknameContainsFold: String
   """
   first_name field predicates
   """

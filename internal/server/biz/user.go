@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/samber/lo"
 	"go.uber.org/fx"
@@ -28,6 +30,49 @@ var campusRegistrationEmailDomains = map[string]struct{}{
 	"ucas.ac.cn":        {},
 	"mails.ucas.edu.cn": {},
 	"ucas.edu.cn":       {},
+}
+
+var reservedCampusNicknames = map[string]struct{}{
+	"owner": {}, "admin": {}, "administrator": {}, "system": {}, "official": {},
+	"管理员": {}, "项目管理员": {}, "系统": {}, "官方": {}, "校方": {},
+}
+
+// NormalizeCampusNickname validates a voluntary public nickname. An empty
+// nickname is valid and means the privacy-preserving stable alias is shown.
+func NormalizeCampusNickname(nickname string) (string, error) {
+	normalized := strings.TrimSpace(nickname)
+	if normalized == "" {
+		return "", nil
+	}
+	if !utf8.ValidString(normalized) {
+		return "", fmt.Errorf("%w: nickname must be valid UTF-8", ErrInvalidNickname)
+	}
+
+	runeCount := utf8.RuneCountInString(normalized)
+	if runeCount < 2 || runeCount > 24 {
+		return "", fmt.Errorf("%w: use 2 to 24 characters", ErrInvalidNickname)
+	}
+
+	for _, r := range normalized {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return "", fmt.Errorf("%w: control, bidi, and zero-width characters are not allowed", ErrInvalidNickname)
+		}
+	}
+
+	compact := strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return -1
+		}
+		return unicode.ToLower(r)
+	}, normalized)
+	if _, reserved := reservedCampusNicknames[compact]; reserved {
+		return "", fmt.Errorf("%w: this name is reserved", ErrInvalidNickname)
+	}
+	if strings.HasPrefix(compact, "同学-") {
+		return "", fmt.Errorf("%w: names beginning with the anonymous alias prefix are reserved", ErrInvalidNickname)
+	}
+
+	return normalized, nil
 }
 
 func normalizeCampusRegistrationEmail(email string) (string, error) {
@@ -144,6 +189,13 @@ func (s *UserService) CreateUser(ctx context.Context, input ent.CreateUserInput)
 		return nil, err
 	}
 	input.Email = normalizedEmail
+	if input.Nickname != nil {
+		nickname, err := NormalizeCampusNickname(*input.Nickname)
+		if err != nil {
+			return nil, err
+		}
+		input.Nickname = &nickname
+	}
 
 	// Hash the password
 	var hashedPassword string
@@ -160,6 +212,7 @@ func (s *UserService) CreateUser(ctx context.Context, input ent.CreateUserInput)
 	err = s.RunInTransaction(ctx, func(txCtx context.Context) error {
 		client := s.entFromContext(txCtx)
 		mut := client.User.Create().
+			SetNillableNickname(input.Nickname).
 			SetNillableFirstName(input.FirstName).
 			SetNillableLastName(input.LastName).
 			SetEmail(input.Email).
@@ -211,6 +264,13 @@ func (s *UserService) UpdateUser(ctx context.Context, id int, input ent.UpdateUs
 		}
 		input.Email = &normalizedEmail
 	}
+	if input.Nickname != nil {
+		nickname, err := NormalizeCampusNickname(*input.Nickname)
+		if err != nil {
+			return nil, err
+		}
+		input.Nickname = &nickname
+	}
 
 	// Validate permissions before updating
 	if err := s.permissionValidator.CanEditUserPermissions(ctx, id, nil); err != nil {
@@ -242,6 +302,7 @@ func (s *UserService) UpdateUser(ctx context.Context, id int, input ent.UpdateUs
 
 	mut := client.User.UpdateOneID(id).
 		SetNillableEmail(input.Email).
+		SetNillableNickname(input.Nickname).
 		SetNillableFirstName(input.FirstName).
 		SetNillableLastName(input.LastName).
 		SetNillableIsOwner(input.IsOwner).
@@ -306,11 +367,19 @@ func (s *UserService) UpdateOwnProfile(ctx context.Context, input ent.UpdateUser
 	}
 
 	id := currentUser.ID
+	if input.Nickname != nil {
+		nickname, err := NormalizeCampusNickname(*input.Nickname)
+		if err != nil {
+			return nil, err
+		}
+		input.Nickname = &nickname
+	}
 
 	return authz.RunWithSystemBypass(ctx, "update-own-profile", func(ctx context.Context) (*ent.User, error) {
 		client := s.entFromContext(ctx)
 
 		mut := client.User.UpdateOneID(id).
+			SetNillableNickname(input.Nickname).
 			SetNillableFirstName(input.FirstName).
 			SetNillableLastName(input.LastName).
 			SetNillablePreferLanguage(input.PreferLanguage)
@@ -486,6 +555,7 @@ func ConvertUserToUserInfo(ctx context.Context, u *ent.User) *objects.UserInfo {
 	return &objects.UserInfo{
 		ID:             objects.GUID{Type: ent.TypeUser, ID: u.ID},
 		Email:          u.Email,
+		Nickname:       u.Nickname,
 		FirstName:      u.FirstName,
 		LastName:       u.LastName,
 		IsOwner:        u.IsOwner,

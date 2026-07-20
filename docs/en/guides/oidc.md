@@ -22,7 +22,6 @@ oidc:
       extra_scopes: ["openid", "profile", "email"]
       jit_enabled: true              # Automatically create user on first login (Just-In-Time)
       auto_link_by_email: true       # Link to existing user by verified email
-      require_email_verified: true   # Only link if email is verified by IdP
       enable_pkce: true              # Recommended for enhanced security (RFC 7636)
       sync_user_info: true           # Sync name and avatar on every login
       button_color: "#DB4437"        # UI Customization: Button color
@@ -42,14 +41,17 @@ oidc:
 | `extra_scopes` | Extra OAuth2 scopes. Note: must include `openid` if provided. |
 | `redirect_url` | (Optional) Manually override the absolute redirect URI. |
 | `jit_enabled` | If true, new users will be created automatically on first login. |
-| `auto_link_by_email` | If true, matches existing users by email. |
-| `require_email_verified` | If true, only link if email is verified by IdP. |
+| `auto_link_by_email` | If true, matches existing users by provider-verified email. |
 | `enable_pkce` | Enables Proof Key for Code Exchange (RFC 7636). Highly recommended. |
 | `sync_user_info` | Updates user profile (name, avatar) from IdP claims. |
 | `button_color` | Hex color code for the login button. |
 | `icon_url` | Icon URL or local path for the login button (supports base64). |
 | `default_roles` | List of roles to assign to new JIT users (e.g., `["Viewer"]`). |
 | `oidc_login_only` | If true, forces users of this provider to only use SSO login. |
+
+Email auto-linking and new JIT account creation always require the IdP to
+return a verified email claim. New JIT accounts must also use an allowed UCAS
+email domain.
 
 ## Advanced Configuration
 

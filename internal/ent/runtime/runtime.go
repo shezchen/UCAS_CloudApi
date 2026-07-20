@@ -13,6 +13,7 @@ import (
 	"github.com/looplj/axonhub/internal/ent/channelmodelpriceversion"
 	"github.com/looplj/axonhub/internal/ent/channeloverridetemplate"
 	"github.com/looplj/axonhub/internal/ent/datastorage"
+	"github.com/looplj/axonhub/internal/ent/emailverificationchallenge"
 	"github.com/looplj/axonhub/internal/ent/model"
 	"github.com/looplj/axonhub/internal/ent/oidcidentity"
 	"github.com/looplj/axonhub/internal/ent/project"
@@ -354,6 +355,48 @@ func init() {
 	datastorageDescPrimary := datastorageFields[2].Descriptor()
 	// datastorage.DefaultPrimary holds the default value on creation for the primary field.
 	datastorage.DefaultPrimary = datastorageDescPrimary.Default.(bool)
+	emailverificationchallengeMixin := schema.EmailVerificationChallenge{}.Mixin()
+	emailverificationchallenge.Policy = privacy.NewPolicies(schema.EmailVerificationChallenge{})
+	emailverificationchallenge.Hooks[0] = func(next ent.Mutator) ent.Mutator {
+		return ent.MutateFunc(func(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+			if err := emailverificationchallenge.Policy.EvalMutation(ctx, m); err != nil {
+				return nil, err
+			}
+			return next.Mutate(ctx, m)
+		})
+	}
+	emailverificationchallengeMixinFields0 := emailverificationchallengeMixin[0].Fields()
+	_ = emailverificationchallengeMixinFields0
+	emailverificationchallengeFields := schema.EmailVerificationChallenge{}.Fields()
+	_ = emailverificationchallengeFields
+	// emailverificationchallengeDescCreatedAt is the schema descriptor for created_at field.
+	emailverificationchallengeDescCreatedAt := emailverificationchallengeMixinFields0[0].Descriptor()
+	// emailverificationchallenge.DefaultCreatedAt holds the default value on creation for the created_at field.
+	emailverificationchallenge.DefaultCreatedAt = emailverificationchallengeDescCreatedAt.Default.(func() time.Time)
+	// emailverificationchallengeDescUpdatedAt is the schema descriptor for updated_at field.
+	emailverificationchallengeDescUpdatedAt := emailverificationchallengeMixinFields0[1].Descriptor()
+	// emailverificationchallenge.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	emailverificationchallenge.DefaultUpdatedAt = emailverificationchallengeDescUpdatedAt.Default.(func() time.Time)
+	// emailverificationchallenge.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	emailverificationchallenge.UpdateDefaultUpdatedAt = emailverificationchallengeDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// emailverificationchallengeDescEmail is the schema descriptor for email field.
+	emailverificationchallengeDescEmail := emailverificationchallengeFields[0].Descriptor()
+	// emailverificationchallenge.EmailValidator is a validator for the "email" field. It is called by the builders before save.
+	emailverificationchallenge.EmailValidator = emailverificationchallengeDescEmail.Validators[0].(func(string) error)
+	// emailverificationchallengeDescCodeDigest is the schema descriptor for code_digest field.
+	emailverificationchallengeDescCodeDigest := emailverificationchallengeFields[1].Descriptor()
+	// emailverificationchallenge.CodeDigestValidator is a validator for the "code_digest" field. It is called by the builders before save.
+	emailverificationchallenge.CodeDigestValidator = emailverificationchallengeDescCodeDigest.Validators[0].(func(string) error)
+	// emailverificationchallengeDescSourceHash is the schema descriptor for source_hash field.
+	emailverificationchallengeDescSourceHash := emailverificationchallengeFields[2].Descriptor()
+	// emailverificationchallenge.SourceHashValidator is a validator for the "source_hash" field. It is called by the builders before save.
+	emailverificationchallenge.SourceHashValidator = emailverificationchallengeDescSourceHash.Validators[0].(func(string) error)
+	// emailverificationchallengeDescAttempts is the schema descriptor for attempts field.
+	emailverificationchallengeDescAttempts := emailverificationchallengeFields[4].Descriptor()
+	// emailverificationchallenge.DefaultAttempts holds the default value on creation for the attempts field.
+	emailverificationchallenge.DefaultAttempts = emailverificationchallengeDescAttempts.Default.(int)
+	// emailverificationchallenge.AttemptsValidator is a validator for the "attempts" field. It is called by the builders before save.
+	emailverificationchallenge.AttemptsValidator = emailverificationchallengeDescAttempts.Validators[0].(func(int) error)
 	modelMixin := schema.Model{}.Mixin()
 	model.Policy = privacy.NewPolicies(schema.Model{})
 	model.Hooks[0] = func(next ent.Mutator) ent.Mutator {
@@ -906,26 +949,32 @@ func init() {
 	userDescPreferLanguage := userFields[2].Descriptor()
 	// user.DefaultPreferLanguage holds the default value on creation for the prefer_language field.
 	user.DefaultPreferLanguage = userDescPreferLanguage.Default.(string)
+	// userDescNickname is the schema descriptor for nickname field.
+	userDescNickname := userFields[4].Descriptor()
+	// user.DefaultNickname holds the default value on creation for the nickname field.
+	user.DefaultNickname = userDescNickname.Default.(string)
+	// user.NicknameValidator is a validator for the "nickname" field. It is called by the builders before save.
+	user.NicknameValidator = userDescNickname.Validators[0].(func(string) error)
 	// userDescFirstName is the schema descriptor for first_name field.
-	userDescFirstName := userFields[4].Descriptor()
+	userDescFirstName := userFields[5].Descriptor()
 	// user.DefaultFirstName holds the default value on creation for the first_name field.
 	user.DefaultFirstName = userDescFirstName.Default.(string)
 	// userDescLastName is the schema descriptor for last_name field.
-	userDescLastName := userFields[5].Descriptor()
+	userDescLastName := userFields[6].Descriptor()
 	// user.DefaultLastName holds the default value on creation for the last_name field.
 	user.DefaultLastName = userDescLastName.Default.(string)
 	// userDescIsOwner is the schema descriptor for is_owner field.
-	userDescIsOwner := userFields[7].Descriptor()
+	userDescIsOwner := userFields[8].Descriptor()
 	// user.DefaultIsOwner holds the default value on creation for the is_owner field.
 	user.DefaultIsOwner = userDescIsOwner.Default.(bool)
 	// userDescDailyTokenLimit is the schema descriptor for daily_token_limit field.
-	userDescDailyTokenLimit := userFields[8].Descriptor()
+	userDescDailyTokenLimit := userFields[9].Descriptor()
 	// user.DefaultDailyTokenLimit holds the default value on creation for the daily_token_limit field.
 	user.DefaultDailyTokenLimit = userDescDailyTokenLimit.Default.(int64)
 	// user.DailyTokenLimitValidator is a validator for the "daily_token_limit" field. It is called by the builders before save.
 	user.DailyTokenLimitValidator = userDescDailyTokenLimit.Validators[0].(func(int64) error)
 	// userDescScopes is the schema descriptor for scopes field.
-	userDescScopes := userFields[9].Descriptor()
+	userDescScopes := userFields[10].Descriptor()
 	// user.DefaultScopes holds the default value on creation for the scopes field.
 	user.DefaultScopes = userDescScopes.Default.([]string)
 	userprojectMixin := schema.UserProject{}.Mixin()

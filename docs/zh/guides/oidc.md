@@ -22,7 +22,6 @@ oidc:
       extra_scopes: ["openid", "profile", "email"]
       jit_enabled: true              # 首次登录时自动创建用户 (Just-In-Time)
       auto_link_by_email: true       # 通过已验证的邮箱链接到现有用户
-      require_email_verified: true   # 仅在 IdP 已验证邮箱时才进行链接
       enable_pkce: true              # 推荐启用以增强安全性 (RFC 7636)
       sync_user_info: true           # 每次登录时同步名称和头像
       button_color: "#DB4437"        # UI 自定义：按钮颜色
@@ -42,14 +41,16 @@ oidc:
 | `extra_scopes` | 额外的 OAuth2 作用域。注意：如果提供此项，必须包含 `openid`。 |
 | `redirect_url` | （可选）手动覆盖绝对重定向 URI。 |
 | `jit_enabled` | 如果为 true，新用户将在首次登录时自动创建。 |
-| `auto_link_by_email` | 如果为 true，将通过邮箱匹配现有用户。 |
-| `require_email_verified` | 如果为 true，仅链接 IdP 标记为已验证的邮箱。 |
+| `auto_link_by_email` | 如果为 true，将通过 IdP 已验证的邮箱匹配现有用户。 |
 | `enable_pkce` | 启用 Proof Key for Code Exchange (RFC 7636)。强烈建议启用。 |
 | `sync_user_info` | 从 IdP Claims 更新用户资料（名称、头像）。 |
 | `button_color` | 登录页按钮的十六进制颜色代码。 |
 | `icon_url` | 登录页显示的图标 URL 或本地路径（支持 base64）。 |
 | `default_roles` | 分配给新 JIT 用户的默认角色列表（例如 `["Viewer"]`）。 |
 | `oidc_login_only` | 如果为 true，将强制该提供商的用户仅能通过 SSO 登录。 |
+
+邮箱自动链接和新建 JIT 账户始终要求 IdP 返回已验证的邮箱声明；新建
+JIT 账户还必须使用允许的国科大邮箱域名。
 
 ## 高级配置
 

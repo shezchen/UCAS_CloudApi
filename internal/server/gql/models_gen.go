@@ -116,6 +116,7 @@ type BulkUpdateChannelOrderingResult struct {
 // the underlying user, API key, channel, model, request content, or cost.
 type CampusUsageLeaderboardEntry struct {
 	Rank                int     `json:"rank"`
+	DisplayName         string  `json:"displayName"`
 	PublicAlias         string  `json:"publicAlias"`
 	IsMe                bool    `json:"isMe"`
 	RecordedTokens      float64 `json:"recordedTokens"`
@@ -530,6 +531,7 @@ type UpdateDefaultDataStorageInput struct {
 }
 
 type UpdateMeInput struct {
+	Nickname       *string `json:"nickname,omitempty"`
 	FirstName      *string `json:"firstName,omitempty"`
 	LastName       *string `json:"lastName,omitempty"`
 	PreferLanguage *string `json:"preferLanguage,omitempty"`

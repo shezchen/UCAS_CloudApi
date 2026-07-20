@@ -13,6 +13,7 @@ import (
 	"github.com/looplj/axonhub/internal/ent"
 	"github.com/looplj/axonhub/internal/ent/channelprobe"
 	"github.com/looplj/axonhub/internal/ent/datastorage"
+	"github.com/looplj/axonhub/internal/ent/emailverificationchallenge"
 	"github.com/looplj/axonhub/internal/ent/request"
 	"github.com/looplj/axonhub/internal/ent/requestexecution"
 	"github.com/looplj/axonhub/internal/ent/schema/schematype"
@@ -194,6 +195,12 @@ func (w *Worker) runCleanup(ctx context.Context, manual bool, manualDays map[str
 	} else {
 		log.Info(ctx, "Successfully cleaned up channel probes",
 			log.Int("cleanup_days", 3))
+	}
+
+	if _, err := w.Ent.EmailVerificationChallenge.Delete().
+		Where(emailverificationchallenge.CreatedAtLT(time.Now().Add(-24 * time.Hour))).
+		Exec(ctx); err != nil {
+		log.Error(ctx, "Failed to clean up expired email verification challenges", log.Cause(err))
 	}
 
 	if w.Config.VacuumEnabled {

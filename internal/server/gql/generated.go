@@ -288,6 +288,7 @@ type ComplexityRoot struct {
 	}
 
 	CampusUsageLeaderboardEntry struct {
+		DisplayName         func(childComplexity int) int
 		IsMe                func(childComplexity int) int
 		LimitPercent        func(childComplexity int) int
 		MeteredRequestCount func(childComplexity int) int
@@ -1895,6 +1896,7 @@ type ComplexityRoot struct {
 		ID                       func(childComplexity int) int
 		IsOwner                  func(childComplexity int) int
 		LastName                 func(childComplexity int) int
+		Nickname                 func(childComplexity int) int
 		OidcIdentities           func(childComplexity int, after *entgql.Cursor[int], first *int, before *entgql.Cursor[int], last *int, orderBy *ent.OIDCIdentityOrder, where *ent.OIDCIdentityWhereInput) int
 		PreferLanguage           func(childComplexity int) int
 		ProjectUsers             func(childComplexity int) int
@@ -1929,6 +1931,7 @@ type ComplexityRoot struct {
 		ID             func(childComplexity int) int
 		IsOwner        func(childComplexity int) int
 		LastName       func(childComplexity int) int
+		Nickname       func(childComplexity int) int
 		OidcIdentities func(childComplexity int) int
 		PreferLanguage func(childComplexity int) int
 		Projects       func(childComplexity int) int
@@ -3066,6 +3069,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.complexity.BulkUpdateChannelOrderingResult.Updated(childComplexity), true
 
+	case "CampusUsageLeaderboardEntry.displayName":
+		if e.complexity.CampusUsageLeaderboardEntry.DisplayName == nil {
+			break
+		}
+
+		return e.complexity.CampusUsageLeaderboardEntry.DisplayName(childComplexity), true
 	case "CampusUsageLeaderboardEntry.isMe":
 		if e.complexity.CampusUsageLeaderboardEntry.IsMe == nil {
 			break
@@ -10380,6 +10389,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.User.LastName(childComplexity), true
+	case "User.nickname":
+		if e.complexity.User.Nickname == nil {
+			break
+		}
+
+		return e.complexity.User.Nickname(childComplexity), true
 	case "User.oidcIdentities":
 		if e.complexity.User.OidcIdentities == nil {
 			break
@@ -10531,6 +10546,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.UserInfo.LastName(childComplexity), true
+	case "UserInfo.nickname":
+		if e.complexity.UserInfo.Nickname == nil {
+			break
+		}
+
+		return e.complexity.UserInfo.Nickname(childComplexity), true
 	case "UserInfo.oidcIdentities":
 		if e.complexity.UserInfo.OidcIdentities == nil {
 			break
@@ -14855,6 +14876,8 @@ func (ec *executionContext) fieldContext_APIKey_user(_ context.Context, field gr
 				return ec.fieldContext_User_status(ctx, field)
 			case "preferLanguage":
 				return ec.fieldContext_User_preferLanguage(ctx, field)
+			case "nickname":
+				return ec.fieldContext_User_nickname(ctx, field)
 			case "firstName":
 				return ec.fieldContext_User_firstName(ctx, field)
 			case "lastName":
@@ -18139,6 +18162,35 @@ func (ec *executionContext) fieldContext_CampusUsageLeaderboardEntry_rank(_ cont
 	return fc, nil
 }
 
+func (ec *executionContext) _CampusUsageLeaderboardEntry_displayName(ctx context.Context, field graphql.CollectedField, obj *CampusUsageLeaderboardEntry) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CampusUsageLeaderboardEntry_displayName,
+		func(ctx context.Context) (any, error) {
+			return obj.DisplayName, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_CampusUsageLeaderboardEntry_displayName(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CampusUsageLeaderboardEntry",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _CampusUsageLeaderboardEntry_publicAlias(ctx context.Context, field graphql.CollectedField, obj *CampusUsageLeaderboardEntry) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -18977,6 +19029,8 @@ func (ec *executionContext) fieldContext_Channel_user(_ context.Context, field g
 				return ec.fieldContext_User_status(ctx, field)
 			case "preferLanguage":
 				return ec.fieldContext_User_preferLanguage(ctx, field)
+			case "nickname":
+				return ec.fieldContext_User_nickname(ctx, field)
 			case "firstName":
 				return ec.fieldContext_User_firstName(ctx, field)
 			case "lastName":
@@ -21745,6 +21799,8 @@ func (ec *executionContext) fieldContext_ChannelOverrideTemplate_user(_ context.
 				return ec.fieldContext_User_status(ctx, field)
 			case "preferLanguage":
 				return ec.fieldContext_User_preferLanguage(ctx, field)
+			case "nickname":
+				return ec.fieldContext_User_nickname(ctx, field)
 			case "firstName":
 				return ec.fieldContext_User_firstName(ctx, field)
 			case "lastName":
@@ -27117,6 +27173,8 @@ func (ec *executionContext) fieldContext_InitializeSystemPayload_user(_ context.
 				return ec.fieldContext_User_status(ctx, field)
 			case "preferLanguage":
 				return ec.fieldContext_User_preferLanguage(ctx, field)
+			case "nickname":
+				return ec.fieldContext_User_nickname(ctx, field)
 			case "firstName":
 				return ec.fieldContext_User_firstName(ctx, field)
 			case "lastName":
@@ -31587,6 +31645,8 @@ func (ec *executionContext) fieldContext_Mutation_createUser(ctx context.Context
 				return ec.fieldContext_User_status(ctx, field)
 			case "preferLanguage":
 				return ec.fieldContext_User_preferLanguage(ctx, field)
+			case "nickname":
+				return ec.fieldContext_User_nickname(ctx, field)
 			case "firstName":
 				return ec.fieldContext_User_firstName(ctx, field)
 			case "lastName":
@@ -31670,6 +31730,8 @@ func (ec *executionContext) fieldContext_Mutation_updateUser(ctx context.Context
 				return ec.fieldContext_User_status(ctx, field)
 			case "preferLanguage":
 				return ec.fieldContext_User_preferLanguage(ctx, field)
+			case "nickname":
+				return ec.fieldContext_User_nickname(ctx, field)
 			case "firstName":
 				return ec.fieldContext_User_firstName(ctx, field)
 			case "lastName":
@@ -31753,6 +31815,8 @@ func (ec *executionContext) fieldContext_Mutation_updateUserStatus(ctx context.C
 				return ec.fieldContext_User_status(ctx, field)
 			case "preferLanguage":
 				return ec.fieldContext_User_preferLanguage(ctx, field)
+			case "nickname":
+				return ec.fieldContext_User_nickname(ctx, field)
 			case "firstName":
 				return ec.fieldContext_User_firstName(ctx, field)
 			case "lastName":
@@ -33291,6 +33355,8 @@ func (ec *executionContext) fieldContext_Mutation_updateMe(ctx context.Context, 
 				return ec.fieldContext_User_status(ctx, field)
 			case "preferLanguage":
 				return ec.fieldContext_User_preferLanguage(ctx, field)
+			case "nickname":
+				return ec.fieldContext_User_nickname(ctx, field)
 			case "firstName":
 				return ec.fieldContext_User_firstName(ctx, field)
 			case "lastName":
@@ -36189,6 +36255,8 @@ func (ec *executionContext) fieldContext_OIDCIdentity_user(_ context.Context, fi
 				return ec.fieldContext_User_status(ctx, field)
 			case "preferLanguage":
 				return ec.fieldContext_User_preferLanguage(ctx, field)
+			case "nickname":
+				return ec.fieldContext_User_nickname(ctx, field)
 			case "firstName":
 				return ec.fieldContext_User_firstName(ctx, field)
 			case "lastName":
@@ -42789,6 +42857,8 @@ func (ec *executionContext) fieldContext_Query_campusUsageLeaderboard(_ context.
 			switch field.Name {
 			case "rank":
 				return ec.fieldContext_CampusUsageLeaderboardEntry_rank(ctx, field)
+			case "displayName":
+				return ec.fieldContext_CampusUsageLeaderboardEntry_displayName(ctx, field)
 			case "publicAlias":
 				return ec.fieldContext_CampusUsageLeaderboardEntry_publicAlias(ctx, field)
 			case "isMe":
@@ -42883,6 +42953,8 @@ func (ec *executionContext) fieldContext_Query_me(_ context.Context, field graph
 				return ec.fieldContext_UserInfo_id(ctx, field)
 			case "email":
 				return ec.fieldContext_UserInfo_email(ctx, field)
+			case "nickname":
+				return ec.fieldContext_UserInfo_nickname(ctx, field)
 			case "firstName":
 				return ec.fieldContext_UserInfo_firstName(ctx, field)
 			case "lastName":
@@ -48996,6 +49068,8 @@ func (ec *executionContext) fieldContext_SignInPayload_user(_ context.Context, f
 				return ec.fieldContext_User_status(ctx, field)
 			case "preferLanguage":
 				return ec.fieldContext_User_preferLanguage(ctx, field)
+			case "nickname":
+				return ec.fieldContext_User_nickname(ctx, field)
 			case "firstName":
 				return ec.fieldContext_User_firstName(ctx, field)
 			case "lastName":
@@ -55845,6 +55919,35 @@ func (ec *executionContext) fieldContext_User_preferLanguage(_ context.Context, 
 	return fc, nil
 }
 
+func (ec *executionContext) _User_nickname(ctx context.Context, field graphql.CollectedField, obj *ent.User) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_User_nickname,
+		func(ctx context.Context) (any, error) {
+			return obj.Nickname, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_User_nickname(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "User",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _User_firstName(ctx context.Context, field graphql.CollectedField, obj *ent.User) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -56575,6 +56678,8 @@ func (ec *executionContext) fieldContext_UserEdge_node(_ context.Context, field 
 				return ec.fieldContext_User_status(ctx, field)
 			case "preferLanguage":
 				return ec.fieldContext_User_preferLanguage(ctx, field)
+			case "nickname":
+				return ec.fieldContext_User_nickname(ctx, field)
 			case "firstName":
 				return ec.fieldContext_User_firstName(ctx, field)
 			case "lastName":
@@ -56685,6 +56790,35 @@ func (ec *executionContext) _UserInfo_email(ctx context.Context, field graphql.C
 }
 
 func (ec *executionContext) fieldContext_UserInfo_email(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "UserInfo",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _UserInfo_nickname(ctx context.Context, field graphql.CollectedField, obj *objects.UserInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_UserInfo_nickname,
+		func(ctx context.Context) (any, error) {
+			return obj.Nickname, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_UserInfo_nickname(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "UserInfo",
 		Field:      field,
@@ -57252,6 +57386,8 @@ func (ec *executionContext) fieldContext_UserProject_user(_ context.Context, fie
 				return ec.fieldContext_User_status(ctx, field)
 			case "preferLanguage":
 				return ec.fieldContext_User_preferLanguage(ctx, field)
+			case "nickname":
+				return ec.fieldContext_User_nickname(ctx, field)
 			case "firstName":
 				return ec.fieldContext_User_firstName(ctx, field)
 			case "lastName":
@@ -57653,6 +57789,8 @@ func (ec *executionContext) fieldContext_UserRole_user(_ context.Context, field 
 				return ec.fieldContext_User_status(ctx, field)
 			case "preferLanguage":
 				return ec.fieldContext_User_preferLanguage(ctx, field)
+			case "nickname":
+				return ec.fieldContext_User_nickname(ctx, field)
 			case "firstName":
 				return ec.fieldContext_User_firstName(ctx, field)
 			case "lastName":
@@ -67447,7 +67585,7 @@ func (ec *executionContext) unmarshalInputCreateUserInput(ctx context.Context, o
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"email", "status", "preferLanguage", "password", "firstName", "lastName", "avatar", "isOwner", "dailyTokenLimit", "scopes", "projectIDs", "roleIDs"}
+	fieldsInOrder := [...]string{"email", "status", "preferLanguage", "password", "nickname", "firstName", "lastName", "avatar", "isOwner", "dailyTokenLimit", "scopes", "projectIDs", "roleIDs"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -67482,6 +67620,13 @@ func (ec *executionContext) unmarshalInputCreateUserInput(ctx context.Context, o
 				return it, err
 			}
 			it.Password = data
+		case "nickname":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("nickname"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Nickname = data
 		case "firstName":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("firstName"))
 			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
@@ -80526,13 +80671,20 @@ func (ec *executionContext) unmarshalInputUpdateMeInput(ctx context.Context, obj
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"firstName", "lastName", "preferLanguage", "avatar"}
+	fieldsInOrder := [...]string{"nickname", "firstName", "lastName", "preferLanguage", "avatar"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "nickname":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("nickname"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Nickname = data
 		case "firstName":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("firstName"))
 			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
@@ -82109,7 +82261,7 @@ func (ec *executionContext) unmarshalInputUpdateUserInput(ctx context.Context, o
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"email", "status", "preferLanguage", "password", "firstName", "lastName", "avatar", "clearAvatar", "isOwner", "dailyTokenLimit", "scopes", "appendScopes", "clearScopes", "addProjectIDs", "removeProjectIDs", "clearProjects", "addRoleIDs", "removeRoleIDs", "clearRoles"}
+	fieldsInOrder := [...]string{"email", "status", "preferLanguage", "password", "nickname", "firstName", "lastName", "avatar", "clearAvatar", "isOwner", "dailyTokenLimit", "scopes", "appendScopes", "clearScopes", "addProjectIDs", "removeProjectIDs", "clearProjects", "addRoleIDs", "removeRoleIDs", "clearRoles"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -82144,6 +82296,13 @@ func (ec *executionContext) unmarshalInputUpdateUserInput(ctx context.Context, o
 				return it, err
 			}
 			it.Password = data
+		case "nickname":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("nickname"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Nickname = data
 		case "firstName":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("firstName"))
 			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
@@ -84718,7 +84877,7 @@ func (ec *executionContext) unmarshalInputUserWhereInput(ctx context.Context, ob
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"not", "and", "or", "id", "idNEQ", "idIn", "idNotIn", "idGT", "idGTE", "idLT", "idLTE", "createdAt", "createdAtNEQ", "createdAtIn", "createdAtNotIn", "createdAtGT", "createdAtGTE", "createdAtLT", "createdAtLTE", "updatedAt", "updatedAtNEQ", "updatedAtIn", "updatedAtNotIn", "updatedAtGT", "updatedAtGTE", "updatedAtLT", "updatedAtLTE", "email", "emailNEQ", "emailIn", "emailNotIn", "emailGT", "emailGTE", "emailLT", "emailLTE", "emailContains", "emailHasPrefix", "emailHasSuffix", "emailEqualFold", "emailContainsFold", "status", "statusNEQ", "statusIn", "statusNotIn", "preferLanguage", "preferLanguageNEQ", "preferLanguageIn", "preferLanguageNotIn", "preferLanguageGT", "preferLanguageGTE", "preferLanguageLT", "preferLanguageLTE", "preferLanguageContains", "preferLanguageHasPrefix", "preferLanguageHasSuffix", "preferLanguageEqualFold", "preferLanguageContainsFold", "firstName", "firstNameNEQ", "firstNameIn", "firstNameNotIn", "firstNameGT", "firstNameGTE", "firstNameLT", "firstNameLTE", "firstNameContains", "firstNameHasPrefix", "firstNameHasSuffix", "firstNameEqualFold", "firstNameContainsFold", "lastName", "lastNameNEQ", "lastNameIn", "lastNameNotIn", "lastNameGT", "lastNameGTE", "lastNameLT", "lastNameLTE", "lastNameContains", "lastNameHasPrefix", "lastNameHasSuffix", "lastNameEqualFold", "lastNameContainsFold", "avatar", "avatarNEQ", "avatarIn", "avatarNotIn", "avatarGT", "avatarGTE", "avatarLT", "avatarLTE", "avatarContains", "avatarHasPrefix", "avatarHasSuffix", "avatarIsNil", "avatarNotNil", "avatarEqualFold", "avatarContainsFold", "isOwner", "isOwnerNEQ", "dailyTokenLimit", "dailyTokenLimitNEQ", "dailyTokenLimitIn", "dailyTokenLimitNotIn", "dailyTokenLimitGT", "dailyTokenLimitGTE", "dailyTokenLimitLT", "dailyTokenLimitLTE", "hasProjects", "hasProjectsWith", "hasAPIKeys", "hasAPIKeysWith", "hasDonatedChannels", "hasDonatedChannelsWith", "hasRoles", "hasRolesWith", "hasChannelOverrideTemplates", "hasChannelOverrideTemplatesWith", "hasOidcIdentities", "hasOidcIdentitiesWith", "hasProjectUsers", "hasProjectUsersWith", "hasUserRoles", "hasUserRolesWith"}
+	fieldsInOrder := [...]string{"not", "and", "or", "id", "idNEQ", "idIn", "idNotIn", "idGT", "idGTE", "idLT", "idLTE", "createdAt", "createdAtNEQ", "createdAtIn", "createdAtNotIn", "createdAtGT", "createdAtGTE", "createdAtLT", "createdAtLTE", "updatedAt", "updatedAtNEQ", "updatedAtIn", "updatedAtNotIn", "updatedAtGT", "updatedAtGTE", "updatedAtLT", "updatedAtLTE", "email", "emailNEQ", "emailIn", "emailNotIn", "emailGT", "emailGTE", "emailLT", "emailLTE", "emailContains", "emailHasPrefix", "emailHasSuffix", "emailEqualFold", "emailContainsFold", "status", "statusNEQ", "statusIn", "statusNotIn", "preferLanguage", "preferLanguageNEQ", "preferLanguageIn", "preferLanguageNotIn", "preferLanguageGT", "preferLanguageGTE", "preferLanguageLT", "preferLanguageLTE", "preferLanguageContains", "preferLanguageHasPrefix", "preferLanguageHasSuffix", "preferLanguageEqualFold", "preferLanguageContainsFold", "nickname", "nicknameNEQ", "nicknameIn", "nicknameNotIn", "nicknameGT", "nicknameGTE", "nicknameLT", "nicknameLTE", "nicknameContains", "nicknameHasPrefix", "nicknameHasSuffix", "nicknameEqualFold", "nicknameContainsFold", "firstName", "firstNameNEQ", "firstNameIn", "firstNameNotIn", "firstNameGT", "firstNameGTE", "firstNameLT", "firstNameLTE", "firstNameContains", "firstNameHasPrefix", "firstNameHasSuffix", "firstNameEqualFold", "firstNameContainsFold", "lastName", "lastNameNEQ", "lastNameIn", "lastNameNotIn", "lastNameGT", "lastNameGTE", "lastNameLT", "lastNameLTE", "lastNameContains", "lastNameHasPrefix", "lastNameHasSuffix", "lastNameEqualFold", "lastNameContainsFold", "avatar", "avatarNEQ", "avatarIn", "avatarNotIn", "avatarGT", "avatarGTE", "avatarLT", "avatarLTE", "avatarContains", "avatarHasPrefix", "avatarHasSuffix", "avatarIsNil", "avatarNotNil", "avatarEqualFold", "avatarContainsFold", "isOwner", "isOwnerNEQ", "dailyTokenLimit", "dailyTokenLimitNEQ", "dailyTokenLimitIn", "dailyTokenLimitNotIn", "dailyTokenLimitGT", "dailyTokenLimitGTE", "dailyTokenLimitLT", "dailyTokenLimitLTE", "hasProjects", "hasProjectsWith", "hasAPIKeys", "hasAPIKeysWith", "hasDonatedChannels", "hasDonatedChannelsWith", "hasRoles", "hasRolesWith", "hasChannelOverrideTemplates", "hasChannelOverrideTemplatesWith", "hasOidcIdentities", "hasOidcIdentitiesWith", "hasProjectUsers", "hasProjectUsersWith", "hasUserRoles", "hasUserRolesWith"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -85156,6 +85315,97 @@ func (ec *executionContext) unmarshalInputUserWhereInput(ctx context.Context, ob
 				return it, err
 			}
 			it.PreferLanguageContainsFold = data
+		case "nickname":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("nickname"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Nickname = data
+		case "nicknameNEQ":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("nicknameNEQ"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.NicknameNEQ = data
+		case "nicknameIn":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("nicknameIn"))
+			data, err := ec.unmarshalOString2ᚕstringᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.NicknameIn = data
+		case "nicknameNotIn":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("nicknameNotIn"))
+			data, err := ec.unmarshalOString2ᚕstringᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.NicknameNotIn = data
+		case "nicknameGT":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("nicknameGT"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.NicknameGT = data
+		case "nicknameGTE":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("nicknameGTE"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.NicknameGTE = data
+		case "nicknameLT":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("nicknameLT"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.NicknameLT = data
+		case "nicknameLTE":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("nicknameLTE"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.NicknameLTE = data
+		case "nicknameContains":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("nicknameContains"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.NicknameContains = data
+		case "nicknameHasPrefix":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("nicknameHasPrefix"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.NicknameHasPrefix = data
+		case "nicknameHasSuffix":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("nicknameHasSuffix"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.NicknameHasSuffix = data
+		case "nicknameEqualFold":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("nicknameEqualFold"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.NicknameEqualFold = data
+		case "nicknameContainsFold":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("nicknameContainsFold"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.NicknameContainsFold = data
 		case "firstName":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("firstName"))
 			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
@@ -87601,6 +87851,11 @@ func (ec *executionContext) _CampusUsageLeaderboardEntry(ctx context.Context, se
 			out.Values[i] = graphql.MarshalString("CampusUsageLeaderboardEntry")
 		case "rank":
 			out.Values[i] = ec._CampusUsageLeaderboardEntry_rank(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "displayName":
+			out.Values[i] = ec._CampusUsageLeaderboardEntry_displayName(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
@@ -103507,6 +103762,11 @@ func (ec *executionContext) _User(ctx context.Context, sel ast.SelectionSet, obj
 			if out.Values[i] == graphql.Null {
 				atomic.AddUint32(&out.Invalids, 1)
 			}
+		case "nickname":
+			out.Values[i] = ec._User_nickname(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
 		case "firstName":
 			out.Values[i] = ec._User_firstName(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
@@ -103980,6 +104240,11 @@ func (ec *executionContext) _UserInfo(ctx context.Context, sel ast.SelectionSet,
 			}
 		case "email":
 			out.Values[i] = ec._UserInfo_email(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "nickname":
+			out.Values[i] = ec._UserInfo_nickname(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				atomic.AddUint32(&out.Invalids, 1)
 			}

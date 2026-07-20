@@ -229,6 +229,7 @@ the underlying user, API key, channel, model, request content, or cost.
 """
 type CampusUsageLeaderboardEntry {
   rank: Int!
+  displayName: String!
   publicAlias: String!
   isMe: Boolean!
   recordedTokens: Float!

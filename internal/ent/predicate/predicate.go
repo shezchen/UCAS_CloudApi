@@ -30,6 +30,9 @@ type ChannelProbe func(*sql.Selector)
 // DataStorage is the predicate function for datastorage builders.
 type DataStorage func(*sql.Selector)
 
+// EmailVerificationChallenge is the predicate function for emailverificationchallenge builders.
+type EmailVerificationChallenge func(*sql.Selector)
+
 // Model is the predicate function for model builders.
 type Model func(*sql.Selector)
 

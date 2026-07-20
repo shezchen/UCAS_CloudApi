@@ -25,18 +25,21 @@ import (
 	"github.com/looplj/axonhub/internal/tracing"
 )
 
-func New(config Config) *Server {
+func New(config Config) (*Server, error) {
 	if !config.Debug {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
 	engine := gin.New()
+	if err := engine.SetTrustedProxies(config.TrustedProxies); err != nil {
+		return nil, fmt.Errorf("configure trusted proxies: %w", err)
+	}
 	engine.Use(middleware.Recovery())
 
 	return &Server{
 		Config: config,
 		Engine: engine,
-	}
+	}, nil
 }
 
 type Server struct {

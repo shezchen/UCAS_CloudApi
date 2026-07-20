@@ -292,6 +292,46 @@ var (
 			},
 		},
 	}
+	// EmailVerificationChallengesColumns holds the columns for the "email_verification_challenges" table.
+	EmailVerificationChallengesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "created_at", Type: field.TypeTime, Default: schema.Expr("CURRENT_TIMESTAMP")},
+		{Name: "updated_at", Type: field.TypeTime, Default: schema.Expr("CURRENT_TIMESTAMP")},
+		{Name: "email", Type: field.TypeString, Size: 320},
+		{Name: "code_digest", Type: field.TypeString, Size: 64},
+		{Name: "source_hash", Type: field.TypeString, Size: 64},
+		{Name: "expires_at", Type: field.TypeTime},
+		{Name: "attempts", Type: field.TypeInt, Default: 0},
+		{Name: "consumed_at", Type: field.TypeTime, Nullable: true},
+	}
+	// EmailVerificationChallengesTable holds the schema information for the "email_verification_challenges" table.
+	EmailVerificationChallengesTable = &schema.Table{
+		Name:       "email_verification_challenges",
+		Columns:    EmailVerificationChallengesColumns,
+		PrimaryKey: []*schema.Column{EmailVerificationChallengesColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "emailverificationchallenge_email_created_at",
+				Unique:  false,
+				Columns: []*schema.Column{EmailVerificationChallengesColumns[3], EmailVerificationChallengesColumns[1]},
+			},
+			{
+				Name:    "emailverificationchallenge_source_hash_created_at",
+				Unique:  false,
+				Columns: []*schema.Column{EmailVerificationChallengesColumns[5], EmailVerificationChallengesColumns[1]},
+			},
+			{
+				Name:    "emailverificationchallenge_expires_at",
+				Unique:  false,
+				Columns: []*schema.Column{EmailVerificationChallengesColumns[6]},
+			},
+			{
+				Name:    "emailverificationchallenge_email_consumed_at_expires_at",
+				Unique:  false,
+				Columns: []*schema.Column{EmailVerificationChallengesColumns[3], EmailVerificationChallengesColumns[8], EmailVerificationChallengesColumns[6]},
+			},
+		},
+	}
 	// ModelsColumns holds the columns for the "models" table.
 	ModelsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt, Increment: true},
@@ -880,6 +920,7 @@ var (
 		{Name: "status", Type: field.TypeEnum, Enums: []string{"activated", "deactivated"}, Default: "activated"},
 		{Name: "prefer_language", Type: field.TypeString, Default: "en"},
 		{Name: "password", Type: field.TypeString},
+		{Name: "nickname", Type: field.TypeString, Size: 24, Default: ""},
 		{Name: "first_name", Type: field.TypeString, Default: ""},
 		{Name: "last_name", Type: field.TypeString, Default: ""},
 		{Name: "avatar", Type: field.TypeString, Nullable: true, SchemaType: map[string]string{"mysql": "mediumtext"}},
@@ -1017,6 +1058,7 @@ var (
 		ChannelOverrideTemplatesTable,
 		ChannelProbesTable,
 		DataStoragesTable,
+		EmailVerificationChallengesTable,
 		ModelsTable,
 		OidcIdentitiesTable,
 		ProjectsTable,

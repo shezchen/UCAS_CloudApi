@@ -14,19 +14,22 @@ import (
 	"github.com/looplj/axonhub/internal/ent/usagelog"
 	"github.com/looplj/axonhub/internal/ent/userproject"
 	"github.com/looplj/axonhub/internal/pkg/xtime"
+	"github.com/looplj/axonhub/internal/server/biz"
 )
 
 const campusLeaderboardLimit = 50
 
 type campusUsageAggregate struct {
-	UserID            int   `json:"user_id"`
-	DailyTokenLimit   int64 `json:"daily_token_limit"`
-	RecordedTokens    int64 `json:"recorded_tokens"`
-	MeteredRequestCnt int   `json:"metered_request_count"`
+	UserID            int    `json:"user_id"`
+	Nickname          string `json:"nickname"`
+	DailyTokenLimit   int64  `json:"daily_token_limit"`
+	RecordedTokens    int64  `json:"recorded_tokens"`
+	MeteredRequestCnt int    `json:"metered_request_count"`
 }
 
 type rankedCampusUsage struct {
 	UserID            int
+	DisplayName       string
 	PublicAlias       string
 	RecordedTokens    int64
 	MeteredRequestCnt int
@@ -49,16 +52,27 @@ func campusLimitPercent(recordedTokens, dailyTokenLimit int64) float64 {
 	return float64(recordedTokens) / float64(dailyTokenLimit) * 100
 }
 
-func rankCampusUsage(projectID, currentUserID int, aggregates []campusUsageAggregate) []*CampusUsageLeaderboardEntry {
+func campusDisplayName(nickname, publicAlias string) string {
+	normalized, err := biz.NormalizeCampusNickname(nickname)
+	if err != nil || normalized == "" {
+		return publicAlias
+	}
+
+	return normalized
+}
+
+func rankCampusUsage(projectID, currentUserID int, currentNickname string, aggregates []campusUsageAggregate) []*CampusUsageLeaderboardEntry {
 	foundCurrentUser := false
 	ranked := make([]rankedCampusUsage, 0, len(aggregates)+1)
 	for _, aggregate := range aggregates {
 		if aggregate.UserID == currentUserID {
 			foundCurrentUser = true
 		}
+		publicAlias := campusPublicAlias(projectID, aggregate.UserID)
 		ranked = append(ranked, rankedCampusUsage{
 			UserID:            aggregate.UserID,
-			PublicAlias:       campusPublicAlias(projectID, aggregate.UserID),
+			DisplayName:       campusDisplayName(aggregate.Nickname, publicAlias),
+			PublicAlias:       publicAlias,
 			RecordedTokens:    aggregate.RecordedTokens,
 			MeteredRequestCnt: aggregate.MeteredRequestCnt,
 			LimitPercent:      campusLimitPercent(aggregate.RecordedTokens, aggregate.DailyTokenLimit),
@@ -66,9 +80,11 @@ func rankCampusUsage(projectID, currentUserID int, aggregates []campusUsageAggre
 	}
 
 	if !foundCurrentUser {
+		publicAlias := campusPublicAlias(projectID, currentUserID)
 		ranked = append(ranked, rankedCampusUsage{
 			UserID:      currentUserID,
-			PublicAlias: campusPublicAlias(projectID, currentUserID),
+			DisplayName: campusDisplayName(currentNickname, publicAlias),
+			PublicAlias: publicAlias,
 		})
 	}
 
@@ -90,6 +106,7 @@ func rankCampusUsage(projectID, currentUserID int, aggregates []campusUsageAggre
 		}
 		entries = append(entries, &CampusUsageLeaderboardEntry{
 			Rank:                i + 1,
+			DisplayName:         item.DisplayName,
 			PublicAlias:         item.PublicAlias,
 			IsMe:                isCurrentUser,
 			RecordedTokens:      float64(item.RecordedTokens),
@@ -159,16 +176,17 @@ func (r *queryResolver) resolveCampusUsageLeaderboard(ctx context.Context) ([]*C
 			// a key must not erase its already-recorded contribution to today's use.
 			s.Select(
 				sql.As(userTable.C("id"), "user_id"),
+				sql.As(userTable.C("nickname"), "nickname"),
 				sql.As(userTable.C("daily_token_limit"), "daily_token_limit"),
 				sql.As(fmt.Sprintf("COALESCE(SUM(%s), 0)", s.C(usagelog.FieldTotalTokens)), "recorded_tokens"),
 				sql.As(sql.Count(s.C(usagelog.FieldID)), "metered_request_count"),
 			).
-				GroupBy(userTable.C("id"), userTable.C("daily_token_limit"))
+				GroupBy(userTable.C("id"), userTable.C("nickname"), userTable.C("daily_token_limit"))
 		}).
 		Scan(restrictedReadCtx, &aggregates)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get campus usage leaderboard: %w", err)
 	}
 
-	return rankCampusUsage(projectID, currentUser.ID, aggregates), nil
+	return rankCampusUsage(projectID, currentUser.ID, currentUser.Nickname, aggregates), nil
 }

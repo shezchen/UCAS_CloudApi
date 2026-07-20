@@ -2,6 +2,7 @@
 type UserInfo {
   id: ID!
   email: String!
+  nickname: String!
   firstName: String!
   lastName: String!
   isOwner: Boolean!
@@ -39,6 +40,7 @@ extend type Query {
 }
 
 input UpdateMeInput {
+  nickname: String
   firstName: String
   lastName: String
   preferLanguage: String

@@ -1291,6 +1291,62 @@ func TestNormalizeCampusRegistrationEmail(t *testing.T) {
 	}
 }
 
+func TestNormalizeCampusNickname(t *testing.T) {
+	for input, expected := range map[string]string{
+		"":           "",
+		"  校园小猫  ":   "校园小猫",
+		"Lin Junhai": "Lin Junhai",
+	} {
+		normalized, err := NormalizeCampusNickname(input)
+		require.NoError(t, err, input)
+		require.Equal(t, expected, normalized)
+	}
+
+	for _, nickname := range []string{
+		"鱼",
+		strings.Repeat("同", 25),
+		"Owner",
+		"管 理 员",
+		"同学-deadbeef",
+		"小\u200b明",
+		"小\n明",
+	} {
+		_, err := NormalizeCampusNickname(nickname)
+		require.ErrorIs(t, err, ErrInvalidNickname, nickname)
+	}
+}
+
+func TestUserServiceUpdateOwnProfileNickname(t *testing.T) {
+	userService, client := setupTestUserService(t)
+	defer client.Close()
+
+	ctx := authz.WithTestBypass(ent.NewContext(t.Context(), client))
+	member, err := client.User.Create().
+		SetEmail("nickname@mails.ucas.ac.cn").
+		SetPassword("password").
+		Save(ctx)
+	require.NoError(t, err)
+	memberCtx := contexts.WithUser(ctx, member)
+
+	nickname := "  校园小猫  "
+	updated, err := userService.UpdateOwnProfile(memberCtx, ent.UpdateUserInput{Nickname: &nickname})
+	require.NoError(t, err)
+	require.Equal(t, "校园小猫", updated.Nickname)
+	require.Equal(t, "校园小猫", ConvertUserToUserInfo(memberCtx, updated).Nickname)
+
+	reserved := "系统"
+	_, err = userService.UpdateOwnProfile(memberCtx, ent.UpdateUserInput{Nickname: &reserved})
+	require.ErrorIs(t, err, ErrInvalidNickname)
+	persisted, err := client.User.Get(ctx, member.ID)
+	require.NoError(t, err)
+	require.Equal(t, "校园小猫", persisted.Nickname)
+
+	clearNickname := ""
+	updated, err = userService.UpdateOwnProfile(memberCtx, ent.UpdateUserInput{Nickname: &clearNickname})
+	require.NoError(t, err)
+	require.Empty(t, updated.Nickname)
+}
+
 func TestUpdateUserStatus_CacheInvalidation(t *testing.T) {
 	userService, client := setupTestUserService(t)
 	defer client.Close()

@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"entgo.io/ent/dialect/sql"
 	"github.com/samber/lo"
@@ -29,7 +31,11 @@ import (
 )
 
 const (
-	maxRetryResponseTimeoutSeconds = 600
+	maxRetryResponseTimeoutSeconds      = 600
+	maxCampusFriendLinks                = 20
+	maxCampusFriendLinkNameRunes        = 80
+	maxCampusFriendLinkDescriptionRunes = 500
+	maxCampusFriendLinkURLBytes         = 2048
 )
 
 const (
@@ -117,6 +123,11 @@ const (
 	// SystemKeySecuritySettings is the key used to store security settings.
 	// The value is JSON-encoded SecuritySettings struct.
 	SystemKeySecuritySettings = "security_settings"
+
+	// SystemKeyCampusFriendLinks is the key used to store Owner-managed links
+	// shown to campus project members in the sidebar. The value is a
+	// JSON-encoded []CampusFriendLink.
+	SystemKeyCampusFriendLinks = "campus_friend_links"
 )
 
 // SystemGeneralSettings represents general system configuration settings.
@@ -124,6 +135,14 @@ type SystemGeneralSettings struct {
 	// CurrencyCode is the code used for currency display (e.g., USD, RMB).
 	CurrencyCode string `json:"currency_code"`
 	Timezone     string `json:"timezone"`
+}
+
+// CampusFriendLink is a user-visible external link configured by the system
+// Owner. The slice order is preserved for sidebar rendering.
+type CampusFriendLink struct {
+	Name        string `json:"name"`
+	URL         string `json:"url"`
+	Description string `json:"description"`
 }
 
 // VideoStorageSettings represents system settings for persisting generated videos.
@@ -1334,6 +1353,125 @@ func (s *SystemService) SetGeneralSettings(ctx context.Context, settings SystemG
 	s.mu.Unlock()
 
 	return nil
+}
+
+// CampusFriendLinks retrieves the Owner-managed campus friend links. An
+// unconfigured system deliberately returns an empty, non-nil list so callers
+// can render an absent friend-links group without any seeded URLs.
+func (s *SystemService) CampusFriendLinks(ctx context.Context) ([]CampusFriendLink, error) {
+	value, err := s.getSystemValue(ctx, SystemKeyCampusFriendLinks)
+	if err != nil {
+		if ent.IsNotFound(err) {
+			return []CampusFriendLink{}, nil
+		}
+
+		return nil, fmt.Errorf("failed to get campus friend links: %w", err)
+	}
+
+	var links []CampusFriendLink
+	if err := json.Unmarshal([]byte(value), &links); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal campus friend links: %w", err)
+	}
+
+	normalized, err := normalizeCampusFriendLinks(links)
+	if err != nil {
+		return nil, fmt.Errorf("invalid stored campus friend links: %w", err)
+	}
+
+	return normalized, nil
+}
+
+// SetCampusFriendLinks validates, normalizes, and persists the full ordered
+// friend-links list. Replacing the list makes Owner maintenance atomic and
+// avoids coupling it to unrelated general settings.
+func (s *SystemService) SetCampusFriendLinks(ctx context.Context, links []CampusFriendLink) error {
+	normalized, err := normalizeCampusFriendLinks(links)
+	if err != nil {
+		return err
+	}
+
+	jsonBytes, err := json.Marshal(normalized)
+	if err != nil {
+		return fmt.Errorf("failed to marshal campus friend links: %w", err)
+	}
+
+	if err := s.setSystemValue(ctx, SystemKeyCampusFriendLinks, string(jsonBytes)); err != nil {
+		return fmt.Errorf("failed to set campus friend links: %w", err)
+	}
+
+	return nil
+}
+
+func normalizeCampusFriendLinks(links []CampusFriendLink) ([]CampusFriendLink, error) {
+	if len(links) > maxCampusFriendLinks {
+		return nil, fmt.Errorf("at most %d campus friend links are allowed", maxCampusFriendLinks)
+	}
+
+	normalized := make([]CampusFriendLink, 0, len(links))
+	seenNames := make(map[string]struct{}, len(links))
+	seenURLs := make(map[string]struct{}, len(links))
+
+	for i, link := range links {
+		name := strings.TrimSpace(link.Name)
+		if name == "" {
+			return nil, fmt.Errorf("campus friend link %d has an empty name", i+1)
+		}
+		if !utf8.ValidString(name) {
+			return nil, fmt.Errorf("campus friend link %d name is not valid UTF-8", i+1)
+		}
+		if utf8.RuneCountInString(name) > maxCampusFriendLinkNameRunes {
+			return nil, fmt.Errorf("campus friend link %d name exceeds %d characters", i+1, maxCampusFriendLinkNameRunes)
+		}
+
+		description := strings.TrimSpace(link.Description)
+		if !utf8.ValidString(description) {
+			return nil, fmt.Errorf("campus friend link %d description is not valid UTF-8", i+1)
+		}
+		if utf8.RuneCountInString(description) > maxCampusFriendLinkDescriptionRunes {
+			return nil, fmt.Errorf("campus friend link %d description exceeds %d characters", i+1, maxCampusFriendLinkDescriptionRunes)
+		}
+
+		urlValue := strings.TrimSpace(link.URL)
+		if urlValue == "" {
+			return nil, fmt.Errorf("campus friend link %d has an empty URL", i+1)
+		}
+		if len(urlValue) > maxCampusFriendLinkURLBytes {
+			return nil, fmt.Errorf("campus friend link %d URL exceeds %d bytes", i+1, maxCampusFriendLinkURLBytes)
+		}
+
+		parsedURL, err := url.Parse(urlValue)
+		if err != nil || parsedURL == nil {
+			return nil, fmt.Errorf("campus friend link %d has an invalid URL", i+1)
+		}
+
+		parsedURL.Scheme = strings.ToLower(parsedURL.Scheme)
+		parsedURL.Host = strings.ToLower(parsedURL.Host)
+		if (parsedURL.Scheme != "https" && parsedURL.Scheme != "http") || parsedURL.Host == "" || parsedURL.Hostname() == "" || parsedURL.Opaque != "" {
+			return nil, fmt.Errorf("campus friend link %d URL must be an absolute HTTP(S) URL", i+1)
+		}
+		if parsedURL.User != nil {
+			return nil, fmt.Errorf("campus friend link %d URL must not include user credentials", i+1)
+		}
+
+		normalizedURL := parsedURL.String()
+		nameKey := strings.ToLower(name)
+		if _, exists := seenNames[nameKey]; exists {
+			return nil, fmt.Errorf("campus friend link %d duplicates a link name", i+1)
+		}
+		if _, exists := seenURLs[normalizedURL]; exists {
+			return nil, fmt.Errorf("campus friend link %d duplicates a link URL", i+1)
+		}
+
+		seenNames[nameKey] = struct{}{}
+		seenURLs[normalizedURL] = struct{}{}
+		normalized = append(normalized, CampusFriendLink{
+			Name:        name,
+			URL:         normalizedURL,
+			Description: description,
+		})
+	}
+
+	return normalized, nil
 }
 
 // DefaultDataStorageID retrieves the default data storage ID from system settings.

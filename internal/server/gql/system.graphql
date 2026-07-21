@@ -301,6 +301,21 @@ input UpdateSystemGeneralSettingsInput {
   timezone: String
 }
 
+"""
+An Owner-managed external link shown to campus project members.
+"""
+type CampusFriendLink {
+  name: String!
+  url: String!
+  description: String!
+}
+
+input CampusFriendLinkInput {
+  name: String!
+  url: String!
+  description: String
+}
+
 type VideoStorageSettings {
   enabled: Boolean!
   dataStorageID: Int!
@@ -379,6 +394,7 @@ extend type Mutation {
   deleteProxyPreset(url: String!): Boolean!
   updateUserAgentPassThroughSettings(input: UpdateUserAgentPassThroughSettingsInput!): Boolean!
   updatePassThroughSettings(input: UpdatePassThroughSettingsInput!): Boolean!
+  updateCampusFriendLinks(input: [CampusFriendLinkInput!]!): Boolean!
 }
 
 extend type Query {
@@ -438,6 +454,7 @@ extend type Query {
   checkForUpdate: VersionCheck!
   systemChannelSettings: SystemChannelSettings!
   systemGeneralSettings: SystemGeneralSettings!
+  campusFriendLinks: [CampusFriendLink!]!
   videoStorageSettings: VideoStorageSettings!
   quotaEnforcementSettings: QuotaEnforcementSettings!
   securitySettings: SecuritySettings!

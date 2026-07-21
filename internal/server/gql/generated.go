@@ -287,6 +287,12 @@ type ComplexityRoot struct {
 		Updated  func(childComplexity int) int
 	}
 
+	CampusFriendLink struct {
+		Description func(childComplexity int) int
+		Name        func(childComplexity int) int
+		URL         func(childComplexity int) int
+	}
+
 	CampusUsageLeaderboardEntry struct {
 		DisplayName         func(childComplexity int) int
 		IsMe                func(childComplexity int) int
@@ -963,6 +969,7 @@ type ComplexityRoot struct {
 		UpdateAPIKeyStatus                   func(childComplexity int, id objects.GUID, status apikey.Status) int
 		UpdateAutoBackupSettings             func(childComplexity int, input UpdateAutoBackupSettingsInput) int
 		UpdateBrandSettings                  func(childComplexity int, input UpdateBrandSettingsInput) int
+		UpdateCampusFriendLinks              func(childComplexity int, input []*CampusFriendLinkInput) int
 		UpdateChannel                        func(childComplexity int, id objects.GUID, input ent.UpdateChannelInput) int
 		UpdateChannelOverrideTemplate        func(childComplexity int, id objects.GUID, input ent.UpdateChannelOverrideTemplateInput) int
 		UpdateChannelStatus                  func(childComplexity int, id objects.GUID, status channel.Status) int
@@ -1254,6 +1261,7 @@ type ComplexityRoot struct {
 		AllScopes                    func(childComplexity int, level *string) int
 		AutoBackupSettings           func(childComplexity int) int
 		BrandSettings                func(childComplexity int) int
+		CampusFriendLinks            func(childComplexity int) int
 		CampusUsageLeaderboard       func(childComplexity int, timeWindow *string) int
 		ChannelOverrideTemplates     func(childComplexity int, after *entgql.Cursor[int], first *int, before *entgql.Cursor[int], last *int, orderBy *ent.ChannelOverrideTemplateOrder, where *ent.ChannelOverrideTemplateWhereInput) int
 		ChannelPerformanceStats      func(childComplexity int) int
@@ -2159,6 +2167,7 @@ type MutationResolver interface {
 	DeleteProxyPreset(ctx context.Context, url string) (bool, error)
 	UpdateUserAgentPassThroughSettings(ctx context.Context, input UpdateUserAgentPassThroughSettingsInput) (bool, error)
 	UpdatePassThroughSettings(ctx context.Context, input UpdatePassThroughSettingsInput) (bool, error)
+	UpdateCampusFriendLinks(ctx context.Context, input []*CampusFriendLinkInput) (bool, error)
 	ClearCache(ctx context.Context, input ClearCacheInput) (*ClearCachePayload, error)
 	CreateModel(ctx context.Context, input ent.CreateModelInput) (*ent.Model, error)
 	BulkCreateModels(ctx context.Context, inputs []*ent.CreateModelInput) ([]*ent.Model, error)
@@ -2274,6 +2283,7 @@ type QueryResolver interface {
 	CheckForUpdate(ctx context.Context) (*VersionCheck, error)
 	SystemChannelSettings(ctx context.Context) (*biz.SystemChannelSettings, error)
 	SystemGeneralSettings(ctx context.Context) (*biz.SystemGeneralSettings, error)
+	CampusFriendLinks(ctx context.Context) ([]*biz.CampusFriendLink, error)
 	VideoStorageSettings(ctx context.Context) (*biz.VideoStorageSettings, error)
 	QuotaEnforcementSettings(ctx context.Context) (*biz.QuotaEnforcementSettings, error)
 	SecuritySettings(ctx context.Context) (*biz.SecuritySettings, error)
@@ -3068,6 +3078,25 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.BulkUpdateChannelOrderingResult.Updated(childComplexity), true
+
+	case "CampusFriendLink.description":
+		if e.complexity.CampusFriendLink.Description == nil {
+			break
+		}
+
+		return e.complexity.CampusFriendLink.Description(childComplexity), true
+	case "CampusFriendLink.name":
+		if e.complexity.CampusFriendLink.Name == nil {
+			break
+		}
+
+		return e.complexity.CampusFriendLink.Name(childComplexity), true
+	case "CampusFriendLink.url":
+		if e.complexity.CampusFriendLink.URL == nil {
+			break
+		}
+
+		return e.complexity.CampusFriendLink.URL(childComplexity), true
 
 	case "CampusUsageLeaderboardEntry.displayName":
 		if e.complexity.CampusUsageLeaderboardEntry.DisplayName == nil {
@@ -6162,6 +6191,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Mutation.UpdateBrandSettings(childComplexity, args["input"].(UpdateBrandSettingsInput)), true
+	case "Mutation.updateCampusFriendLinks":
+		if e.complexity.Mutation.UpdateCampusFriendLinks == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_updateCampusFriendLinks_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Mutation.UpdateCampusFriendLinks(childComplexity, args["input"].([]*CampusFriendLinkInput)), true
 	case "Mutation.updateChannel":
 		if e.complexity.Mutation.UpdateChannel == nil {
 			break
@@ -7548,6 +7588,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Query.BrandSettings(childComplexity), true
+	case "Query.campusFriendLinks":
+		if e.complexity.Query.CampusFriendLinks == nil {
+			break
+		}
+
+		return e.complexity.Query.CampusFriendLinks(childComplexity), true
 	case "Query.campusUsageLeaderboard":
 		if e.complexity.Query.CampusUsageLeaderboard == nil {
 			break
@@ -10888,6 +10934,7 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputBulkImportChannelItem,
 		ec.unmarshalInputBulkImportChannelsInput,
 		ec.unmarshalInputBulkUpdateChannelOrderingInput,
+		ec.unmarshalInputCampusFriendLinkInput,
 		ec.unmarshalInputChannelCredentialsInput,
 		ec.unmarshalInputChannelEndpointInput,
 		ec.unmarshalInputChannelModelAssociationInput,
@@ -12359,6 +12406,17 @@ func (ec *executionContext) field_Mutation_updateBrandSettings_args(ctx context.
 	var err error
 	args := map[string]any{}
 	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input", ec.unmarshalNUpdateBrandSettingsInput2githubᚗcomᚋloopljᚋaxonhubᚋinternalᚋserverᚋgqlᚐUpdateBrandSettingsInput)
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_updateCampusFriendLinks_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input", ec.unmarshalNCampusFriendLinkInput2ᚕᚖgithubᚗcomᚋloopljᚋaxonhubᚋinternalᚋserverᚋgqlᚐCampusFriendLinkInputᚄ)
 	if err != nil {
 		return nil, err
 	}
@@ -18144,6 +18202,93 @@ func (ec *executionContext) fieldContext_BulkUpdateChannelOrderingResult_channel
 				return ec.fieldContext_Channel_liveLimiterStats(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type Channel", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CampusFriendLink_name(ctx context.Context, field graphql.CollectedField, obj *biz.CampusFriendLink) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CampusFriendLink_name,
+		func(ctx context.Context) (any, error) {
+			return obj.Name, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_CampusFriendLink_name(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CampusFriendLink",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CampusFriendLink_url(ctx context.Context, field graphql.CollectedField, obj *biz.CampusFriendLink) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CampusFriendLink_url,
+		func(ctx context.Context) (any, error) {
+			return obj.URL, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_CampusFriendLink_url(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CampusFriendLink",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CampusFriendLink_description(ctx context.Context, field graphql.CollectedField, obj *biz.CampusFriendLink) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CampusFriendLink_description,
+		func(ctx context.Context) (any, error) {
+			return obj.Description, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_CampusFriendLink_description(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CampusFriendLink",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
 		},
 	}
 	return fc, nil
@@ -34350,6 +34495,47 @@ func (ec *executionContext) fieldContext_Mutation_updatePassThroughSettings(ctx 
 	return fc, nil
 }
 
+func (ec *executionContext) _Mutation_updateCampusFriendLinks(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Mutation_updateCampusFriendLinks,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.resolvers.Mutation().UpdateCampusFriendLinks(ctx, fc.Args["input"].([]*CampusFriendLinkInput))
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Mutation_updateCampusFriendLinks(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_updateCampusFriendLinks_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Mutation_clearCache(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -43581,6 +43767,43 @@ func (ec *executionContext) fieldContext_Query_systemGeneralSettings(_ context.C
 				return ec.fieldContext_SystemGeneralSettings_timezone(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type SystemGeneralSettings", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_campusFriendLinks(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_campusFriendLinks,
+		func(ctx context.Context) (any, error) {
+			return ec.resolvers.Query().CampusFriendLinks(ctx)
+		},
+		nil,
+		ec.marshalNCampusFriendLink2ᚕᚖgithubᚗcomᚋloopljᚋaxonhubᚋinternalᚋserverᚋbizᚐCampusFriendLinkᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_campusFriendLinks(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "name":
+				return ec.fieldContext_CampusFriendLink_name(ctx, field)
+			case "url":
+				return ec.fieldContext_CampusFriendLink_url(ctx, field)
+			case "description":
+				return ec.fieldContext_CampusFriendLink_description(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type CampusFriendLink", field.Name)
 		},
 	}
 	return fc, nil
@@ -61982,6 +62205,47 @@ func (ec *executionContext) unmarshalInputBulkUpdateChannelOrderingInput(ctx con
 				return it, err
 			}
 			it.Channels = data
+		}
+	}
+
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputCampusFriendLinkInput(ctx context.Context, obj any) (CampusFriendLinkInput, error) {
+	var it CampusFriendLinkInput
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"name", "url", "description"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "name":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("name"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Name = data
+		case "url":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("url"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.URL = data
+		case "description":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("description"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Description = data
 		}
 	}
 
@@ -87866,6 +88130,55 @@ func (ec *executionContext) _BulkUpdateChannelOrderingResult(ctx context.Context
 	return out
 }
 
+var campusFriendLinkImplementors = []string{"CampusFriendLink"}
+
+func (ec *executionContext) _CampusFriendLink(ctx context.Context, sel ast.SelectionSet, obj *biz.CampusFriendLink) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, campusFriendLinkImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("CampusFriendLink")
+		case "name":
+			out.Values[i] = ec._CampusFriendLink_name(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "url":
+			out.Values[i] = ec._CampusFriendLink_url(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "description":
+			out.Values[i] = ec._CampusFriendLink_description(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.processDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
 var campusUsageLeaderboardEntryImplementors = []string{"CampusUsageLeaderboardEntry"}
 
 func (ec *executionContext) _CampusUsageLeaderboardEntry(ctx context.Context, sel ast.SelectionSet, obj *CampusUsageLeaderboardEntry) graphql.Marshaler {
@@ -93822,6 +94135,13 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "updateCampusFriendLinks":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_updateCampusFriendLinks(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
 		case "clearCache":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Mutation_clearCache(ctx, field)
@@ -97758,6 +98078,28 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 					}
 				}()
 				res = ec._Query_systemGeneralSettings(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "campusFriendLinks":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_campusFriendLinks(ctx, field)
 				if res == graphql.Null {
 					atomic.AddUint32(&fs.Invalids, 1)
 				}
@@ -106152,6 +106494,80 @@ func (ec *executionContext) marshalNBulkUpdateChannelOrderingResult2ᚖgithubᚗ
 		return graphql.Null
 	}
 	return ec._BulkUpdateChannelOrderingResult(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNCampusFriendLink2ᚕᚖgithubᚗcomᚋloopljᚋaxonhubᚋinternalᚋserverᚋbizᚐCampusFriendLinkᚄ(ctx context.Context, sel ast.SelectionSet, v []*biz.CampusFriendLink) graphql.Marshaler {
+	ret := make(graphql.Array, len(v))
+	var wg sync.WaitGroup
+	isLen1 := len(v) == 1
+	if !isLen1 {
+		wg.Add(len(v))
+	}
+	for i := range v {
+		i := i
+		fc := &graphql.FieldContext{
+			Index:  &i,
+			Result: &v[i],
+		}
+		ctx := graphql.WithFieldContext(ctx, fc)
+		f := func(i int) {
+			defer func() {
+				if r := recover(); r != nil {
+					ec.Error(ctx, ec.Recover(ctx, r))
+					ret = nil
+				}
+			}()
+			if !isLen1 {
+				defer wg.Done()
+			}
+			ret[i] = ec.marshalNCampusFriendLink2ᚖgithubᚗcomᚋloopljᚋaxonhubᚋinternalᚋserverᚋbizᚐCampusFriendLink(ctx, sel, v[i])
+		}
+		if isLen1 {
+			f(i)
+		} else {
+			go f(i)
+		}
+
+	}
+	wg.Wait()
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNCampusFriendLink2ᚖgithubᚗcomᚋloopljᚋaxonhubᚋinternalᚋserverᚋbizᚐCampusFriendLink(ctx context.Context, sel ast.SelectionSet, v *biz.CampusFriendLink) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._CampusFriendLink(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalNCampusFriendLinkInput2ᚕᚖgithubᚗcomᚋloopljᚋaxonhubᚋinternalᚋserverᚋgqlᚐCampusFriendLinkInputᚄ(ctx context.Context, v any) ([]*CampusFriendLinkInput, error) {
+	var vSlice []any
+	vSlice = graphql.CoerceList(v)
+	var err error
+	res := make([]*CampusFriendLinkInput, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNCampusFriendLinkInput2ᚖgithubᚗcomᚋloopljᚋaxonhubᚋinternalᚋserverᚋgqlᚐCampusFriendLinkInput(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) unmarshalNCampusFriendLinkInput2ᚖgithubᚗcomᚋloopljᚋaxonhubᚋinternalᚋserverᚋgqlᚐCampusFriendLinkInput(ctx context.Context, v any) (*CampusFriendLinkInput, error) {
+	res, err := ec.unmarshalInputCampusFriendLinkInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
 }
 
 func (ec *executionContext) marshalNCampusUsageLeaderboardEntry2ᚕᚖgithubᚗcomᚋloopljᚋaxonhubᚋinternalᚋserverᚋgqlᚐCampusUsageLeaderboardEntryᚄ(ctx context.Context, sel ast.SelectionSet, v []*CampusUsageLeaderboardEntry) graphql.Marshaler {

@@ -111,6 +111,12 @@ type BulkUpdateChannelOrderingResult struct {
 	Channels []*ent.Channel `json:"channels"`
 }
 
+type CampusFriendLinkInput struct {
+	Name        string  `json:"name"`
+	URL         string  `json:"url"`
+	Description *string `json:"description,omitempty"`
+}
+
 // Privacy-safe campus leaderboard entry for recorded usage in a selected period.
 // The public alias is stable only within the current project and does not expose
 // the underlying user, API key, channel, model, request content, or cost.

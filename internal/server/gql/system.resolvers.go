@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"time"
 
+	"entgo.io/ent/privacy"
 	"github.com/looplj/axonhub/internal/authz"
 	"github.com/looplj/axonhub/internal/build"
 	"github.com/looplj/axonhub/internal/contexts"
+	"github.com/looplj/axonhub/internal/ent/userproject"
 	"github.com/looplj/axonhub/internal/objects"
 	"github.com/looplj/axonhub/internal/scopes"
 	"github.com/looplj/axonhub/internal/server/biz"
@@ -323,6 +325,36 @@ func (r *mutationResolver) UpdatePassThroughSettings(ctx context.Context, input 
 	return true, nil
 }
 
+// UpdateCampusFriendLinks replaces the Owner-managed friend-links list.
+func (r *mutationResolver) UpdateCampusFriendLinks(ctx context.Context, input []*CampusFriendLinkInput) (bool, error) {
+	currentUser, ok := contexts.GetUser(ctx)
+	if !ok || currentUser == nil || !currentUser.IsOwner {
+		return false, ErrNotOwner
+	}
+
+	links := make([]biz.CampusFriendLink, 0, len(input))
+	for i, link := range input {
+		if link == nil {
+			return false, fmt.Errorf("campus friend link %d is required", i+1)
+		}
+		description := ""
+		if link.Description != nil {
+			description = *link.Description
+		}
+		links = append(links, biz.CampusFriendLink{
+			Name:        link.Name,
+			URL:         link.URL,
+			Description: description,
+		})
+	}
+
+	if err := r.systemService.SetCampusFriendLinks(ctx, links); err != nil {
+		return false, fmt.Errorf("failed to update campus friend links: %w", err)
+	}
+
+	return true, nil
+}
+
 // ClearCache is the resolver for the clearCache field.
 func (r *mutationResolver) ClearCache(ctx context.Context, input ClearCacheInput) (*ClearCachePayload, error) {
 	user, ok := contexts.GetUser(ctx)
@@ -512,6 +544,44 @@ func (r *queryResolver) SystemChannelSettings(ctx context.Context) (*biz.SystemC
 // SystemGeneralSettings is the resolver for the systemGeneralSettings field.
 func (r *queryResolver) SystemGeneralSettings(ctx context.Context) (*biz.SystemGeneralSettings, error) {
 	return r.systemService.GeneralSettings(ctx)
+}
+
+// CampusFriendLinks returns the safe, Owner-managed link DTO to the system
+// Owner or to a verified member of the selected campus project. System
+// settings normally require read:settings; the narrowly-scoped privacy bypass
+// occurs only after this membership check and exposes no other setting values.
+func (r *queryResolver) CampusFriendLinks(ctx context.Context) ([]*biz.CampusFriendLink, error) {
+	currentUser, ok := contexts.GetUser(ctx)
+	if !ok || currentUser == nil {
+		return nil, fmt.Errorf("user not found in context")
+	}
+
+	if !currentUser.IsOwner {
+		projectID, ok := contexts.GetProjectID(ctx)
+		if !ok {
+			return nil, fmt.Errorf("project ID not found in context")
+		}
+
+		isMember, err := r.client.UserProject.Query().
+			Where(
+				userproject.UserIDEQ(currentUser.ID),
+				userproject.ProjectIDEQ(projectID),
+			).
+			Exist(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to verify project membership: %w", err)
+		}
+		if !isMember {
+			return nil, fmt.Errorf("permission denied: current user is not a project member")
+		}
+	}
+
+	links, err := r.systemService.CampusFriendLinks(privacy.DecisionContext(ctx, privacy.Allow))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get campus friend links: %w", err)
+	}
+
+	return lo.ToSlicePtr(links), nil
 }
 
 // VideoStorageSettings is the resolver for the videoStorageSettings field.

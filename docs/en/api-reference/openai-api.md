@@ -334,6 +334,7 @@ AxonHub provides an enhanced `/v1/models` endpoint that lists available models w
 | `max_output_tokens` | integer | Maximum output tokens |
 | `modalities` | object | Model supported input/output types (input, output) |
 | `capabilities` | object | Model capabilities (vision, tool_call, reasoning) |
+| `reasoning_options` | array | Advertised reasoning controls for reasoning-capable models |
 | `pricing` | object | Pricing information (input, output, cache_read, cache_write) |
 | `icon` | string | Model icon URL |
 | `type` | string | Model type (chat, embedding, image, rerank, moderation, tts, stt) |
@@ -388,6 +389,12 @@ When using `?include=all` or selective fields, the response includes extended me
         "tool_call": true,
         "reasoning": true
       },
+      "reasoning_options": [
+        {
+          "type": "effort",
+          "values": ["low", "medium", "high", "xhigh", "max"]
+        }
+      ],
       "pricing": {
         "input": 30.0,
         "output": 60.0,
@@ -415,6 +422,7 @@ When using `?include=all` or selective fields, the response includes extended me
   - `vision` - Supports image inputs
   - `tool_call` - Supports function calling
   - `reasoning` - Supports advanced reasoning
+- `reasoning_options` - Client-selectable reasoning controls advertised by the gateway. Reasoning-capable models currently expose the uniform effort values `low`, `medium`, `high`, `xhigh`, and `max`; the client and upstream provider remain responsible for accepting the selected value.
 - `pricing` - Object with pricing details:
   - `input` - Input token price per 1M tokens
   - `output` - Output token price per 1M tokens

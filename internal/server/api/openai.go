@@ -474,6 +474,11 @@ type Capabilities struct {
 	Reasoning bool `json:"reasoning"`
 }
 
+type ReasoningOption struct {
+	Type   string   `json:"type"`
+	Values []string `json:"values,omitempty"`
+}
+
 type Pricing struct {
 	Input      float64 `json:"input"`
 	Output     float64 `json:"output"`
@@ -484,19 +489,20 @@ type Pricing struct {
 }
 
 type OpenAIModel struct {
-	ID              string        `json:"id"`
-	Object          string        `json:"object"`
-	Created         int64         `json:"created"`
-	OwnedBy         string        `json:"owned_by"`
-	Name            string        `json:"name,omitempty"`
-	Description     string        `json:"description,omitempty"`
-	ContextLength   int           `json:"context_length,omitempty"`
-	MaxOutputTokens int           `json:"max_output_tokens,omitempty"`
-	Modalities      *Modalities   `json:"modalities,omitempty"`
-	Capabilities    *Capabilities `json:"capabilities,omitempty"`
-	Pricing         *Pricing      `json:"pricing,omitempty"`
-	Icon            string        `json:"icon,omitempty"`
-	Type            string        `json:"type,omitempty"`
+	ID               string            `json:"id"`
+	Object           string            `json:"object"`
+	Created          int64             `json:"created"`
+	OwnedBy          string            `json:"owned_by"`
+	Name             string            `json:"name,omitempty"`
+	Description      string            `json:"description,omitempty"`
+	ContextLength    int               `json:"context_length,omitempty"`
+	MaxOutputTokens  int               `json:"max_output_tokens,omitempty"`
+	Modalities       *Modalities       `json:"modalities,omitempty"`
+	Capabilities     *Capabilities     `json:"capabilities,omitempty"`
+	ReasoningOptions []ReasoningOption `json:"reasoning_options,omitempty"`
+	Pricing          *Pricing          `json:"pricing,omitempty"`
+	Icon             string            `json:"icon,omitempty"`
+	Type             string            `json:"type,omitempty"`
 }
 
 const (
@@ -507,6 +513,8 @@ const (
 	openAIErrorTypeInvalidRequest = "invalid_request_error"
 	openAIErrorParamModel         = "model"
 )
+
+var advertisedReasoningEfforts = [...]string{"low", "medium", "high", "xhigh", "max"}
 
 func parseOpenAIModelInclude(includeParam string, defaultIncludeAll bool) (map[string]bool, bool) {
 	var (
@@ -531,7 +539,7 @@ func parseOpenAIModelInclude(includeParam string, defaultIncludeAll bool) (map[s
 		}
 	}
 
-	extendedFields := []string{"name", "description", "context_length", "max_output_tokens", "modalities", "capabilities", "pricing", "icon", "type"}
+	extendedFields := []string{"name", "description", "context_length", "max_output_tokens", "modalities", "capabilities", "reasoning_options", "pricing", "icon", "type"}
 	for _, field := range extendedFields {
 		if include[field] {
 			needFullData = true
@@ -607,6 +615,13 @@ func convertModelFacadeToOpenAIExtended(m biz.ModelFacade, include map[string]bo
 			}
 			result.Capabilities = capabilities
 		}
+	}
+	if shouldInclude("reasoning_options") && metadata.Reasoning != nil &&
+		metadata.Reasoning.Supported != nil && *metadata.Reasoning.Supported {
+		result.ReasoningOptions = []ReasoningOption{{
+			Type:   "effort",
+			Values: append([]string(nil), advertisedReasoningEfforts[:]...),
+		}}
 	}
 	if metadata.Limit != nil {
 		if shouldInclude("context_length") && metadata.Limit.Context != nil {

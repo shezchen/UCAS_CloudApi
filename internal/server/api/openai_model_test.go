@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -25,6 +26,7 @@ func TestConvertModelFacadeToOpenAIExtended_NilMetadata(t *testing.T) {
 	require.Empty(t, result.Name)
 	require.Nil(t, result.Modalities)
 	require.Nil(t, result.Capabilities)
+	require.Nil(t, result.ReasoningOptions)
 	require.Nil(t, result.Pricing)
 }
 
@@ -94,6 +96,13 @@ func TestConvertModelFacadeToOpenAIExtended_CompleteMetadata(t *testing.T) {
 	require.True(t, result.Capabilities.Vision)
 	require.True(t, result.Capabilities.ToolCall)
 	require.True(t, result.Capabilities.Reasoning)
+	require.Equal(t, []ReasoningOption{{
+		Type:   "effort",
+		Values: []string{"low", "medium", "high", "xhigh", "max"},
+	}}, result.ReasoningOptions)
+	encoded, err := json.Marshal(result)
+	require.NoError(t, err)
+	require.Contains(t, string(encoded), `"reasoning_options":[{"type":"effort","values":["low","medium","high","xhigh","max"]}]`)
 	require.Equal(t, 8192, result.ContextLength)
 	require.Equal(t, 4096, result.MaxOutputTokens)
 	require.Equal(t, modalitiesInput, result.Modalities.Input)
@@ -111,6 +120,7 @@ func TestConvertModelFacadeToOpenAIExtended_RespectsInclude(t *testing.T) {
 	name := "Hidden name"
 	developer := "moonshot"
 	vision := true
+	reasoning := true
 	contextLength := 1_000_000
 	input := []string{"text", "image"}
 	facade := biz.ModelFacade{
@@ -120,6 +130,7 @@ func TestConvertModelFacadeToOpenAIExtended_RespectsInclude(t *testing.T) {
 			Name:       &name,
 			Developer:  &developer,
 			Vision:     &vision,
+			Reasoning:  &objects.ModelCardReasoningPatch{Supported: &reasoning},
 			Modalities: &objects.ModelCardModalitiesPatch{Input: &input},
 			Limit:      &objects.ModelCardLimitPatch{Context: &contextLength},
 		},
@@ -135,6 +146,31 @@ func TestConvertModelFacadeToOpenAIExtended_RespectsInclude(t *testing.T) {
 	require.Nil(t, result.Modalities)
 	require.NotNil(t, result.Capabilities)
 	require.True(t, result.Capabilities.Vision)
+	require.Nil(t, result.ReasoningOptions)
 	require.Equal(t, 1_000_000, result.ContextLength)
 	require.Nil(t, result.Pricing)
+
+	reasoningOnly := convertModelFacadeToOpenAIExtended(facade, map[string]bool{
+		"reasoning_options": true,
+	})
+	require.Nil(t, reasoningOnly.Capabilities)
+	require.Zero(t, reasoningOnly.ContextLength)
+	require.Equal(t, []ReasoningOption{{
+		Type:   "effort",
+		Values: []string{"low", "medium", "high", "xhigh", "max"},
+	}}, reasoningOnly.ReasoningOptions)
+}
+
+func TestConvertModelFacadeToOpenAIExtended_OmitsReasoningOptionsWhenUnsupported(t *testing.T) {
+	reasoning := false
+	result := convertModelFacadeToOpenAIExtended(biz.ModelFacade{
+		ID: "non-reasoning-model",
+		Metadata: &objects.ModelMetadataPatch{
+			Reasoning: &objects.ModelCardReasoningPatch{Supported: &reasoning},
+		},
+	}, nil)
+
+	require.NotNil(t, result.Capabilities)
+	require.False(t, result.Capabilities.Reasoning)
+	require.Nil(t, result.ReasoningOptions)
 }

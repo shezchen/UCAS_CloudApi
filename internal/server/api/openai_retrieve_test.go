@@ -134,6 +134,7 @@ func TestOpenAIHandlers_RetrieveModel_UsesCatalogWhenConfiguredMetadataMissing(t
 	require.True(t, got.Capabilities.Vision)
 	require.True(t, got.Capabilities.ToolCall)
 	require.False(t, got.Capabilities.Reasoning)
+	require.Nil(t, got.ReasoningOptions)
 	require.NotNil(t, got.Modalities)
 	require.Contains(t, got.Modalities.Input, "image")
 	require.Nil(t, got.Pricing)
@@ -173,6 +174,10 @@ func TestOpenAIHandlers_RetrieveModel_UsesPermissiveDefaultsForUnknownModel(t *t
 	require.True(t, got.Capabilities.Vision)
 	require.True(t, got.Capabilities.ToolCall)
 	require.True(t, got.Capabilities.Reasoning)
+	require.Equal(t, []ReasoningOption{{
+		Type:   "effort",
+		Values: []string{"low", "medium", "high", "xhigh", "max"},
+	}}, got.ReasoningOptions)
 	require.NotNil(t, got.Modalities)
 	require.Equal(t, []string{"text", "image"}, got.Modalities.Input)
 	require.Equal(t, []string{"text"}, got.Modalities.Output)
@@ -252,6 +257,10 @@ func TestOpenAIHandlers_RetrieveModel_ReturnsExtendedConfiguredModel(t *testing.
 	require.True(t, got.Capabilities.Vision)
 	require.True(t, got.Capabilities.ToolCall)
 	require.True(t, got.Capabilities.Reasoning)
+	require.Equal(t, []ReasoningOption{{
+		Type:   "effort",
+		Values: []string{"low", "medium", "high", "xhigh", "max"},
+	}}, got.ReasoningOptions)
 	require.Equal(t, 200000, got.ContextLength)
 	require.Equal(t, 8192, got.MaxOutputTokens)
 	require.NotNil(t, got.Pricing)
@@ -409,6 +418,7 @@ func TestOpenAIHandlers_ListModels_UsesBasicFieldsByDefault(t *testing.T) {
 	require.Equal(t, "gpt-4.1", got.Data[0].ID)
 	require.Empty(t, got.Data[0].Name)
 	require.Nil(t, got.Data[0].Capabilities)
+	require.Nil(t, got.Data[0].ReasoningOptions)
 	require.Nil(t, got.Data[0].Pricing)
 	require.Nil(t, got.Data[0].Modalities)
 }
@@ -485,6 +495,10 @@ func TestOpenAIHandlers_ListModels_UsesExtendedFieldsWhenConfiguredAsDefault(t *
 	require.Equal(t, "GPT-4.1", got.Data[0].Name)
 	require.Equal(t, remark, got.Data[0].Description)
 	require.NotNil(t, got.Data[0].Capabilities)
+	require.Equal(t, []ReasoningOption{{
+		Type:   "effort",
+		Values: []string{"low", "medium", "high", "xhigh", "max"},
+	}}, got.Data[0].ReasoningOptions)
 	require.NotNil(t, got.Data[0].Pricing)
 	require.NotNil(t, got.Data[0].Modalities)
 	require.Equal(t, []string{"text", "image"}, got.Data[0].Modalities.Input)
@@ -733,6 +747,7 @@ func TestOpenAIHandlers_ListModels_ExtendedModeResolvesMissingDBModel(t *testing
 	require.True(t, gpt41mini.Capabilities.Vision)
 	require.True(t, gpt41mini.Capabilities.ToolCall)
 	require.False(t, gpt41mini.Capabilities.Reasoning)
+	require.Nil(t, gpt41mini.ReasoningOptions)
 	require.Equal(t, 1047576, gpt41mini.ContextLength)
 	require.Equal(t, 32768, gpt41mini.MaxOutputTokens)
 	require.Nil(t, gpt41mini.Pricing, "channel metadata must not be presented as billing")
@@ -838,9 +853,10 @@ func TestOpenAIHandlers_ExtendedModelsKeepOwnerMetadataWithoutChangingVisibility
 		SetGroup("owner").
 		SetIcon("Owner").
 		SetModelCard(&objects.ModelCard{
-			Vision: false,
-			Limit:  objects.ModelCardLimit{Context: 8192, Output: 2048},
-			Cost:   objects.ModelCardCost{Input: 1.25, Output: 2.5},
+			Vision:    false,
+			Reasoning: objects.ModelCardReasoning{Supported: true},
+			Limit:     objects.ModelCardLimit{Context: 8192, Output: 2048},
+			Cost:      objects.ModelCardCost{Input: 1.25, Output: 2.5},
 		}).
 		SetSettings(&objects.ModelSettings{Associations: []*objects.ModelAssociation{{
 			Type: "channel_model",
@@ -891,6 +907,7 @@ func TestOpenAIHandlers_ExtendedModelsKeepOwnerMetadataWithoutChangingVisibility
 	require.Equal(t, "shared-display-model", basic.Data[0].ID)
 	require.Equal(t, "openai", basic.Data[0].OwnedBy, "display overlay must not affect the basic visibility facade")
 	require.Empty(t, basic.Data[0].Name)
+	require.Nil(t, basic.Data[0].ReasoningOptions)
 
 	extendedRequest := httptest.NewRequest(http.MethodGet, "/v1/models?include=all", nil)
 	extendedWriter := httptest.NewRecorder()
@@ -908,6 +925,10 @@ func TestOpenAIHandlers_ExtendedModelsKeepOwnerMetadataWithoutChangingVisibility
 	require.Equal(t, 8192, extended.Data[0].ContextLength)
 	require.NotNil(t, extended.Data[0].Pricing)
 	require.Equal(t, 1.25, extended.Data[0].Pricing.Input)
+	require.Equal(t, []ReasoningOption{{
+		Type:   "effort",
+		Values: []string{"low", "medium", "high", "xhigh", "max"},
+	}}, extended.Data[0].ReasoningOptions)
 
 	retrieveRequest := httptest.NewRequest(http.MethodGet, "/v1/models/shared-display-model?include=all", nil)
 	retrieveWriter := httptest.NewRecorder()
@@ -917,4 +938,8 @@ func TestOpenAIHandlers_ExtendedModelsKeepOwnerMetadataWithoutChangingVisibility
 	require.NoError(t, json.NewDecoder(retrieveWriter.Body).Decode(&retrieved))
 	require.Equal(t, "Owner display metadata", retrieved.Name)
 	require.Equal(t, "owner-developer", retrieved.OwnedBy)
+	require.Equal(t, []ReasoningOption{{
+		Type:   "effort",
+		Values: []string{"low", "medium", "high", "xhigh", "max"},
+	}}, retrieved.ReasoningOptions)
 }

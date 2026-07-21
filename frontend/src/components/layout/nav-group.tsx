@@ -1,6 +1,6 @@
 import { ReactNode } from 'react';
 import { Link, useLocation } from '@tanstack/react-router';
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, ExternalLink } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
   SidebarGroup,
@@ -22,7 +22,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '../ui/dropdown-menu';
-import { NavCollapsible, NavItem, NavLink, type NavGroup } from './types';
+import { NavCollapsible, NavExternalLink, NavItem, NavLink, type NavGroup } from './types';
 
 export function NavGroup({ title, items }: NavGroup) {
   const { state, isMobile } = useSidebar();
@@ -49,7 +49,7 @@ export function NavGroup({ title, items }: NavGroup) {
       <SidebarGroupLabel>{title}</SidebarGroupLabel>
       <SidebarMenu>
         {visibleItems.map((item) => {
-          const key = `${item.title}-${item.url}`;
+          const key = `${item.title}-${'href' in item ? item.href : item.url}`;
 
           if (!item.items) return <SidebarMenuLink key={key} item={item} href={href} />;
 
@@ -64,17 +64,42 @@ export function NavGroup({ title, items }: NavGroup) {
 
 const NavBadge = ({ children }: { children: ReactNode }) => <Badge className='rounded-full px-1 py-0 text-xs'>{children}</Badge>;
 
-const SidebarMenuLink = ({ item, href }: { item: NavLink; href: string }) => {
+const SidebarMenuLink = ({ item, href }: { item: NavLink | NavExternalLink; href: string }) => {
   const { setOpenMobile } = useSidebar();
+  const tooltip =
+    item.external && item.description
+      ? {
+          children: (
+            <div className='space-y-1'>
+              <div>{item.title}</div>
+              <div className='text-muted-foreground text-xs'>{item.description}</div>
+            </div>
+          ),
+        }
+      : item.title;
 
   return (
     <SidebarMenuItem>
-      <SidebarMenuButton asChild isActive={checkIsActive(href, item)} tooltip={item.title} className='h-12 rounded-2xl transition-all'>
-        <Link to={item.url} onClick={() => setOpenMobile(false)}>
-          {item.icon && <item.icon className='text-xl' />}
-          <span>{item.title}</span>
-          {item.badge && <NavBadge>{item.badge}</NavBadge>}
-        </Link>
+      <SidebarMenuButton asChild isActive={checkIsActive(href, item)} tooltip={tooltip} className='h-12 rounded-2xl transition-all'>
+        {item.external ? (
+          <a href={item.href} target='_blank' rel='noopener noreferrer' onClick={() => setOpenMobile(false)}>
+            {item.icon && <item.icon className='text-xl' />}
+            <span className='flex min-w-0 flex-1 flex-col'>
+              <span className='truncate'>{item.title}</span>
+              {item.description && (
+                <span className='text-muted-foreground truncate text-xs group-data-[collapsible=icon]:hidden'>{item.description}</span>
+              )}
+            </span>
+            {item.badge && <NavBadge>{item.badge}</NavBadge>}
+            <ExternalLink className='ml-auto h-3.5 w-3.5 opacity-70' aria-hidden='true' />
+          </a>
+        ) : (
+          <Link to={item.url} onClick={() => setOpenMobile(false)}>
+            {item.icon && <item.icon className='text-xl' />}
+            <span>{item.title}</span>
+            {item.badge && <NavBadge>{item.badge}</NavBadge>}
+          </Link>
+        )}
       </SidebarMenuButton>
     </SidebarMenuItem>
   );
@@ -152,6 +177,10 @@ const SidebarMenuCollapsedDropdown = ({ item, href }: { item: NavCollapsible; hr
 };
 
 function checkIsActive(href: string, item: NavItem, mainNav = false) {
+  if ('external' in item && item.external) {
+    return false;
+  }
+
   return (
     href === item.url || // /endpint?search=param
     href.split('?')[0] === item.url || // endpoint

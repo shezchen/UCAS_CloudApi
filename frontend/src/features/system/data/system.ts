@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { graphqlRequest, GraphQLRequestError } from '@/gql/graphql';
 import { toast } from 'sonner';
 import { getTokenFromStorage } from '@/stores/authStore';
+import { useSelectedProjectId } from '@/stores/projectStore';
 import i18n from '@/lib/i18n';
 import { useErrorHandler } from '@/hooks/use-error-handler';
 import type { ProxyConfig } from '@/features/channels/data/schema';
@@ -62,6 +63,16 @@ const BRAND_SETTINGS_QUERY = `
   }
 `;
 
+const CAMPUS_FRIEND_LINKS_QUERY = `
+  query CampusFriendLinks {
+    campusFriendLinks {
+      name
+      url
+      description
+    }
+  }
+`;
+
 const STORAGE_POLICY_QUERY = `
   query StoragePolicy {
     storagePolicy {
@@ -81,6 +92,12 @@ const STORAGE_POLICY_QUERY = `
 const UPDATE_BRAND_SETTINGS_MUTATION = `
   mutation UpdateBrandSettings($input: UpdateBrandSettingsInput!) {
     updateBrandSettings(input: $input)
+  }
+`;
+
+const UPDATE_CAMPUS_FRIEND_LINKS_MUTATION = `
+  mutation UpdateCampusFriendLinks($input: [CampusFriendLinkInput!]!) {
+    updateCampusFriendLinks(input: $input)
   }
 `;
 
@@ -225,6 +242,12 @@ export interface BrandSettings {
   brandName?: string;
   brandLogo?: string;
   title?: string;
+}
+
+export interface CampusFriendLink {
+  name: string;
+  url: string;
+  description: string;
 }
 
 export interface SystemGeneralSettings {
@@ -465,6 +488,30 @@ export function useBrandSettings(options?: { enabled?: boolean }) {
   });
 }
 
+export function useCampusFriendLinks(options?: { enabled?: boolean }) {
+  const { handleError } = useErrorHandler();
+  const selectedProjectId = useSelectedProjectId();
+
+  return useQuery({
+    queryKey: ['campusFriendLinks', selectedProjectId],
+    enabled: options?.enabled ?? true,
+    queryFn: async () => {
+      try {
+        const headers = selectedProjectId ? { 'X-Project-ID': selectedProjectId } : undefined;
+        const data = await graphqlRequest<{ campusFriendLinks: CampusFriendLink[] }>(
+          CAMPUS_FRIEND_LINKS_QUERY,
+          undefined,
+          headers
+        );
+        return data.campusFriendLinks;
+      } catch (error) {
+        handleError(error, i18n.t('common.errors.internalServerError'));
+        throw error;
+      }
+    },
+  });
+}
+
 export function useStoragePolicy() {
   const { handleError } = useErrorHandler();
 
@@ -492,6 +539,24 @@ export function useUpdateBrandSettings() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['brandSettings'] });
+      toast.success(i18n.t('common.success.systemUpdated'));
+    },
+    onError: () => {
+      toast.error(i18n.t('common.errors.systemUpdateFailed'));
+    },
+  });
+}
+
+export function useUpdateCampusFriendLinks() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (input: CampusFriendLink[]) => {
+      const data = await graphqlRequest<{ updateCampusFriendLinks: boolean }>(UPDATE_CAMPUS_FRIEND_LINKS_MUTATION, { input });
+      return data.updateCampusFriendLinks;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['campusFriendLinks'] });
       toast.success(i18n.t('common.success.systemUpdated'));
     },
     onError: () => {

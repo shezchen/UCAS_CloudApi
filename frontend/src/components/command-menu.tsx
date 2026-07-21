@@ -46,6 +46,10 @@ function CommandMenuContent({
           {sidebarData.navGroups.map((group) => (
             <CommandGroup key={group.title} heading={group.title}>
               {group.items.map((navItem, i) => {
+                if ('external' in navItem && navItem.external) {
+                  return null;
+                }
+
                 if (navItem.url)
                   return (
                     <CommandItem

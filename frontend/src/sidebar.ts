@@ -14,6 +14,7 @@ import {
   IconNote,
   IconChartBar,
   IconBooks,
+  IconExternalLink,
   IconHeartHandshake,
 } from '@tabler/icons-react';
 import { Command } from 'lucide-react';
@@ -21,16 +22,31 @@ import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '@/stores/authStore';
 import { useRoutePermissions } from '@/hooks/useRoutePermissions';
 import { useMe } from '@/features/auth/data/auth';
+import { useCampusFriendLinks } from '@/features/system/data/system';
+import { useSelectedProjectId } from '@/stores/projectStore';
 import { type SidebarData, type NavGroup, type NavLink } from './components/layout/types';
+
+function isSafeCampusFriendLink(url: string) {
+  try {
+    const parsed = new URL(url);
+    return (parsed.protocol === 'https:' || parsed.protocol === 'http:') && Boolean(parsed.hostname) && !parsed.username && !parsed.password;
+  } catch {
+    return false;
+  }
+}
 
 export function useSidebarData(): SidebarData {
   const { t } = useTranslation();
   const { user: authUser } = useAuthStore((state) => state.auth);
   const { data: meData } = useMe();
   const { filterNavGroups } = useRoutePermissions();
+  const selectedProjectId = useSelectedProjectId();
 
   // Use data from me query if available, otherwise fall back to auth store
   const user = meData || authUser;
+  const { data: campusFriendLinks = [] } = useCampusFriendLinks({
+    enabled: Boolean(user) && (Boolean(user?.isOwner) || Boolean(selectedProjectId)),
+  });
 
   // Generate user initials for avatar
   const getInitials = (firstName?: string, lastName?: string, email?: string) => {
@@ -245,6 +261,21 @@ export function useSidebarData(): SidebarData {
   ];
 
   const rawNavGroups = user?.isOwner ? ownerNavGroups : memberNavGroups;
+  const safeFriendLinks = campusFriendLinks.filter((link) => link.name.trim() !== '' && isSafeCampusFriendLink(link.url));
+
+  if (safeFriendLinks.length > 0) {
+    rawNavGroups.push({
+      title: t('sidebar.groups.friendLinks'),
+      bottom: true,
+      items: safeFriendLinks.map((link) => ({
+        title: link.name.trim(),
+        href: link.url,
+        external: true as const,
+        description: link.description.trim() || undefined,
+        icon: IconExternalLink,
+      })),
+    });
+  }
 
   // 使用权限过滤导航组
   const filteredNavGroups = filterNavGroups(rawNavGroups);

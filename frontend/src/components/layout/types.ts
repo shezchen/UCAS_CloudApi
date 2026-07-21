@@ -21,6 +21,15 @@ interface BaseNavItem {
 
 type NavLink = BaseNavItem & {
   url: LinkProps['to'];
+  external?: false;
+  items?: never;
+  mobileOnly?: boolean;
+};
+
+type NavExternalLink = BaseNavItem & {
+  href: string;
+  external: true;
+  description?: string;
   items?: never;
   mobileOnly?: boolean;
 };
@@ -30,11 +39,12 @@ type NavCollapsible = BaseNavItem & {
   url?: never;
 };
 
-type NavItem = NavCollapsible | NavLink;
+type NavItem = NavCollapsible | NavLink | NavExternalLink;
 
 interface NavGroup {
   title: string;
   items: NavItem[];
+  bottom?: boolean;
 }
 
 interface SidebarData {
@@ -43,4 +53,4 @@ interface SidebarData {
   navGroups: NavGroup[];
 }
 
-export type { SidebarData, NavGroup, NavItem, NavCollapsible, NavLink };
+export type { SidebarData, NavGroup, NavItem, NavCollapsible, NavExternalLink, NavLink };

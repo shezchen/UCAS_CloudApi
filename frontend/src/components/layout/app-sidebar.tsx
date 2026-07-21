@@ -10,13 +10,22 @@ type IProps = React.ComponentProps<typeof Sidebar> & {
 
 export function AppSidebar({ sidebarData, ...props }: IProps) {
   const { isMobile } = useSidebar();
+  const primaryNavGroups = sidebarData.navGroups.filter((group) => !group.bottom);
+  const bottomNavGroups = sidebarData.navGroups.filter((group) => group.bottom);
 
   return (
     <Sidebar collapsible='icon' variant='floating' {...props}>
       <SidebarContent>
-        {sidebarData.navGroups.map((props) => (
+        {primaryNavGroups.map((props) => (
           <NavGroup key={props.title} {...props} />
         ))}
+        {bottomNavGroups.length > 0 && (
+          <div className='mt-auto'>
+            {bottomNavGroups.map((props) => (
+              <NavGroup key={props.title} {...props} />
+            ))}
+          </div>
+        )}
       </SidebarContent>
       <SidebarFooter>
         {isMobile && <MobileHeaderControls />}

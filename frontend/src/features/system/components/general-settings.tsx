@@ -1,17 +1,23 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Loader2, Save } from 'lucide-react';
+import { Loader2, Plus, Save, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { AutoCompleteSelect } from '@/components/auto-complete-select';
+import { usePermissions } from '@/hooks/usePermissions';
 import { useSystemContext } from '../context/system-context';
 import { currencyCodes } from '../data/currencies';
 import {
+  type CampusFriendLink,
+  useCampusFriendLinks,
   useGeneralSettings,
+  useUpdateCampusFriendLinks,
   useUpdateGeneralSettings,
   useUserAgentPassThroughSettings,
   useUpdateUserAgentPassThroughSettings,
@@ -22,6 +28,7 @@ import { GMTTimeZoneOptions } from '../data/timezones';
 
 export function GeneralSettings() {
   const { t } = useTranslation();
+  const { isOwner } = usePermissions();
   const { data: settings, isLoading: isLoadingSettings } = useGeneralSettings();
   const updateSettings = useUpdateGeneralSettings();
   const { isLoading, setIsLoading } = useSystemContext();
@@ -190,6 +197,8 @@ export function GeneralSettings() {
         </CardContent>
       </Card>
 
+      {isOwner && <CampusFriendLinksSettings />}
+
       {hasChanges && (
         <div className='flex justify-end'>
           <Button onClick={handleSave} disabled={isLoading || updateSettings.isPending} className='min-w-[100px]'>
@@ -208,5 +217,173 @@ export function GeneralSettings() {
         </div>
       )}
     </div>
+  );
+}
+
+function isSafeFriendLinkURL(value: string) {
+  try {
+    const parsed = new URL(value);
+    return (parsed.protocol === 'https:' || parsed.protocol === 'http:') && Boolean(parsed.hostname) && !parsed.username && !parsed.password;
+  } catch {
+    return false;
+  }
+}
+
+function CampusFriendLinksSettings() {
+  const { t } = useTranslation();
+  const { isLoading, setIsLoading } = useSystemContext();
+  const { data: savedFriendLinks = [], isLoading: isLoadingFriendLinks } = useCampusFriendLinks();
+  const updateFriendLinks = useUpdateCampusFriendLinks();
+  const [friendLinks, setFriendLinks] = useState<CampusFriendLink[]>([]);
+
+  useEffect(() => {
+    setFriendLinks(savedFriendLinks.map((link) => ({ ...link, description: link.description ?? '' })));
+  }, [savedFriendLinks]);
+
+  const hasChanges = JSON.stringify(friendLinks) !== JSON.stringify(savedFriendLinks);
+  const isSaving = isLoading || updateFriendLinks.isPending;
+
+  const updateFriendLink = (index: number, field: keyof CampusFriendLink, value: string) => {
+    setFriendLinks((current) =>
+      current.map((link, currentIndex) => (currentIndex === index ? { ...link, [field]: value } : link))
+    );
+  };
+
+  const addFriendLink = () => {
+    setFriendLinks((current) => [...current, { name: '', url: '', description: '' }]);
+  };
+
+  const removeFriendLink = (index: number) => {
+    setFriendLinks((current) => current.filter((_, currentIndex) => currentIndex !== index));
+  };
+
+  const saveFriendLinks = async () => {
+    const normalized = friendLinks.map((link) => ({
+      name: link.name.trim(),
+      url: link.url.trim(),
+      description: link.description.trim(),
+    }));
+
+    if (normalized.some((link) => link.name === '' || link.url === '')) {
+      toast.error(t('system.friendLinks.validation.required'));
+      return;
+    }
+
+    if (normalized.some((link) => !isSafeFriendLinkURL(link.url))) {
+      toast.error(t('system.friendLinks.validation.httpUrl'));
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      await updateFriendLinks.mutateAsync(normalized);
+      setFriendLinks(normalized);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{t('system.friendLinks.title')}</CardTitle>
+        <CardDescription>{t('system.friendLinks.description')}</CardDescription>
+      </CardHeader>
+      <CardContent className='space-y-4'>
+        {isLoadingFriendLinks ? (
+          <div className='flex h-16 items-center text-sm text-muted-foreground'>
+            <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+            {t('common.loading')}
+          </div>
+        ) : (
+          <>
+            {friendLinks.length === 0 ? (
+              <p className='text-sm text-muted-foreground'>{t('system.friendLinks.empty')}</p>
+            ) : (
+              <div className='space-y-3'>
+                {friendLinks.map((link, index) => (
+                  <div
+                    key={`${link.url}-${index}`}
+                    className='grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)_auto] md:items-center'
+                  >
+                    <div className='space-y-1'>
+                      <Label className='sr-only' htmlFor={`friend-link-name-${index}`}>
+                        {t('system.friendLinks.name')}
+                      </Label>
+                      <Input
+                        id={`friend-link-name-${index}`}
+                        value={link.name}
+                        onChange={(event) => updateFriendLink(index, 'name', event.target.value)}
+                        placeholder={t('system.friendLinks.namePlaceholder')}
+                        disabled={isSaving}
+                      />
+                    </div>
+                    <div className='space-y-1'>
+                      <Label className='sr-only' htmlFor={`friend-link-url-${index}`}>
+                        {t('system.friendLinks.url')}
+                      </Label>
+                      <Input
+                        id={`friend-link-url-${index}`}
+                        type='url'
+                        value={link.url}
+                        onChange={(event) => updateFriendLink(index, 'url', event.target.value)}
+                        placeholder={t('system.friendLinks.urlPlaceholder')}
+                        disabled={isSaving}
+                      />
+                    </div>
+                    <div className='space-y-1'>
+                      <Label className='sr-only' htmlFor={`friend-link-description-${index}`}>
+                        {t('system.friendLinks.linkDescription')}
+                      </Label>
+                      <Input
+                        id={`friend-link-description-${index}`}
+                        value={link.description}
+                        onChange={(event) => updateFriendLink(index, 'description', event.target.value)}
+                        placeholder={t('system.friendLinks.linkDescriptionPlaceholder')}
+                        disabled={isSaving}
+                        maxLength={500}
+                      />
+                    </div>
+                    <Button
+                      type='button'
+                      variant='outline'
+                      size='icon'
+                      onClick={() => removeFriendLink(index)}
+                      disabled={isSaving}
+                      aria-label={t('system.friendLinks.remove')}
+                    >
+                      <Trash2 className='h-4 w-4' />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <Button type='button' variant='outline' onClick={addFriendLink} disabled={isSaving}>
+              <Plus className='mr-2 h-4 w-4' />
+              {t('system.friendLinks.add')}
+            </Button>
+
+            {hasChanges && (
+              <div className='flex justify-end'>
+                <Button type='button' onClick={saveFriendLinks} disabled={isSaving} className='min-w-[100px]'>
+                  {isSaving ? (
+                    <>
+                      <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                      {t('system.buttons.saving')}
+                    </>
+                  ) : (
+                    <>
+                      <Save className='mr-2 h-4 w-4' />
+                      {t('system.buttons.save')}
+                    </>
+                  )}
+                </Button>
+              </div>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }

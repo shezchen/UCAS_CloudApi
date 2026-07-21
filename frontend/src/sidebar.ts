@@ -220,6 +220,11 @@ export function useSidebarData(): SidebarData {
           icon: IconKey,
         } as NavLink,
         {
+          title: t('sidebar.items.usageLeaderboard'),
+          url: '/project/usage-stats',
+          icon: IconChartBar,
+        } as NavLink,
+        {
           title: t('sidebar.items.donateChannel'),
           url: '/channels',
           icon: IconHeartHandshake,

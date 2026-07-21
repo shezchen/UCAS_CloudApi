@@ -1,8 +1,10 @@
+import { useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Header } from '@/components/layout/header';
 import { Main } from '@/components/layout/main';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Table,
   TableBody,
@@ -12,11 +14,15 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { formatNumber } from '@/utils/format-number';
-import { useCampusUsageLeaderboard } from './data/usage-stats';
+import { useCampusUsageLeaderboard, type CampusUsageLeaderboardTimeWindow } from './data/usage-stats';
+
+const leaderboardPeriods: readonly CampusUsageLeaderboardTimeWindow[] = ['day', 'week', 'month'];
 
 export function CampusUsageLeaderboardPage() {
   const { t } = useTranslation();
-  const { data = [], isLoading, isFetching, error } = useCampusUsageLeaderboard();
+  const [timeWindow, setTimeWindow] = useState<CampusUsageLeaderboardTimeWindow>('day');
+  const { data = [], isLoading, isFetching, error } = useCampusUsageLeaderboard(timeWindow);
+  const periodLabel = t(`usageStats.leaderboard.period.${timeWindow}`);
 
   if (isLoading) {
     return (
@@ -38,9 +44,20 @@ export function CampusUsageLeaderboardPage() {
   return (
     <div className='flex flex-1 flex-col overflow-hidden'>
       <Header fixed>
-        <div>
-          <h2 className='text-xl font-bold tracking-tight'>{t('usageStats.leaderboard.title')}</h2>
-          <p className='text-sm text-muted-foreground'>{t('usageStats.leaderboard.description')}</p>
+        <div className='flex flex-1 flex-wrap items-start justify-between gap-3'>
+          <div>
+            <h2 className='text-xl font-bold tracking-tight'>{t('usageStats.leaderboard.title')}</h2>
+            <p className='text-sm text-muted-foreground'>{t('usageStats.leaderboard.description', { period: periodLabel })}</p>
+          </div>
+          <Tabs value={timeWindow} onValueChange={(value) => setTimeWindow(value as CampusUsageLeaderboardTimeWindow)}>
+            <TabsList className='grid w-full grid-cols-3 sm:w-auto'>
+              {leaderboardPeriods.map((period) => (
+                <TabsTrigger key={period} value={period}>
+                  {t(`usageStats.leaderboard.period.${period}`)}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
         </div>
       </Header>
 
@@ -52,7 +69,7 @@ export function CampusUsageLeaderboardPage() {
         <div className='shadow-soft relative flex-1 overflow-auto overflow-x-hidden rounded-2xl border border-[var(--table-border)]'>
           {data.length === 0 ? (
             <div className='flex h-[200px] items-center justify-center rounded-2xl bg-[var(--table-background)]'>
-              <div className='text-sm text-muted-foreground'>{t('usageStats.leaderboard.empty')}</div>
+              <div className='text-sm text-muted-foreground'>{t('usageStats.leaderboard.empty', { period: periodLabel })}</div>
             </div>
           ) : (
             <Table className='border-separate border-spacing-0 rounded-2xl bg-[var(--table-background)]'>
@@ -70,9 +87,11 @@ export function CampusUsageLeaderboardPage() {
                   <TableHead className='border-0 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground'>
                     {t('usageStats.leaderboard.meteredRequests')}
                   </TableHead>
-                  <TableHead className='border-0 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground'>
-                    {t('usageStats.leaderboard.limitPercent')}
-                  </TableHead>
+                  {timeWindow === 'day' && (
+                    <TableHead className='border-0 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground'>
+                      {t('usageStats.leaderboard.limitPercent')}
+                    </TableHead>
+                  )}
                 </TableRow>
               </TableHeader>
               <TableBody className='space-y-1 !bg-[var(--table-background)] p-2'>
@@ -109,9 +128,11 @@ export function CampusUsageLeaderboardPage() {
                     <TableCell className='border-0 bg-inherit px-4 py-3 text-right font-mono text-sm'>
                       {formatNumber(entry.meteredRequestCount, { digits: 0 })}
                     </TableCell>
-                    <TableCell className='border-0 bg-inherit px-4 py-3 text-right font-mono text-sm'>
-                      {entry.limitPercent.toFixed(1)}%
-                    </TableCell>
+                    {timeWindow === 'day' && (
+                      <TableCell className='border-0 bg-inherit px-4 py-3 text-right font-mono text-sm'>
+                        {entry.limitPercent.toFixed(1)}%
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))}
               </TableBody>

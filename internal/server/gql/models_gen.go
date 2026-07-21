@@ -111,7 +111,7 @@ type BulkUpdateChannelOrderingResult struct {
 	Channels []*ent.Channel `json:"channels"`
 }
 
-// Privacy-safe campus leaderboard entry for today's recorded usage.
+// Privacy-safe campus leaderboard entry for recorded usage in a selected period.
 // The public alias is stable only within the current project and does not expose
 // the underlying user, API key, channel, model, request content, or cost.
 type CampusUsageLeaderboardEntry struct {

@@ -364,6 +364,28 @@ func TestRankCampusUsageReturnsTop50PlusSelf(t *testing.T) {
 	require.Equal(t, "fallback", biz.CampusDisplayName("Owner", "fallback"))
 }
 
+func TestCampusLeaderboardPeriod(t *testing.T) {
+	day := xtime.Period{Start: time.Date(2026, time.July, 21, 0, 0, 0, 0, time.UTC), End: time.Date(2026, time.July, 22, 0, 0, 0, 0, time.UTC)}
+	week := xtime.Period{Start: time.Date(2026, time.July, 20, 0, 0, 0, 0, time.UTC), End: time.Date(2026, time.July, 27, 0, 0, 0, 0, time.UTC)}
+	month := xtime.Period{Start: time.Date(2026, time.July, 1, 0, 0, 0, 0, time.UTC), End: time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)}
+	periods := xtime.CalendarPeriods{Today: day, ThisWeek: week, ThisMonth: month}
+
+	actual, err := campusLeaderboardPeriod(periods, nil)
+	require.NoError(t, err)
+	require.Equal(t, day, actual)
+
+	for window, expected := range map[string]xtime.Period{"day": day, "week": week, "month": month} {
+		window := window
+		actual, err = campusLeaderboardPeriod(periods, &window)
+		require.NoError(t, err)
+		require.Equal(t, expected, actual)
+	}
+
+	invalid := "allTime"
+	_, err = campusLeaderboardPeriod(periods, &invalid)
+	require.ErrorContains(t, err, "invalid campus leaderboard time window")
+}
+
 func TestQueryResolverCampusUsageLeaderboardPrivacyAndDeletedKeys(t *testing.T) {
 	client := enttest.NewEntClient(t, "sqlite3", "file:ent?mode=memory&_fk=0")
 	defer client.Close()
@@ -441,7 +463,7 @@ func TestQueryResolverCampusUsageLeaderboardPrivacyAndDeletedKeys(t *testing.T) 
 	memberCtx = contexts.WithUser(memberCtx, member)
 	memberCtx = contexts.WithProjectID(memberCtx, projectRow.ID)
 
-	entries, err := resolver.CampusUsageLeaderboard(memberCtx)
+	entries, err := resolver.CampusUsageLeaderboard(memberCtx, nil)
 	require.NoError(t, err)
 	require.Len(t, entries, 2)
 	require.Equal(t, 1, entries[0].Rank)
@@ -458,6 +480,15 @@ func TestQueryResolverCampusUsageLeaderboardPrivacyAndDeletedKeys(t *testing.T) 
 	require.Equal(t, float64(25), entries[1].RecordedTokens)
 	require.Equal(t, 1, entries[1].MeteredRequestCount)
 	require.InDelta(t, 25, entries[1].LimitPercent, 0.001)
+
+	for _, timeWindow := range []string{"week", "month"} {
+		entries, err = resolver.CampusUsageLeaderboard(memberCtx, &timeWindow)
+		require.NoError(t, err)
+		require.GreaterOrEqual(t, len(entries), 2)
+	}
+	invalidTimeWindow := "allTime"
+	_, err = resolver.CampusUsageLeaderboard(memberCtx, &invalidTimeWindow)
+	require.ErrorContains(t, err, "invalid campus leaderboard time window")
 	_, err = resolver.UsageStatsByUser(memberCtx, nil)
 	require.ErrorContains(t, err, "only project owners")
 
@@ -470,7 +501,7 @@ func TestQueryResolverCampusUsageLeaderboardPrivacyAndDeletedKeys(t *testing.T) 
 	nonMemberCtx := authz.NewUserContext(context.Background(), nonMember.ID)
 	nonMemberCtx = contexts.WithUser(nonMemberCtx, nonMember)
 	nonMemberCtx = contexts.WithProjectID(nonMemberCtx, projectRow.ID)
-	_, err = resolver.CampusUsageLeaderboard(nonMemberCtx)
+	_, err = resolver.CampusUsageLeaderboard(nonMemberCtx, nil)
 	require.ErrorContains(t, err, "not a project member")
 
 	owner, err := client.User.Create().
@@ -483,7 +514,7 @@ func TestQueryResolverCampusUsageLeaderboardPrivacyAndDeletedKeys(t *testing.T) 
 	ownerCtx := authz.NewUserContext(context.Background(), owner.ID)
 	ownerCtx = contexts.WithUser(ownerCtx, owner)
 	ownerCtx = contexts.WithProjectID(ownerCtx, projectRow.ID)
-	ownerEntries, err := resolver.CampusUsageLeaderboard(ownerCtx)
+	ownerEntries, err := resolver.CampusUsageLeaderboard(ownerCtx, nil)
 	require.NoError(t, err)
 	require.Len(t, ownerEntries, 3)
 	require.True(t, ownerEntries[2].IsMe)

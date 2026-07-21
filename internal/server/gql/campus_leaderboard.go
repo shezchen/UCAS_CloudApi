@@ -46,6 +46,24 @@ func campusLimitPercent(recordedTokens, dailyTokenLimit int64) float64 {
 	return float64(recordedTokens) / float64(dailyTokenLimit) * 100
 }
 
+func campusLeaderboardPeriod(periods xtime.CalendarPeriods, timeWindow *string) (xtime.Period, error) {
+	window := "day"
+	if timeWindow != nil && *timeWindow != "" {
+		window = *timeWindow
+	}
+
+	switch window {
+	case "day":
+		return periods.Today, nil
+	case "week":
+		return periods.ThisWeek, nil
+	case "month":
+		return periods.ThisMonth, nil
+	default:
+		return xtime.Period{}, fmt.Errorf("invalid campus leaderboard time window %q; expected day, week, or month", window)
+	}
+}
+
 func rankCampusUsage(projectID, currentUserID int, currentNickname string, aggregates []campusUsageAggregate) []*CampusUsageLeaderboardEntry {
 	foundCurrentUser := false
 	ranked := make([]rankedCampusUsage, 0, len(aggregates)+1)
@@ -103,7 +121,7 @@ func rankCampusUsage(projectID, currentUserID int, currentNickname string, aggre
 	return entries
 }
 
-func (r *queryResolver) resolveCampusUsageLeaderboard(ctx context.Context) ([]*CampusUsageLeaderboardEntry, error) {
+func (r *queryResolver) resolveCampusUsageLeaderboard(ctx context.Context, timeWindow *string) ([]*CampusUsageLeaderboardEntry, error) {
 	currentUser, ok := contexts.GetUser(ctx)
 	if !ok || currentUser == nil {
 		return nil, fmt.Errorf("user not found in context")
@@ -132,12 +150,15 @@ func (r *queryResolver) resolveCampusUsageLeaderboard(ctx context.Context) ([]*C
 	// General settings are Owner-managed, but members need the configured
 	// timezone to share the same calendar-day boundary.
 	restrictedReadCtx := privacy.DecisionContext(ctx, privacy.Allow)
-	period := xtime.GetCalendarPeriods(r.systemService.TimeLocation(restrictedReadCtx)).Today
+	period, err := campusLeaderboardPeriod(xtime.GetCalendarPeriods(r.systemService.TimeLocation(restrictedReadCtx)), timeWindow)
+	if err != nil {
+		return nil, err
+	}
 	var aggregates []campusUsageAggregate
 
 	// Membership is verified above. The privacy bypass is deliberately scoped to
 	// this aggregate, whose GraphQL DTO contains no direct identifiers or secrets.
-	err := r.client.UsageLog.Query().
+	err = r.client.UsageLog.Query().
 		Where(
 			usagelog.ProjectIDEQ(projectID),
 			usagelog.APIKeyIDNotNil(),

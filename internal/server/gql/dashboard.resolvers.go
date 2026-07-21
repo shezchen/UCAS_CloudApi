@@ -1893,6 +1893,6 @@ func (r *queryResolver) UsageStatsByUser(ctx context.Context, timeWindow *string
 }
 
 // CampusUsageLeaderboard is the resolver for the campusUsageLeaderboard field.
-func (r *queryResolver) CampusUsageLeaderboard(ctx context.Context) ([]*CampusUsageLeaderboardEntry, error) {
-	return r.resolveCampusUsageLeaderboard(ctx)
+func (r *queryResolver) CampusUsageLeaderboard(ctx context.Context, timeWindow *string) ([]*CampusUsageLeaderboardEntry, error) {
+	return r.resolveCampusUsageLeaderboard(ctx, timeWindow)
 }

@@ -1254,7 +1254,7 @@ type ComplexityRoot struct {
 		AllScopes                    func(childComplexity int, level *string) int
 		AutoBackupSettings           func(childComplexity int) int
 		BrandSettings                func(childComplexity int) int
-		CampusUsageLeaderboard       func(childComplexity int) int
+		CampusUsageLeaderboard       func(childComplexity int, timeWindow *string) int
 		ChannelOverrideTemplates     func(childComplexity int, after *entgql.Cursor[int], first *int, before *entgql.Cursor[int], last *int, orderBy *ent.ChannelOverrideTemplateOrder, where *ent.ChannelOverrideTemplateWhereInput) int
 		ChannelPerformanceStats      func(childComplexity int) int
 		ChannelProbeData             func(childComplexity int, input biz.GetChannelProbeDataInput) int
@@ -2257,7 +2257,7 @@ type QueryResolver interface {
 	CostStatsByModel(ctx context.Context, timeWindow *string) ([]*CostStatsByModel, error)
 	CostStatsByAPIKey(ctx context.Context, timeWindow *string) ([]*CostStatsByAPIKey, error)
 	UsageStatsByUser(ctx context.Context, timeWindow *string) ([]*UsageStatsByUser, error)
-	CampusUsageLeaderboard(ctx context.Context) ([]*CampusUsageLeaderboardEntry, error)
+	CampusUsageLeaderboard(ctx context.Context, timeWindow *string) ([]*CampusUsageLeaderboardEntry, error)
 	AllScopes(ctx context.Context, level *string) ([]*ScopeInfo, error)
 	Me(ctx context.Context) (*objects.UserInfo, error)
 	MyProjects(ctx context.Context) ([]*ent.Project, error)
@@ -7553,7 +7553,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			break
 		}
 
-		return e.complexity.Query.CampusUsageLeaderboard(childComplexity), true
+		args, err := ec.field_Query_campusUsageLeaderboard_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Query.CampusUsageLeaderboard(childComplexity, args["timeWindow"].(*string)), true
 	case "Query.channelOverrideTemplates":
 		if e.complexity.Query.ChannelOverrideTemplates == nil {
 			break
@@ -13266,6 +13271,17 @@ func (ec *executionContext) field_Query_apiKeys_args(ctx context.Context, rawArg
 		return nil, err
 	}
 	args["where"] = arg5
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_campusUsageLeaderboard_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "timeWindow", ec.unmarshalOString2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["timeWindow"] = arg0
 	return args, nil
 }
 
@@ -42838,7 +42854,8 @@ func (ec *executionContext) _Query_campusUsageLeaderboard(ctx context.Context, f
 		field,
 		ec.fieldContext_Query_campusUsageLeaderboard,
 		func(ctx context.Context) (any, error) {
-			return ec.resolvers.Query().CampusUsageLeaderboard(ctx)
+			fc := graphql.GetFieldContext(ctx)
+			return ec.resolvers.Query().CampusUsageLeaderboard(ctx, fc.Args["timeWindow"].(*string))
 		},
 		nil,
 		ec.marshalNCampusUsageLeaderboardEntry2ᚕᚖgithubᚗcomᚋloopljᚋaxonhubᚋinternalᚋserverᚋgqlᚐCampusUsageLeaderboardEntryᚄ,
@@ -42847,7 +42864,7 @@ func (ec *executionContext) _Query_campusUsageLeaderboard(ctx context.Context, f
 	)
 }
 
-func (ec *executionContext) fieldContext_Query_campusUsageLeaderboard(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+func (ec *executionContext) fieldContext_Query_campusUsageLeaderboard(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "Query",
 		Field:      field,
@@ -42872,6 +42889,17 @@ func (ec *executionContext) fieldContext_Query_campusUsageLeaderboard(_ context.
 			}
 			return nil, fmt.Errorf("no field named %q was found under type CampusUsageLeaderboardEntry", field.Name)
 		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_campusUsageLeaderboard_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
 	}
 	return fc, nil
 }

@@ -223,7 +223,7 @@ type UsageStatsByUser {
 }
 
 """
-Privacy-safe campus leaderboard entry for today's recorded usage.
+Privacy-safe campus leaderboard entry for recorded usage in a selected period.
 The public alias is stable only within the current project and does not expose
 the underlying user, API key, channel, model, request content, or cost.
 """
@@ -268,8 +268,9 @@ extend type Query {
   costStatsByAPIKey(timeWindow: String): [CostStatsByAPIKey!]!
   usageStatsByUser(timeWindow: String): [UsageStatsByUser!]!
   """
-  Today's privacy-safe campus usage leaderboard in the system timezone.
+  Privacy-safe campus usage leaderboard in the system timezone.
+  `timeWindow` accepts `day`, `week`, or `month`, and defaults to `day`.
   Returns the top 50 entries plus the current member when outside the top 50.
   """
-  campusUsageLeaderboard: [CampusUsageLeaderboardEntry!]!
+  campusUsageLeaderboard(timeWindow: String): [CampusUsageLeaderboardEntry!]!
 }

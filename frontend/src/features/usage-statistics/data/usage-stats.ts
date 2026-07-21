@@ -17,8 +17,8 @@ const USAGE_STATS_BY_USER_QUERY = `
 `;
 
 const CAMPUS_USAGE_LEADERBOARD_QUERY = `
-  query GetCampusUsageLeaderboard {
-    campusUsageLeaderboard {
+  query GetCampusUsageLeaderboard($timeWindow: String) {
+    campusUsageLeaderboard(timeWindow: $timeWindow) {
       rank
       displayName
       publicAlias
@@ -41,6 +41,7 @@ export const campusUsageLeaderboardEntrySchema = z.object({
 });
 
 export type CampusUsageLeaderboardEntry = z.infer<typeof campusUsageLeaderboardEntrySchema>;
+export type CampusUsageLeaderboardTimeWindow = 'day' | 'week' | 'month';
 
 export function useUsageStatsByUser(timeWindow?: string) {
   const selectedProjectId = useSelectedProjectId();
@@ -62,16 +63,16 @@ export function useUsageStatsByUser(timeWindow?: string) {
   });
 }
 
-export function useCampusUsageLeaderboard() {
+export function useCampusUsageLeaderboard(timeWindow: CampusUsageLeaderboardTimeWindow = 'day') {
   const selectedProjectId = useSelectedProjectId();
 
   return useQuery({
-    queryKey: ['campusUsageLeaderboard', selectedProjectId],
+    queryKey: ['campusUsageLeaderboard', timeWindow, selectedProjectId],
     queryFn: async () => {
       const headers = selectedProjectId ? { 'X-Project-ID': selectedProjectId } : undefined;
       const data = await graphqlRequest<{ campusUsageLeaderboard: CampusUsageLeaderboardEntry[] }>(
         CAMPUS_USAGE_LEADERBOARD_QUERY,
-        undefined,
+        { timeWindow },
         headers
       );
       return data.campusUsageLeaderboard.map((item) => campusUsageLeaderboardEntrySchema.parse(item));

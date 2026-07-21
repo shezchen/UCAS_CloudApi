@@ -9,7 +9,7 @@ import (
 )
 
 // resolveAPIKey loads an API key through the privacy-gated read path from the
-// caller-facing identifier set: typed GUID, plaintext key, or project-scoped
+// caller-facing identifier set: typed GUID, plaintext key, or caller-owned
 // name. guidID rejects wrong-typed GUIDs; GetForRead enforces exactly-one-of
 // and the read_api_keys / own-project privacy policy, so foreign or missing
 // keys surface as NotFound.

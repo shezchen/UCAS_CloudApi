@@ -1153,17 +1153,17 @@ func TestAPIKeyService_PersonalAPIKeyIsolation(t *testing.T) {
 	require.Equal(t, other.ID, otherKey.UserID)
 	require.ElementsMatch(t, personalAPIKeyScopes(), otherKey.Scopes)
 
-	t.Run("personal key names remain unique across users in one project", func(t *testing.T) {
-		_, err := apiKeyService.CreateAPIKey(otherCtx, ent.CreateAPIKeyInput{
-			Name:      creatorKey.Name,
+	t.Run("personal key names are isolated by creator", func(t *testing.T) {
+		sharedName := creatorKey.Name
+		otherSharedKey, err := apiKeyService.CreateAPIKey(otherCtx, ent.CreateAPIKeyInput{
+			Name:      sharedName,
 			ProjectID: testProject.ID,
 		})
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "already exists")
+		require.NoError(t, err)
+		require.Equal(t, other.ID, otherSharedKey.UserID)
 
-		duplicateName := creatorKey.Name
 		_, err = apiKeyService.UpdateAPIKey(otherCtx, otherKey.ID, ent.UpdateAPIKeyInput{
-			Name: &duplicateName,
+			Name: &sharedName,
 		})
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "already exists")
@@ -1171,6 +1171,9 @@ func TestAPIKeyService_PersonalAPIKeyIsolation(t *testing.T) {
 		persisted, err := client.APIKey.Get(setupCtx, otherKey.ID)
 		require.NoError(t, err)
 		require.Equal(t, "other-personal", persisted.Name)
+
+		err = client.APIKey.DeleteOneID(otherSharedKey.ID).Exec(setupCtx)
+		require.NoError(t, err)
 	})
 
 	t.Run("non-owner cannot choose privileged key types", func(t *testing.T) {
@@ -1435,9 +1438,9 @@ func TestAPIKeyService_CreateLLMAPIKey(t *testing.T) {
 }
 
 // TestAPIKeyService_NameUniqueness verifies application-level name uniqueness
-// (Path A', no DB unique index): names are unique per project, reusable after
-// soft-delete, and still occupied by archived (not deleted) keys. It drives
-// CreateLLMAPIKey, whose post-insert live-count check enforces the invariant.
+// (Path A', no DB unique index): names are unique per creator within a project,
+// reusable after soft-delete, and still occupied by archived (not deleted) keys.
+// It drives CreateLLMAPIKey, whose post-insert live-count check enforces the invariant.
 func TestAPIKeyService_NameUniqueness(t *testing.T) {
 	apiKeyService, client := setupTestAPIKeyService(t, xcache.Config{Mode: xcache.ModeMemory})
 	defer apiKeyService.Stop()
@@ -1475,14 +1478,14 @@ func TestAPIKeyService_NameUniqueness(t *testing.T) {
 		SetUserID(ownerUser.ID).
 		SetProjectID(ownerProject.ID).
 		SetType(apikey.TypeServiceAccount).
-		SetScopes([]string{string(scopes.ScopeWriteAPIKeys)}).
+		SetScopes([]string{string(scopes.ScopeReadAPIKeys), string(scopes.ScopeWriteAPIKeys)}).
 		Save(setupCtx)
 	require.NoError(t, err)
 
 	ctx := ent.NewContext(context.Background(), client)
 	ctx = contexts.WithAPIKey(ctx, ownerAPIKey)
 
-	t.Run("rejects duplicate name in same project", func(t *testing.T) {
+	t.Run("rejects duplicate name for the same creator", func(t *testing.T) {
 		_, err := apiKeyService.CreateLLMAPIKey(ctx, ownerAPIKey, "dup-name")
 		require.NoError(t, err)
 
@@ -1496,10 +1499,52 @@ func TestAPIKeyService_NameUniqueness(t *testing.T) {
 		// transaction rolling that insert back. Assert exactly one live key keeps the
 		// name, i.e. the rejected attempt left no extra live row behind.
 		live, err := client.APIKey.Query().
-			Where(apikey.NameEQ("dup-name"), apikey.ProjectIDEQ(ownerProject.ID)).
+			Where(apikey.NameEQ("dup-name"), apikey.ProjectIDEQ(ownerProject.ID), apikey.UserIDEQ(ownerUser.ID)).
 			Count(setupCtx)
 		require.NoError(t, err)
 		require.Equal(t, 1, live, "rejected duplicate create must leave no extra live row")
+	})
+
+	t.Run("allows another creator to reuse a name and resolves each caller's key", func(t *testing.T) {
+		otherUser, err := client.User.Create().
+			SetEmail(fmt.Sprintf("other-%d@example.com", time.Now().UnixNano())).
+			SetPassword(hashedPassword).
+			SetFirstName("Other").
+			SetLastName("User").
+			SetStatus(user.StatusActivated).
+			Save(setupCtx)
+		require.NoError(t, err)
+
+		otherServiceKey, err := GenerateAPIKey("ah")
+		require.NoError(t, err)
+
+		otherOwnerKey, err := client.APIKey.Create().
+			SetName("Other Service Account").
+			SetKey(otherServiceKey).
+			SetUserID(otherUser.ID).
+			SetProjectID(ownerProject.ID).
+			SetType(apikey.TypeServiceAccount).
+			SetScopes([]string{string(scopes.ScopeReadAPIKeys), string(scopes.ScopeWriteAPIKeys)}).
+			Save(setupCtx)
+		require.NoError(t, err)
+
+		otherCtx := ent.NewContext(context.Background(), client)
+		otherCtx = contexts.WithAPIKey(otherCtx, otherOwnerKey)
+
+		ownerCreated, err := apiKeyService.CreateLLMAPIKey(ctx, ownerAPIKey, "shared-name")
+		require.NoError(t, err)
+
+		otherCreated, err := apiKeyService.CreateLLMAPIKey(otherCtx, otherOwnerKey, "shared-name")
+		require.NoError(t, err)
+
+		name := "shared-name"
+		ownerLookup, err := apiKeyService.GetForRead(ctx, nil, nil, &name)
+		require.NoError(t, err)
+		require.Equal(t, ownerCreated.ID, ownerLookup.ID)
+
+		otherLookup, err := apiKeyService.GetForRead(otherCtx, nil, nil, &name)
+		require.NoError(t, err)
+		require.Equal(t, otherCreated.ID, otherLookup.ID)
 	})
 
 	t.Run("name reusable after soft-delete", func(t *testing.T) {

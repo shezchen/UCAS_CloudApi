@@ -269,9 +269,9 @@ func (s *APIKeyService) CreateLLMAPIKey(ctx context.Context, owner *ent.APIKey, 
 			return err
 		}
 
-		// Names identify keys on the OpenAPI surface (GetForRead resolves a name
-		// within the owner's project), so per-project name uniqueness must hold. The
-		// privacy mutation policy vets the caller during Save, so an unauthorized
+		// Names identify a creator's keys on the OpenAPI surface (GetForRead resolves
+		// a name for the calling API-key owner), so per-creator name uniqueness must
+		// hold. The privacy mutation policy vets the caller during Save, so an unauthorized
 		// caller is denied before the post-insert check below and cannot use
 		// duplicate-name errors to probe which names exist.
 		created, err := client.APIKey.Create().
@@ -289,9 +289,10 @@ func (s *APIKeyService) CreateLLMAPIKey(ctx context.Context, owner *ent.APIKey, 
 			return fmt.Errorf("failed to create api key: %w", err)
 		}
 
-		// API key names are unique per project at the application level — there is
-		// no DB unique constraint. After the authorized insert, verify no other live
-		// key in this project shares the name; checking AFTER Save preserves the
+		// API key names are unique per creator within a project at the application
+		// level — there is no DB unique constraint. After the authorized insert,
+		// verify no other live key owned by this user in this project shares the
+		// name; checking AFTER Save preserves the
 		// privacy-denial ordering (the mutation policy already vetted the caller, so
 		// an unauthorized caller is denied before reaching this check and cannot
 		// probe which names exist). The count is privacy-bypassed because the OpenAPI
@@ -306,6 +307,7 @@ func (s *APIKeyService) CreateLLMAPIKey(ctx context.Context, owner *ent.APIKey, 
 			Where(
 				apikey.NameEQ(name),
 				apikey.ProjectIDEQ(owner.ProjectID),
+				apikey.UserIDEQ(owner.UserID),
 			).
 			Count(bypassCtx)
 		if err != nil {
@@ -366,11 +368,11 @@ func (s *APIKeyService) CreateAPIKey(ctx context.Context, input ent.CreateAPIKey
 	err = s.RunInTransaction(ctx, func(ctx context.Context) error {
 		client := s.entFromContext(ctx)
 
-		// API key names are unique per project at the application level (there is no
-		// DB unique constraint). The project row lock serializes same-project name
-		// operations so the insert and the live-only duplicate check are atomic across
-		// concurrent writers (PostgreSQL, MySQL, TiDB); no-op on the single-writer
-		// SQLite default.
+		// API key names are unique per creator within a project at the application
+		// level (there is no DB unique constraint). The project row lock serializes
+		// name operations so the insert and the live-only duplicate check are atomic
+		// across concurrent writers (PostgreSQL, MySQL, TiDB); no-op on the
+		// single-writer SQLite default.
 		if err := s.lockProjectForAPIKeyName(ctx, input.ProjectID); err != nil {
 			return err
 		}
@@ -400,13 +402,14 @@ func (s *APIKeyService) CreateAPIKey(ctx context.Context, input ent.CreateAPIKey
 
 		// The create above first proves that the caller is authorized. Count with a
 		// system bypass afterwards so the personal-key read filter cannot hide another
-		// user's same-name key. Returning an error rolls this transaction back, and
+		// key owned by this user. Returning an error rolls this transaction back, and
 		// therefore does not leave the just-created duplicate behind.
 		dupCount, err := authz.RunWithSystemBypass(ctx, "api key name uniqueness", func(bypassCtx context.Context) (int, error) {
 			return client.APIKey.Query().
 				Where(
 					apikey.NameEQ(input.Name),
 					apikey.ProjectIDEQ(input.ProjectID),
+					apikey.UserIDEQ(currentUser.ID),
 				).
 				Count(bypassCtx)
 		})
@@ -455,22 +458,23 @@ func (s *APIKeyService) UpdateAPIKey(ctx context.Context, id int, input ent.Upda
 		}
 
 		// Renaming: serialize same-project name operations and reject a duplicate
-		// live name (no DB unique constraint backs the name). The project row lock
-		// makes the check-then-update atomic across concurrent writers (PostgreSQL,
-		// MySQL, TiDB); no-op on the single-writer SQLite default.
+		// live name for this key's creator (no DB unique constraint backs the name).
+		// The project row lock makes the check-then-update atomic across concurrent
+		// writers (PostgreSQL, MySQL, TiDB); no-op on the single-writer SQLite default.
 		if input.Name != nil && *input.Name != apiKey.Name {
 			if err := s.lockProjectForAPIKeyName(ctx, apiKey.ProjectID); err != nil {
 				return err
 			}
 
 			// Ownership was established by Get and the service-level guard above. Use a
-			// system bypass for the duplicate lookup so another user's personal key is
-			// not hidden by the query privacy filter.
+			// system bypass for the duplicate lookup so another key owned by the same
+			// user is not hidden by the query privacy filter.
 			exists, err := authz.RunWithSystemBypass(ctx, "api key name uniqueness", func(bypassCtx context.Context) (bool, error) {
 				return client.APIKey.Query().
 					Where(
 						apikey.NameEQ(*input.Name),
 						apikey.ProjectIDEQ(apiKey.ProjectID),
+						apikey.UserIDEQ(apiKey.UserID),
 						apikey.IDNEQ(id),
 					).
 					Exist(bypassCtx)
@@ -754,9 +758,10 @@ func (s *APIKeyService) GetAPIKey(ctx context.Context, key string) (*ent.APIKey,
 // key. This is the read-side counterpart to the implicit ent gating used by the
 // update mutations.
 //
-// Name lookups rely on the same project boundary: names are unique within a
-// project (enforced on create/update), so once the privacy filter narrows the
-// query to the caller's project, a name identifies at most one key.
+// Name lookups made by an API-key principal are additionally scoped to that
+// principal's user. Names are unique per creator within a project, so the
+// caller's own name identifies at most one key without making other users'
+// labels globally reserved.
 func (s *APIKeyService) GetForRead(ctx context.Context, id *int, key *string, name *string) (*ent.APIKey, error) {
 	if lo.Count([]bool{id != nil, key != nil, name != nil}, true) != 1 {
 		return nil, fmt.Errorf("exactly one of api key id, key, or name must be provided")
@@ -772,16 +777,25 @@ func (s *APIKeyService) GetForRead(ctx context.Context, id *int, key *string, na
 		q = q.Where(apikey.KeyEQ(*key))
 	case name != nil:
 		q = q.Where(apikey.NameEQ(*name))
+
+		// API-key privacy permits a service account to read non-personal keys across
+		// its project. Limit name resolution to the principal's creator so allowing
+		// different users to use the same label cannot make this lookup ambiguous or
+		// select another user's key. Contexts without an API-key principal retain the
+		// existing privacy-governed project lookup behavior.
+		if principal, ok := contexts.GetAPIKey(ctx); ok && principal != nil && principal.UserID != 0 {
+			q = q.Where(apikey.UserIDEQ(principal.UserID))
+		}
 	}
 
 	apiKey, err := q.Only(ctx)
 	if err != nil {
-		// Names are unique per project only at the application level (no DB
+		// Names are unique per creator only at the application level (no DB
 		// constraint), so a database that predates that enforcement may hold
 		// duplicate live names. A name then no longer identifies a single key —
 		// surface an actionable error instead of ent's opaque "not singular".
 		if name != nil && ent.IsNotSingular(err) {
-			return nil, fmt.Errorf("multiple API keys are named %q in this project; use id or key to identify the key", *name)
+			return nil, fmt.Errorf("multiple API keys are named %q for this creator; use id or key to identify the key", *name)
 		}
 
 		return nil, err

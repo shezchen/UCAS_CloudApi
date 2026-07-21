@@ -41,7 +41,7 @@ type LoadAPIKeyProfileTemplateInput struct {
 	TemplateID   *objects.GUID `json:"templateID,omitempty"`
 	TemplateName *string       `json:"templateName,omitempty"`
 	// Target API key. Provide exactly one of apiKeyID or apiKeyName;
-	// apiKeyName resolves within the caller's own project.
+	// apiKeyName resolves among the caller's own keys.
 	APIKeyID   *objects.GUID `json:"apiKeyID,omitempty"`
 	APIKeyName *string       `json:"apiKeyName,omitempty"`
 }

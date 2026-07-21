@@ -8,7 +8,7 @@ mutation CreateAPIKey($name: String!) {
 }
 
 # Provide exactly one of $id or $name to identify the target key. $name resolves
-# within the service account's own project, where API key names are unique.
+# among keys owned by the service account's creator, where names are unique.
 mutation UpdateAPIKeyProfiles($id: ID, $name: String, $input: UpdateAPIKeyProfilesInput!) {
   updateAPIKeyProfiles(id: $id, name: $name, input: $input) {
     id
@@ -35,7 +35,8 @@ mutation UpdateAPIKeyProfiles($id: ID, $name: String, $input: UpdateAPIKeyProfil
 
 # In the input, identify the template by exactly one of templateID/templateName
 # and the target key by exactly one of apiKeyID/apiKeyName; identifiers can be
-# mixed (e.g. templateName + apiKeyID). Names resolve within the caller's project.
+# mixed (e.g. templateName + apiKeyID). Template names resolve within the caller's
+# project; API key names resolve among the caller's own keys.
 mutation LoadApiKeyProfileTemplate($input: LoadApiKeyProfileTemplateInput!) {
   loadApiKeyProfileTemplate(input: $input) {
     id
@@ -62,8 +63,9 @@ mutation LoadApiKeyProfileTemplate($input: LoadApiKeyProfileTemplateInput!) {
 
 # Look up an API key's details (id, key, name, scopes, profiles) by exactly one
 # of $id, $key, or $name. Requires the read_api_keys scope and only sees keys
-# inside the service account's own project. This is the way to resolve a key's
-# id/key from its name before calling id-based operations.
+# inside the service account's own project. A name resolves only among keys owned
+# by the service account's creator; use this to resolve its id/key before calling
+# id-based operations.
 query GetAPIKey($id: ID, $key: String, $name: String) {
   apiKey(id: $id, key: $key, name: $name) {
     id
@@ -90,6 +92,7 @@ query GetAPIKey($id: ID, $key: String, $name: String) {
 
 # Provide exactly one of $apiKeyId, $key, or $name. Requires the read_api_keys
 # scope and only returns usage for keys inside the service account's own project.
+# A name resolves only among keys owned by the service account's creator.
 query APIKeyQuotaUsages($apiKeyId: ID, $key: String, $name: String) {
   apiKeyQuotaUsages(apiKeyId: $apiKeyId, key: $key, name: $name) {
     profileName

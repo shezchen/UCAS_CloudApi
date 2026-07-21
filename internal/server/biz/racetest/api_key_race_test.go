@@ -54,13 +54,13 @@ var raceDialects = []struct {
 // closes the race on PostgreSQL/MySQL/TiDB, and SQLite's single-writer semantics
 // close it on SQLite (where the lock is a no-op).
 //
-// Many clients concurrently create an LLM API key with the SAME name in the SAME
-// project. There is no unique index on (project_id, name); the only thing closing
-// the check-then-write race is the SELECT ... FOR UPDATE on the parent project row
-// taken in CreateLLMAPIKey's transaction. The lock must serialize the burst so
-// exactly one create succeeds, every other gets DuplicateNameError, exactly one
-// live row remains, and the name-based lookup (the feature this PR ships) resolves
-// to it.
+// Many clients concurrently create an LLM API key with the SAME name for the SAME
+// creator in the SAME project. There is no unique index on (project_id, user_id,
+// name); the only thing closing the check-then-write race is the SELECT ... FOR
+// UPDATE on the parent project row taken in CreateLLMAPIKey's transaction. The
+// lock must serialize the burst so exactly one create succeeds, every other gets
+// DuplicateNameError, exactly one live row remains, and the name-based lookup
+// resolves to it.
 //
 // Without the lock, this same burst would leave duplicate live rows and break
 // GetForRead's .Only() with a not-singular error.

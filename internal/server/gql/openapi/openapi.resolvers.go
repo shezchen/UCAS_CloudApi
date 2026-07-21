@@ -41,8 +41,8 @@ func (r *mutationResolver) UpdateAPIKeyProfiles(ctx context.Context, id *objects
 		}
 	}
 
-	// Resolve the target through the privacy-gated read path so a name (unique
-	// within the caller's project) identifies a key as reliably as an id. This
+	// Resolve the target through the privacy-gated read path so a caller-owned
+	// name identifies a key as reliably as an id. This
 	// adds no new scope requirement: the update path already queries the key,
 	// so read_api_keys was needed before this resolution step existed.
 	target, err := r.resolveAPIKey(ctx, id, nil, name)
@@ -61,8 +61,8 @@ func (r *mutationResolver) UpdateAPIKeyProfiles(ctx context.Context, id *objects
 // LoadAPIKeyProfileTemplate is the resolver for the loadApiKeyProfileTemplate field.
 func (r *mutationResolver) LoadAPIKeyProfileTemplate(ctx context.Context, input LoadAPIKeyProfileTemplateInput) (*APIKey, error) {
 	// Resolve both the template and the target key through the privacy-gated
-	// read paths, which scope name lookups to the caller's own project (where
-	// both names are unique) and enforce each pair's exactly-one-of rule.
+	// read paths, which scope API-key names to the caller's own user and template
+	// names to the caller's project, and enforce each pair's exactly-one-of rule.
 	template, err := r.resolveTemplate(ctx, input.TemplateID, input.TemplateName)
 	if err != nil {
 		return nil, err

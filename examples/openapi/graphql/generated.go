@@ -205,9 +205,9 @@ func (v *APIKeyQuotaUsagesApiKeyQuotaUsagesAPIKeyProfileQuotaUsageWindowAPIKeyQu
 // APIKeyQuotaUsagesResponse is returned by APIKeyQuotaUsages on success.
 type APIKeyQuotaUsagesResponse struct {
 	// Returns quota usage for the profiles that have quota enabled on an API key.
-	// Provide exactly one of apiKeyId, key, or name; all identify a key, and only
-	// keys inside the caller's own project are visible (requires the read_api_keys
-	// scope).
+	// Provide exactly one of apiKeyId, key, or name; names resolve among the
+	// caller's own keys, and only keys inside the caller's own project are visible
+	// (requires the read_api_keys scope).
 	ApiKeyQuotaUsages []*APIKeyQuotaUsagesApiKeyQuotaUsagesAPIKeyProfileQuotaUsage `json:"apiKeyQuotaUsages"`
 }
 
@@ -361,8 +361,9 @@ func (v *GetAPIKeyApiKeyAPIKeyProfilesProfilesAPIKeyProfileModelMappingsModelMap
 // GetAPIKeyResponse is returned by GetAPIKey on success.
 type GetAPIKeyResponse struct {
 	// Returns an API key's details (id, key, name, scopes, profiles).
-	// Provide exactly one of id, key, or name; all identify a key, and only keys
-	// inside the caller's own project are visible (requires the read_api_keys scope).
+	// Provide exactly one of id, key, or name; names resolve among the caller's own
+	// keys, and only keys inside the caller's own project are visible (requires the
+	// read_api_keys scope).
 	ApiKey *GetAPIKeyApiKeyAPIKey `json:"apiKey"`
 }
 
@@ -375,7 +376,7 @@ type LoadApiKeyProfileTemplateInput struct {
 	TemplateID   *string `json:"templateID,omitempty"`
 	TemplateName *string `json:"templateName,omitempty"`
 	// Target API key. Provide exactly one of apiKeyID or apiKeyName;
-	// apiKeyName resolves within the caller's own project.
+	// apiKeyName resolves among the caller's own keys.
 	ApiKeyID   *string `json:"apiKeyID,omitempty"`
 	ApiKeyName *string `json:"apiKeyName,omitempty"`
 }
@@ -533,7 +534,7 @@ func (v *UpdateAPIKeyProfilesInput) GetProfiles() []*APIKeyProfileInput { return
 // UpdateAPIKeyProfilesResponse is returned by UpdateAPIKeyProfiles on success.
 type UpdateAPIKeyProfilesResponse struct {
 	// Updates the profiles of an API key. Provide exactly one of id or name;
-	// name resolves within the caller's own project, where API key names are unique.
+	// name resolves among the caller's own keys, where names are unique.
 	UpdateAPIKeyProfiles *UpdateAPIKeyProfilesUpdateAPIKeyProfilesAPIKey `json:"updateAPIKeyProfiles"`
 }
 
@@ -885,7 +886,8 @@ mutation LoadApiKeyProfileTemplate ($input: LoadApiKeyProfileTemplateInput!) {
 
 // In the input, identify the template by exactly one of templateID/templateName
 // and the target key by exactly one of apiKeyID/apiKeyName; identifiers can be
-// mixed (e.g. templateName + apiKeyID). Names resolve within the caller's project.
+// mixed (e.g. templateName + apiKeyID). Template names resolve within the caller's
+// project; API key names resolve among the caller's own keys.
 func LoadApiKeyProfileTemplate(
 	ctx_ context.Context,
 	client_ graphql.Client,
@@ -939,7 +941,7 @@ mutation UpdateAPIKeyProfiles ($id: ID, $name: String, $input: UpdateAPIKeyProfi
 `
 
 // Provide exactly one of $id or $name to identify the target key. $name resolves
-// within the service account's own project, where API key names are unique.
+// among keys owned by the service account's creator, where names are unique.
 func UpdateAPIKeyProfiles(
 	ctx_ context.Context,
 	client_ graphql.Client,

@@ -21,7 +21,6 @@ const campusLeaderboardLimit = 50
 type campusUsageAggregate struct {
 	UserID            int    `json:"user_id"`
 	Nickname          string `json:"nickname"`
-	DailyTokenLimit   int64  `json:"daily_token_limit"`
 	RecordedTokens    int64  `json:"recorded_tokens"`
 	MeteredRequestCnt int    `json:"metered_request_count"`
 }
@@ -64,7 +63,12 @@ func campusLeaderboardPeriod(periods xtime.CalendarPeriods, timeWindow *string) 
 	}
 }
 
-func rankCampusUsage(projectID, currentUserID int, currentNickname string, aggregates []campusUsageAggregate) []*CampusUsageLeaderboardEntry {
+func rankCampusUsage(
+	projectID, currentUserID int,
+	currentNickname string,
+	dailyTokenLimit int64,
+	aggregates []campusUsageAggregate,
+) []*CampusUsageLeaderboardEntry {
 	foundCurrentUser := false
 	ranked := make([]rankedCampusUsage, 0, len(aggregates)+1)
 	for _, aggregate := range aggregates {
@@ -78,7 +82,7 @@ func rankCampusUsage(projectID, currentUserID int, currentNickname string, aggre
 			PublicAlias:       publicAlias,
 			RecordedTokens:    aggregate.RecordedTokens,
 			MeteredRequestCnt: aggregate.MeteredRequestCnt,
-			LimitPercent:      campusLimitPercent(aggregate.RecordedTokens, aggregate.DailyTokenLimit),
+			LimitPercent:      campusLimitPercent(aggregate.RecordedTokens, dailyTokenLimit),
 		})
 	}
 
@@ -154,6 +158,10 @@ func (r *queryResolver) resolveCampusUsageLeaderboard(ctx context.Context, timeW
 	if err != nil {
 		return nil, err
 	}
+	dailyTokenLimit, err := r.quotaService.AccountDailyTokenLimit(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get account daily token limit: %w", err)
+	}
 	var aggregates []campusUsageAggregate
 
 	// Membership is verified above. The privacy bypass is deliberately scoped to
@@ -183,16 +191,15 @@ func (r *queryResolver) resolveCampusUsageLeaderboard(ctx context.Context, timeW
 			s.Select(
 				sql.As(userTable.C("id"), "user_id"),
 				sql.As(userTable.C("nickname"), "nickname"),
-				sql.As(userTable.C("daily_token_limit"), "daily_token_limit"),
 				sql.As(fmt.Sprintf("COALESCE(SUM(%s), 0)", s.C(usagelog.FieldTotalTokens)), "recorded_tokens"),
 				sql.As(sql.Count(s.C(usagelog.FieldID)), "metered_request_count"),
 			).
-				GroupBy(userTable.C("id"), userTable.C("nickname"), userTable.C("daily_token_limit"))
+				GroupBy(userTable.C("id"), userTable.C("nickname"))
 		}).
 		Scan(restrictedReadCtx, &aggregates)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get campus usage leaderboard: %w", err)
 	}
 
-	return rankCampusUsage(projectID, currentUser.ID, currentUser.Nickname, aggregates), nil
+	return rankCampusUsage(projectID, currentUser.ID, currentUser.Nickname, dailyTokenLimit, aggregates), nil
 }

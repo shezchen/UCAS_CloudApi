@@ -60,8 +60,6 @@
   "users.form.confirmNewPassword": "确认新密码",
   "users.form.isOwner": "所有者",
   "users.form.ownerDescription": "授予此用户所有者权限",
-  "users.form.dailyTokenLimit": "每日 Token 总上限",
-  "users.form.dailyTokenLimitDescription": "当该账户已记录的当日总用量达到上限后阻止新请求；并发中的请求结算后可能略有超出。",
   "users.form.roles": "角色",
   "users.form.scopes": "权限范围",
   "users.form.projectRoles": "项目角色",
@@ -79,7 +77,6 @@
   "users.validation.firstNameRequired": "名字不能为空",
   "users.validation.lastNameRequired": "姓氏不能为空",
   "users.validation.emailRequired": "邮箱不能为空",
-  "users.validation.dailyTokenLimitNonnegative": "每日 Token 总上限不能小于 0",
   "users.validation.passwordsNotMatch": "密码不匹配",
   "users.validation.projectRequired": "项目不能为空",
   "users.validation.userRequired": "用户不能为空",
@@ -97,5 +94,13 @@
   "users.messages.userNotFound": "用户未找到",
   "users.messages.addToProjectSuccess": "用户已成功添加到项目",
   "users.messages.removeFromProjectSuccess": "用户已成功从项目中移除",
-  "users.errors.insufficientPermissions": "您没有足够的权限编辑此用户"
+  "users.errors.insufficientPermissions": "您没有足够的权限编辑此用户",
+  "users.dailyQuota.title": "全体账户实时每日 Token 上限",
+  "users.dailyQuota.description": "仅 Owner 可管理。保存后下一次请求会按每个账户已记录的当日总用量检查此上限，并立即作用于所有已有和新账户；每个账户的所有 API Key 共用此总额，并且仍会同时受各 API Key 自己的细分额度约束。并发中的请求结算后可能略有超出。",
+  "users.dailyQuota.limitLabel": "每账户每日 Token 总上限",
+  "users.dailyQuota.limitHint": "设为 0 会阻止所有账户发起新的计量请求。",
+  "users.dailyQuota.save": "保存全局上限",
+  "users.dailyQuota.saving": "保存中…",
+  "users.dailyQuota.messages.updateSuccess": "全体账户的每日 Token 总上限已实时更新",
+  "users.dailyQuota.messages.updateFailed": "更新每日 Token 总上限失败"
 }

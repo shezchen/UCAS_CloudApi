@@ -60,8 +60,6 @@
   "users.form.confirmNewPassword": "Confirm New Password",
   "users.form.isOwner": "Owner",
   "users.form.ownerDescription": "Grant owner privileges to this user",
-  "users.form.dailyTokenLimit": "Daily Token Limit",
-  "users.form.dailyTokenLimitDescription": "Blocks new requests once this account's recorded daily usage reaches the limit. Concurrent in-flight requests may settle slightly above it.",
   "users.form.roles": "Roles",
   "users.form.scopes": "Scopes",
   "users.form.projectRoles": "Project Roles",
@@ -79,7 +77,6 @@
   "users.validation.firstNameRequired": "First name is required",
   "users.validation.lastNameRequired": "Last name is required",
   "users.validation.emailRequired": "Email is required",
-  "users.validation.dailyTokenLimitNonnegative": "Daily token limit must be zero or greater",
   "users.validation.passwordsNotMatch": "Passwords don't match",
   "users.validation.projectRequired": "Project is required",
   "users.validation.userRequired": "User is required",
@@ -97,5 +94,13 @@
   "users.messages.userNotFound": "User not found",
   "users.messages.addToProjectSuccess": "User added to project successfully",
   "users.messages.removeFromProjectSuccess": "User removed from project successfully",
-  "users.errors.insufficientPermissions": "You don't have sufficient permissions to edit this user"
+  "users.errors.insufficientPermissions": "You don't have sufficient permissions to edit this user",
+  "users.dailyQuota.title": "Live Daily Token Limit for All Accounts",
+  "users.dailyQuota.description": "Owner-only. From the next request, this cap is checked against each account's recorded daily usage and applies to every existing and future account. Each account shares this total across its API keys, in addition to any API-key-specific quota. Concurrent in-flight requests may settle slightly above it.",
+  "users.dailyQuota.limitLabel": "Daily Token Limit per Account",
+  "users.dailyQuota.limitHint": "Setting this to 0 blocks new metered requests for every account.",
+  "users.dailyQuota.save": "Save Global Limit",
+  "users.dailyQuota.saving": "Saving…",
+  "users.dailyQuota.messages.updateSuccess": "The daily token limit for all accounts was updated live",
+  "users.dailyQuota.messages.updateFailed": "Failed to update the daily token limit"
 }

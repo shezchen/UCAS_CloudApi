@@ -486,7 +486,7 @@ func TestQuotaService_CalendarDay_CostExceeded(t *testing.T) {
 	require.Contains(t, res.Message, "cost quota exceeded")
 }
 
-func TestQuotaService_UserDailyTokenQuotaAggregatesAllKeysIncludingDeleted(t *testing.T) {
+func TestQuotaService_UserDailyTokenQuotaUsesGlobalLimitForEveryAccount(t *testing.T) {
 	client := enttest.NewEntClient(t, "sqlite3", "file:ent?mode=memory&_fk=0")
 	defer client.Close()
 
@@ -501,7 +501,8 @@ func TestQuotaService_UserDailyTokenQuotaAggregatesAllKeysIncludingDeleted(t *te
 	member, err := client.User.Create().
 		SetEmail("member@example.edu").
 		SetPassword("password").
-		SetDailyTokenLimit(200).
+		// A legacy per-user value must not affect the live global cap.
+		SetDailyTokenLimit(10).
 		Save(ctx)
 	require.NoError(t, err)
 
@@ -558,16 +559,35 @@ func TestQuotaService_UserDailyTokenQuotaAggregatesAllKeysIncludingDeleted(t *te
 	// Deleting a key must not let the member reset today's aggregate usage.
 	require.NoError(t, client.APIKey.DeleteOne(keyB).Exec(ctx))
 
-	svc := NewQuotaService(client, NewSystemService(SystemServiceParams{Ent: client}))
+	systemService := NewSystemService(SystemServiceParams{Ent: client})
+	svc := NewQuotaService(client, systemService)
+
+	// A smaller configured global cap makes this regression test inexpensive;
+	// the setting service separately covers its 200M initial default.
+	require.NoError(t, systemService.SetUserDailyQuotaSettings(ctx, UserDailyQuotaSettings{
+		DailyTokenLimit: 200,
+	}))
 	result, err := svc.CheckUserDailyTokenQuota(ctx, member.ID)
 	require.NoError(t, err)
 	require.False(t, result.Allowed)
 	require.Contains(t, result.Message, "200/200")
 
-	_, err = client.User.UpdateOne(member).SetDailyTokenLimit(201).Save(ctx)
-	require.NoError(t, err)
+	// Raising the global cap immediately frees an account that still has a
+	// legacy per-user value of 10.
+	require.NoError(t, systemService.SetUserDailyQuotaSettings(ctx, UserDailyQuotaSettings{
+		DailyTokenLimit: 300,
+	}))
 
 	result, err = svc.CheckUserDailyTokenQuota(ctx, member.ID)
 	require.NoError(t, err)
 	require.True(t, result.Allowed)
+
+	// Lowering it applies just as immediately, without touching user rows.
+	require.NoError(t, systemService.SetUserDailyQuotaSettings(ctx, UserDailyQuotaSettings{
+		DailyTokenLimit: 100,
+	}))
+	result, err = svc.CheckUserDailyTokenQuota(ctx, member.ID)
+	require.NoError(t, err)
+	require.False(t, result.Allowed)
+	require.Contains(t, result.Message, "200/100")
 }

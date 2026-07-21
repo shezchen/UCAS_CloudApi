@@ -8,6 +8,7 @@ schema:
   - scopes.graphql
   - me.graphql
   - system.graphql
+  - daily_quota.graphql
   - filter.graphql
   - model.graphql
   - backup.graphql

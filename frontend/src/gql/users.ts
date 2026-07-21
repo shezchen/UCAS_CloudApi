@@ -48,7 +48,6 @@ export const USERS_QUERY = `
           firstName
           lastName
           isOwner
-          dailyTokenLimit
           preferLanguage
           scopes
           roles {
@@ -82,7 +81,6 @@ export const USER_QUERY = `
       firstName
       lastName
       isOwner
-      dailyTokenLimit
       preferLanguage
       scopes
       roles {
@@ -108,7 +106,6 @@ export const CREATE_USER_MUTATION = `
       firstName
       lastName
       isOwner
-      dailyTokenLimit
       preferLanguage
       scopes
       roles {
@@ -134,7 +131,6 @@ export const UPDATE_USER_MUTATION = `
       firstName
       lastName
       isOwner
-      dailyTokenLimit
       preferLanguage
       scopes
       roles {
@@ -160,7 +156,6 @@ export const UPDATE_USER_STATUS_MUTATION = `
       firstName
       lastName
       isOwner
-      dailyTokenLimit
       preferLanguage
       scopes
       roles {

@@ -576,6 +576,10 @@ type UpdateUserAgentPassThroughSettingsInput struct {
 	Enabled bool `json:"enabled"`
 }
 
+type UpdateUserDailyQuotaSettingsInput struct {
+	DailyTokenLimit int `json:"dailyTokenLimit"`
+}
+
 // Usage statistics grouped by user
 type UsageStatsByUser struct {
 	UserID       objects.GUID `json:"userId"`

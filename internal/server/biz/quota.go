@@ -114,12 +114,30 @@ func (s *QuotaService) CheckAPIKeyQuota(ctx context.Context, apiKeyID int, quota
 	}, nil
 }
 
-// CheckUserDailyTokenQuota enforces the account-wide daily token limit across
-// every API key created by the same user. Soft-deleted keys remain part of the
-// aggregate so rotating or deleting a key cannot reset the account's usage.
+// AccountDailyTokenLimit returns the globally configured daily total-token cap
+// for every account. It deliberately does not read users.daily_token_limit:
+// that legacy field remains for historical compatibility only and must not
+// make the live global setting behave differently across accounts.
+func (s *QuotaService) AccountDailyTokenLimit(ctx context.Context) (int64, error) {
+	limit, err := s.system.UserDailyTokenLimit(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get account daily token limit: %w", err)
+	}
+
+	return limit, nil
+}
+
+// CheckUserDailyTokenQuota enforces the globally configured account-wide daily
+// token limit across every API key created by the same user. Soft-deleted keys
+// remain part of the aggregate so rotating or deleting a key cannot reset the
+// account's usage.
 func (s *QuotaService) CheckUserDailyTokenQuota(ctx context.Context, userID int) (QuotaCheckResult, error) {
 	if userID <= 0 {
 		return QuotaCheckResult{Allowed: true}, nil
+	}
+	dailyTokenLimit, err := s.AccountDailyTokenLimit(ctx)
+	if err != nil {
+		return QuotaCheckResult{}, err
 	}
 
 	loc := s.system.TimeLocation(ctx)
@@ -131,24 +149,6 @@ func (s *QuotaService) CheckUserDailyTokenQuota(ctx context.Context, userID int)
 	}, loc)
 	if err != nil {
 		return QuotaCheckResult{}, err
-	}
-
-	type userQuota struct {
-		DailyTokenLimit int64 `json:"daily_token_limit"`
-	}
-
-	var quota userQuota
-	err = authz.RunWithSystemBypassVoid(ctx, "user-daily-quota", func(bypassCtx context.Context) error {
-		u, err := s.ent.User.Get(bypassCtx, userID)
-		if err != nil {
-			return err
-		}
-
-		quota.DailyTokenLimit = u.DailyTokenLimit
-		return nil
-	})
-	if err != nil {
-		return QuotaCheckResult{}, fmt.Errorf("failed to load user daily quota: %w", err)
 	}
 
 	var apiKeyIDs []int
@@ -170,13 +170,13 @@ func (s *QuotaService) CheckUserDailyTokenQuota(ctx context.Context, userID int)
 		return QuotaCheckResult{}, err
 	}
 
-	if usage.TotalTokens >= quota.DailyTokenLimit {
+	if usage.TotalTokens >= dailyTokenLimit {
 		return QuotaCheckResult{
 			Allowed: false,
 			Message: fmt.Sprintf(
 				"user daily total_tokens quota exceeded: %d/%d",
 				usage.TotalTokens,
-				quota.DailyTokenLimit,
+				dailyTokenLimit,
 			),
 			Window: window,
 		}, nil

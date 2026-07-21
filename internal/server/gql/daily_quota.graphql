@@ -1,0 +1,19 @@
+"""
+Owner-managed account-wide daily token cap. The value is checked in real time
+for every user-owned API key and applies to all existing and future accounts.
+"""
+type UserDailyQuotaSettings {
+  dailyTokenLimit: Int!
+}
+
+input UpdateUserDailyQuotaSettingsInput {
+  dailyTokenLimit: Int!
+}
+
+extend type Query {
+  userDailyQuotaSettings: UserDailyQuotaSettings!
+}
+
+extend type Mutation {
+  updateUserDailyQuotaSettings(input: UpdateUserDailyQuotaSettingsInput!): Boolean!
+}

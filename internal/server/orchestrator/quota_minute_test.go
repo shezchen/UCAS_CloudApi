@@ -132,7 +132,8 @@ func TestEnforceQuota_UserDailyLimitAppliesWithoutAPIKeyQuota(t *testing.T) {
 	member, err := client.User.Create().
 		SetEmail("daily-quota@example.edu").
 		SetPassword("password").
-		SetDailyTokenLimit(10).
+		// The legacy per-user column is intentionally ignored at runtime.
+		SetDailyTokenLimit(999).
 		Save(ctx)
 	require.NoError(t, err)
 
@@ -154,7 +155,11 @@ func TestEnforceQuota_UserDailyLimitAppliesWithoutAPIKeyQuota(t *testing.T) {
 		Save(ctx)
 	require.NoError(t, err)
 
-	quotaService := biz.NewQuotaService(client, biz.NewSystemService(biz.SystemServiceParams{Ent: client}))
+	systemService := biz.NewSystemService(biz.SystemServiceParams{Ent: client})
+	require.NoError(t, systemService.SetUserDailyQuotaSettings(ctx, biz.UserDailyQuotaSettings{
+		DailyTokenLimit: 10,
+	}))
+	quotaService := biz.NewQuotaService(client, systemService)
 	inbound, _ := NewPersistentTransformers(
 		&PersistenceState{APIKey: apiKey},
 		openai.NewInboundTransformer(),
@@ -168,4 +173,71 @@ func TestEnforceQuota_UserDailyLimitAppliesWithoutAPIKeyQuota(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, responseErr.StatusCode)
 	require.Equal(t, "quota_exceeded", responseErr.Detail.Code)
 	require.Contains(t, responseErr.Detail.Message, "user daily")
+}
+
+func TestEnforceQuota_APIKeyProfileQuotaPrecedesGlobalUserDailyQuota(t *testing.T) {
+	ctx := authz.WithTestBypass(context.Background())
+	client := enttest.NewEntClient(t, "sqlite3", "file:profile-before-user-daily-quota?mode=memory&_fk=0")
+	defer client.Close()
+	ctx = ent.NewContext(ctx, client)
+
+	projectRow := createTestProject(t, ctx, client)
+	member, err := client.User.Create().
+		SetEmail("profile-quota@example.edu").
+		SetPassword("password").
+		SetDailyTokenLimit(999).
+		Save(ctx)
+	require.NoError(t, err)
+
+	apiKey, err := client.APIKey.Create().
+		SetName("Profile Quota Key").
+		SetKey("ah-profile-before-user-daily").
+		SetProjectID(projectRow.ID).
+		SetUserID(member.ID).
+		SetProfiles(&objects.APIKeyProfiles{
+			ActiveProfile: "default",
+			Profiles: []objects.APIKeyProfile{{
+				Name: "default",
+				Quota: &objects.APIKeyQuota{
+					TotalTokens: lo.ToPtr(int64(5)),
+					Period: objects.APIKeyQuotaPeriod{
+						Type: objects.APIKeyQuotaPeriodTypeCalendarDuration,
+						CalendarDuration: &objects.APIKeyQuotaCalendarDuration{
+							Unit: objects.APIKeyQuotaCalendarDurationUnitDay,
+						},
+					},
+				},
+			}},
+		}).
+		Save(ctx)
+	require.NoError(t, err)
+
+	_, err = client.UsageLog.Create().
+		SetRequestID(1).
+		SetAPIKeyID(apiKey.ID).
+		SetProjectID(projectRow.ID).
+		SetChannelID(1).
+		SetModelID("gpt-4").
+		SetTotalTokens(10).
+		Save(ctx)
+	require.NoError(t, err)
+
+	systemService := biz.NewSystemService(biz.SystemServiceParams{Ent: client})
+	require.NoError(t, systemService.SetUserDailyQuotaSettings(ctx, biz.UserDailyQuotaSettings{
+		DailyTokenLimit: 5,
+	}))
+	quotaService := biz.NewQuotaService(client, systemService)
+	inbound, _ := NewPersistentTransformers(
+		&PersistenceState{APIKey: apiKey},
+		openai.NewInboundTransformer(),
+	)
+
+	_, err = enforceQuota(inbound, quotaService).OnInboundLlmRequest(ctx, &llm.Request{})
+	require.Error(t, err)
+
+	var responseErr *llm.ResponseError
+	require.ErrorAs(t, err, &responseErr)
+	require.Equal(t, http.StatusForbidden, responseErr.StatusCode)
+	require.Contains(t, responseErr.Detail.Message, "total_tokens quota exceeded")
+	require.NotContains(t, responseErr.Detail.Message, "user daily")
 }

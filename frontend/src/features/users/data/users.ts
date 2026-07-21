@@ -4,7 +4,30 @@ import { USERS_QUERY, CREATE_USER_MUTATION, UPDATE_USER_MUTATION, UPDATE_USER_ST
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { useErrorHandler } from '@/hooks/use-error-handler';
-import { User, UserConnection, CreateUserInput, UpdateUserInput, userConnectionSchema, userSchema } from './schema';
+import {
+  User,
+  UserConnection,
+  CreateUserInput,
+  UpdateUserInput,
+  UserDailyQuotaSettings,
+  userConnectionSchema,
+  userDailyQuotaSettingsSchema,
+  userSchema,
+} from './schema';
+
+const USER_DAILY_QUOTA_SETTINGS_QUERY = `
+  query UserDailyQuotaSettings {
+    userDailyQuotaSettings {
+      dailyTokenLimit
+    }
+  }
+`;
+
+const UPDATE_USER_DAILY_QUOTA_SETTINGS_MUTATION = `
+  mutation UpdateUserDailyQuotaSettings($input: UpdateUserDailyQuotaSettingsInput!) {
+    updateUserDailyQuotaSettings(input: $input)
+  }
+`;
 
 // Query hooks
 export function useUsers(
@@ -61,6 +84,25 @@ export function useUser(id: string) {
       }
     },
     enabled: !!id,
+  });
+}
+
+export function useUserDailyQuotaSettings(options?: { enabled?: boolean }) {
+  const { t } = useTranslation();
+  const { handleError } = useErrorHandler();
+
+  return useQuery({
+    queryKey: ['userDailyQuotaSettings'],
+    queryFn: async () => {
+      try {
+        const data = await graphqlRequest<{ userDailyQuotaSettings: UserDailyQuotaSettings }>(USER_DAILY_QUOTA_SETTINGS_QUERY);
+        return userDailyQuotaSettingsSchema.parse(data.userDailyQuotaSettings);
+      } catch (error) {
+        handleError(error, t('common.errors.loadFailed'));
+        throw error;
+      }
+    },
+    enabled: options?.enabled ?? true,
   });
 }
 
@@ -144,6 +186,25 @@ export function useDeleteUser() {
   });
 }
 
+export function useUpdateUserDailyQuotaSettings() {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (input: UserDailyQuotaSettings) => {
+      const data = await graphqlRequest<{ updateUserDailyQuotaSettings: boolean }>(UPDATE_USER_DAILY_QUOTA_SETTINGS_MUTATION, { input });
+      return data.updateUserDailyQuotaSettings;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['userDailyQuotaSettings'] });
+      toast.success(t('users.dailyQuota.messages.updateSuccess'));
+    },
+    onError: () => {
+      toast.error(t('users.dailyQuota.messages.updateFailed'));
+    },
+  });
+}
+
 // Export users for compatibility
 export const users = {
   useUsers,
@@ -151,4 +212,6 @@ export const users = {
   useCreateUser,
   useUpdateUser,
   useDeleteUser,
+  useUserDailyQuotaSettings,
+  useUpdateUserDailyQuotaSettings,
 };

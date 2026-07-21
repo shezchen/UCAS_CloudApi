@@ -347,13 +347,12 @@ func TestRankCampusUsageReturnsTop50PlusSelf(t *testing.T) {
 	for i := 1; i <= 51; i++ {
 		aggregates = append(aggregates, campusUsageAggregate{
 			UserID:            i,
-			DailyTokenLimit:   1_000,
 			RecordedTokens:    int64(1_000 - i),
 			MeteredRequestCnt: i,
 		})
 	}
 
-	entries := rankCampusUsage(7, 999, "末位同学", aggregates)
+	entries := rankCampusUsage(7, 999, "末位同学", 1_000, aggregates)
 	require.Len(t, entries, 51)
 	require.True(t, entries[50].IsMe)
 	require.Equal(t, 52, entries[50].Rank)
@@ -402,7 +401,7 @@ func TestQueryResolverCampusUsageLeaderboardPrivacyAndDeletedKeys(t *testing.T) 
 		SetNickname("普通同学").
 		SetPassword("password").
 		SetStatus(user.StatusActivated).
-		SetDailyTokenLimit(100).
+		SetDailyTokenLimit(10).
 		Save(setupCtx)
 	require.NoError(t, err)
 	_, err = client.UserProject.Create().
@@ -458,7 +457,14 @@ func TestQueryResolverCampusUsageLeaderboardPrivacyAndDeletedKeys(t *testing.T) 
 	require.NoError(t, client.APIKey.DeleteOne(memberKey).Exec(setupCtx))
 
 	systemService := biz.NewSystemService(biz.SystemServiceParams{Ent: client})
-	resolver := &queryResolver{&Resolver{client: client, systemService: systemService}}
+	require.NoError(t, systemService.SetUserDailyQuotaSettings(setupCtx, biz.UserDailyQuotaSettings{
+		DailyTokenLimit: 100,
+	}))
+	resolver := &queryResolver{&Resolver{
+		client:        client,
+		systemService: systemService,
+		quotaService:  biz.NewQuotaService(client, systemService),
+	}}
 	memberCtx := authz.NewUserContext(context.Background(), member.ID)
 	memberCtx = contexts.WithUser(memberCtx, member)
 	memberCtx = contexts.WithProjectID(memberCtx, projectRow.ID)
@@ -472,6 +478,9 @@ func TestQueryResolverCampusUsageLeaderboardPrivacyAndDeletedKeys(t *testing.T) 
 	require.False(t, entries[0].IsMe)
 	require.Equal(t, float64(100), entries[0].RecordedTokens)
 	require.Equal(t, 1, entries[0].MeteredRequestCount)
+	// The leader's legacy per-user value is 200, but the live global cap is
+	// 100, so this must be reported as fully used.
+	require.InDelta(t, 100, entries[0].LimitPercent, 0.001)
 
 	require.Equal(t, 2, entries[1].Rank)
 	require.Equal(t, biz.CampusPublicAlias(projectRow.ID, member.ID), entries[1].PublicAlias)

@@ -998,6 +998,7 @@ type ComplexityRoot struct {
 		UpdateSystemModelSettings            func(childComplexity int, input biz.SystemModelSettings) int
 		UpdateUser                           func(childComplexity int, id objects.GUID, input ent.UpdateUserInput) int
 		UpdateUserAgentPassThroughSettings   func(childComplexity int, input UpdateUserAgentPassThroughSettingsInput) int
+		UpdateUserDailyQuotaSettings         func(childComplexity int, input UpdateUserDailyQuotaSettingsInput) int
 		UpdateUserStatus                     func(childComplexity int, id objects.GUID, status user.Status) int
 		UpdateVideoStorageSettings           func(childComplexity int, input biz.VideoStorageSettings) int
 		UpdateWebhookNotifierConfig          func(childComplexity int, input biz.WebhookNotifierConfig) int
@@ -1325,6 +1326,7 @@ type ComplexityRoot struct {
 		UsageLogs                    func(childComplexity int, after *entgql.Cursor[int], first *int, before *entgql.Cursor[int], last *int, orderBy *ent.UsageLogOrder, where *ent.UsageLogWhereInput) int
 		UsageStatsByUser             func(childComplexity int, timeWindow *string) int
 		UserAgentPassThroughSettings func(childComplexity int) int
+		UserDailyQuotaSettings       func(childComplexity int) int
 		Users                        func(childComplexity int, after *entgql.Cursor[int], first *int, before *entgql.Cursor[int], last *int, orderBy *ent.UserOrder, where *ent.UserWhereInput) int
 		VideoStorageSettings         func(childComplexity int) int
 		WebhookNotifierConfig        func(childComplexity int) int
@@ -1926,6 +1928,10 @@ type ComplexityRoot struct {
 		TotalCount func(childComplexity int) int
 	}
 
+	UserDailyQuotaSettings struct {
+		DailyTokenLimit func(childComplexity int) int
+	}
+
 	UserEdge struct {
 		Cursor func(childComplexity int) int
 		Node   func(childComplexity int) int
@@ -2169,6 +2175,7 @@ type MutationResolver interface {
 	UpdatePassThroughSettings(ctx context.Context, input UpdatePassThroughSettingsInput) (bool, error)
 	UpdateCampusFriendLinks(ctx context.Context, input []*CampusFriendLinkInput) (bool, error)
 	ClearCache(ctx context.Context, input ClearCacheInput) (*ClearCachePayload, error)
+	UpdateUserDailyQuotaSettings(ctx context.Context, input UpdateUserDailyQuotaSettingsInput) (bool, error)
 	CreateModel(ctx context.Context, input ent.CreateModelInput) (*ent.Model, error)
 	BulkCreateModels(ctx context.Context, inputs []*ent.CreateModelInput) ([]*ent.Model, error)
 	UpdateModel(ctx context.Context, id objects.GUID, input ent.UpdateModelInput) (*ent.Model, error)
@@ -2291,6 +2298,7 @@ type QueryResolver interface {
 	UserAgentPassThroughSettings(ctx context.Context) (*UserAgentPassThroughSettings, error)
 	PassThroughSettings(ctx context.Context) (*PassThroughSettings, error)
 	GetCacheDiagnostics(ctx context.Context, input *GetCacheDiagnosticsInput) (*GetCacheDiagnosticsPayload, error)
+	UserDailyQuotaSettings(ctx context.Context) (*biz.UserDailyQuotaSettings, error)
 	FetchModels(ctx context.Context, input biz.FetchModelsInput) (*FetchModelsPayload, error)
 	QueryModels(ctx context.Context, input QueryModelsInput) ([]*biz.ModelIdentityWithStatus, error)
 	QueryModelChannelConnections(ctx context.Context, associations []*objects.ModelAssociation) ([]*biz.ModelChannelConnection, error)
@@ -6510,6 +6518,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Mutation.UpdateUserAgentPassThroughSettings(childComplexity, args["input"].(UpdateUserAgentPassThroughSettingsInput)), true
+	case "Mutation.updateUserDailyQuotaSettings":
+		if e.complexity.Mutation.UpdateUserDailyQuotaSettings == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_updateUserDailyQuotaSettings_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Mutation.UpdateUserDailyQuotaSettings(childComplexity, args["input"].(UpdateUserDailyQuotaSettingsInput)), true
 	case "Mutation.updateUserStatus":
 		if e.complexity.Mutation.UpdateUserStatus == nil {
 			break
@@ -8162,6 +8181,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Query.UserAgentPassThroughSettings(childComplexity), true
+	case "Query.userDailyQuotaSettings":
+		if e.complexity.Query.UserDailyQuotaSettings == nil {
+			break
+		}
+
+		return e.complexity.Query.UserDailyQuotaSettings(childComplexity), true
 	case "Query.users":
 		if e.complexity.Query.Users == nil {
 			break
@@ -10542,6 +10567,13 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.complexity.UserConnection.TotalCount(childComplexity), true
 
+	case "UserDailyQuotaSettings.dailyTokenLimit":
+		if e.complexity.UserDailyQuotaSettings.DailyTokenLimit == nil {
+			break
+		}
+
+		return e.complexity.UserDailyQuotaSettings.DailyTokenLimit(childComplexity), true
+
 	case "UserEdge.cursor":
 		if e.complexity.UserEdge.Cursor == nil {
 			break
@@ -11099,6 +11131,7 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputUpdateTraceInput,
 		ec.unmarshalInputUpdateUsageLogInput,
 		ec.unmarshalInputUpdateUserAgentPassThroughSettingsInput,
+		ec.unmarshalInputUpdateUserDailyQuotaSettingsInput,
 		ec.unmarshalInputUpdateUserInput,
 		ec.unmarshalInputUpdateVideoStorageSettingsInput,
 		ec.unmarshalInputUpstreamErrorPolicyInput,
@@ -11210,7 +11243,7 @@ func (ec *executionContext) introspectType(name string) (*introspection.Type, er
 	return introspection.WrapTypeFromDef(ec.Schema(), ec.Schema().Types[name]), nil
 }
 
-//go:embed "axonhub.graphql" "ent.graphql" "dashboard.graphql" "scopes.graphql" "me.graphql" "system.graphql" "filter.graphql" "model.graphql" "backup.graphql" "channel_probe.graphql" "prompt.graphql" "prompt_protection_rule.graphql" "price.graphql" "cost.graphql"
+//go:embed "axonhub.graphql" "ent.graphql" "dashboard.graphql" "scopes.graphql" "me.graphql" "system.graphql" "daily_quota.graphql" "filter.graphql" "model.graphql" "backup.graphql" "channel_probe.graphql" "prompt.graphql" "prompt_protection_rule.graphql" "price.graphql" "cost.graphql"
 var sourcesFS embed.FS
 
 func sourceData(filename string) string {
@@ -11228,6 +11261,7 @@ var sources = []*ast.Source{
 	{Name: "scopes.graphql", Input: sourceData("scopes.graphql"), BuiltIn: false},
 	{Name: "me.graphql", Input: sourceData("me.graphql"), BuiltIn: false},
 	{Name: "system.graphql", Input: sourceData("system.graphql"), BuiltIn: false},
+	{Name: "daily_quota.graphql", Input: sourceData("daily_quota.graphql"), BuiltIn: false},
 	{Name: "filter.graphql", Input: sourceData("filter.graphql"), BuiltIn: false},
 	{Name: "model.graphql", Input: sourceData("model.graphql"), BuiltIn: false},
 	{Name: "backup.graphql", Input: sourceData("backup.graphql"), BuiltIn: false},
@@ -12784,6 +12818,17 @@ func (ec *executionContext) field_Mutation_updateUserAgentPassThroughSettings_ar
 	var err error
 	args := map[string]any{}
 	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input", ec.unmarshalNUpdateUserAgentPassThroughSettingsInput2githubᚗcomᚋloopljᚋaxonhubᚋinternalᚋserverᚋgqlᚐUpdateUserAgentPassThroughSettingsInput)
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_updateUserDailyQuotaSettings_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input", ec.unmarshalNUpdateUserDailyQuotaSettingsInput2githubᚗcomᚋloopljᚋaxonhubᚋinternalᚋserverᚋgqlᚐUpdateUserDailyQuotaSettingsInput)
 	if err != nil {
 		return nil, err
 	}
@@ -34585,6 +34630,47 @@ func (ec *executionContext) fieldContext_Mutation_clearCache(ctx context.Context
 	return fc, nil
 }
 
+func (ec *executionContext) _Mutation_updateUserDailyQuotaSettings(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Mutation_updateUserDailyQuotaSettings,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.resolvers.Mutation().UpdateUserDailyQuotaSettings(ctx, fc.Args["input"].(UpdateUserDailyQuotaSettingsInput))
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Mutation_updateUserDailyQuotaSettings(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_updateUserDailyQuotaSettings_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Mutation_createModel(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -44068,6 +44154,39 @@ func (ec *executionContext) fieldContext_Query_getCacheDiagnostics(ctx context.C
 	if fc.Args, err = ec.field_Query_getCacheDiagnostics_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_userDailyQuotaSettings(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_userDailyQuotaSettings,
+		func(ctx context.Context) (any, error) {
+			return ec.resolvers.Query().UserDailyQuotaSettings(ctx)
+		},
+		nil,
+		ec.marshalNUserDailyQuotaSettings2ᚖgithubᚗcomᚋloopljᚋaxonhubᚋinternalᚋserverᚋbizᚐUserDailyQuotaSettings,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_userDailyQuotaSettings(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "dailyTokenLimit":
+				return ec.fieldContext_UserDailyQuotaSettings_dailyTokenLimit(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type UserDailyQuotaSettings", field.Name)
+		},
 	}
 	return fc, nil
 }
@@ -56883,6 +57002,35 @@ func (ec *executionContext) _UserConnection_totalCount(ctx context.Context, fiel
 func (ec *executionContext) fieldContext_UserConnection_totalCount(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "UserConnection",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _UserDailyQuotaSettings_dailyTokenLimit(ctx context.Context, field graphql.CollectedField, obj *biz.UserDailyQuotaSettings) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_UserDailyQuotaSettings_dailyTokenLimit,
+		func(ctx context.Context) (any, error) {
+			return obj.DailyTokenLimit, nil
+		},
+		nil,
+		ec.marshalNInt2int64,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_UserDailyQuotaSettings_dailyTokenLimit(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "UserDailyQuotaSettings",
 		Field:      field,
 		IsMethod:   false,
 		IsResolver: false,
@@ -82546,6 +82694,33 @@ func (ec *executionContext) unmarshalInputUpdateUserAgentPassThroughSettingsInpu
 	return it, nil
 }
 
+func (ec *executionContext) unmarshalInputUpdateUserDailyQuotaSettingsInput(ctx context.Context, obj any) (UpdateUserDailyQuotaSettingsInput, error) {
+	var it UpdateUserDailyQuotaSettingsInput
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"dailyTokenLimit"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "dailyTokenLimit":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("dailyTokenLimit"))
+			data, err := ec.unmarshalNInt2int(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.DailyTokenLimit = data
+		}
+	}
+
+	return it, nil
+}
+
 func (ec *executionContext) unmarshalInputUpdateUserInput(ctx context.Context, obj any) (ent.UpdateUserInput, error) {
 	var it ent.UpdateUserInput
 	asMap := map[string]any{}
@@ -94149,6 +94324,13 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "updateUserDailyQuotaSettings":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_updateUserDailyQuotaSettings(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
 		case "createModel":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Mutation_createModel(ctx, field)
@@ -98254,6 +98436,28 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 					}
 				}()
 				res = ec._Query_getCacheDiagnostics(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "userDailyQuotaSettings":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_userDailyQuotaSettings(ctx, field)
 				if res == graphql.Null {
 					atomic.AddUint32(&fs.Invalids, 1)
 				}
@@ -104525,6 +104729,45 @@ func (ec *executionContext) _UserConnection(ctx context.Context, sel ast.Selecti
 			}
 		case "totalCount":
 			out.Values[i] = ec._UserConnection_totalCount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.processDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var userDailyQuotaSettingsImplementors = []string{"UserDailyQuotaSettings"}
+
+func (ec *executionContext) _UserDailyQuotaSettings(ctx context.Context, sel ast.SelectionSet, obj *biz.UserDailyQuotaSettings) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, userDailyQuotaSettingsImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("UserDailyQuotaSettings")
+		case "dailyTokenLimit":
+			out.Values[i] = ec._UserDailyQuotaSettings_dailyTokenLimit(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
@@ -111438,6 +111681,11 @@ func (ec *executionContext) unmarshalNUpdateUserAgentPassThroughSettingsInput2gi
 	return res, graphql.ErrorOnPath(ctx, err)
 }
 
+func (ec *executionContext) unmarshalNUpdateUserDailyQuotaSettingsInput2githubᚗcomᚋloopljᚋaxonhubᚋinternalᚋserverᚋgqlᚐUpdateUserDailyQuotaSettingsInput(ctx context.Context, v any) (UpdateUserDailyQuotaSettingsInput, error) {
+	res, err := ec.unmarshalInputUpdateUserDailyQuotaSettingsInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
 func (ec *executionContext) unmarshalNUpdateUserInput2githubᚗcomᚋloopljᚋaxonhubᚋinternalᚋentᚐUpdateUserInput(ctx context.Context, v any) (ent.UpdateUserInput, error) {
 	res, err := ec.unmarshalInputUpdateUserInput(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
@@ -111607,6 +111855,20 @@ func (ec *executionContext) marshalNUserConnection2ᚖgithubᚗcomᚋloopljᚋax
 		return graphql.Null
 	}
 	return ec._UserConnection(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNUserDailyQuotaSettings2githubᚗcomᚋloopljᚋaxonhubᚋinternalᚋserverᚋbizᚐUserDailyQuotaSettings(ctx context.Context, sel ast.SelectionSet, v biz.UserDailyQuotaSettings) graphql.Marshaler {
+	return ec._UserDailyQuotaSettings(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNUserDailyQuotaSettings2ᚖgithubᚗcomᚋloopljᚋaxonhubᚋinternalᚋserverᚋbizᚐUserDailyQuotaSettings(ctx context.Context, sel ast.SelectionSet, v *biz.UserDailyQuotaSettings) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._UserDailyQuotaSettings(ctx, sel, v)
 }
 
 func (ec *executionContext) marshalNUserInfo2githubᚗcomᚋloopljᚋaxonhubᚋinternalᚋobjectsᚐUserInfo(ctx context.Context, sel ast.SelectionSet, v objects.UserInfo) graphql.Marshaler {

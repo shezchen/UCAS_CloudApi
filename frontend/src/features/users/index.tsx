@@ -9,12 +9,13 @@ import { createColumns } from './components/users-columns';
 import { UsersDialogs } from './components/users-dialogs';
 import { UsersPrimaryButtons } from './components/users-primary-buttons';
 import { UsersTable } from './components/users-table';
+import { UserDailyQuotaSettingsCard } from './components/user-daily-quota-settings-card';
 import UsersProvider from './context/users-context';
 import { useUsers } from './data/users';
 
 function UsersContent() {
   const { t } = useTranslation();
-  const { userPermissions } = usePermissions();
+  const { userPermissions, isOwner } = usePermissions();
   const { pageSize, setCursors, setPageSize, resetCursor, paginationArgs } = usePaginationSearch({
     defaultPageSize: 20,
     pageSizeStorageKey: 'users-table-page-size',
@@ -78,7 +79,8 @@ function UsersContent() {
   };
 
   return (
-    <div className='flex flex-1 flex-col overflow-hidden'>
+    <div className='flex flex-1 flex-col gap-4 overflow-hidden'>
+      {isOwner && <UserDailyQuotaSettingsCard />}
       <UsersTable
         data={data?.edges?.map((edge) => edge.node) || []}
         columns={columns}

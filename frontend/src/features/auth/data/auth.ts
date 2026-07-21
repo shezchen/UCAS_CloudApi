@@ -86,9 +86,8 @@ export function useSignIn() {
 
       toast.success(i18n.t('common.success.signedIn'));
 
-      // Redirect based on user role
-      // Playground is owner-only; members land on their donation management page.
-      const redirectPath = data.user.isOwner ? '/' : '/channels';
+      // Owners use the dashboard; members begin with the shared API catalog.
+      const redirectPath = data.user.isOwner ? '/' : '/project/resources';
       router.navigate({ to: redirectPath });
     },
     onError: (error: any) => {
@@ -111,7 +110,7 @@ export function useSignUp() {
       setAccessToken(data.token);
       setUser(data.user);
       toast.success(i18n.t('auth.signUp.success'));
-      router.navigate({ to: '/channels' });
+      router.navigate({ to: '/project/resources' });
     },
     onError: (error: any) => {
       toast.error(error.message || i18n.t('auth.signUp.error'));
@@ -203,8 +202,8 @@ export function useOIDCExchange() {
 
       toast.success(i18n.t('common.success.signedIn'));
 
-      // Redirect based on user role
-      const redirectPath = data.user.isOwner ? '/' : '/channels';
+      // Owners use the dashboard; members begin with the shared API catalog.
+      const redirectPath = data.user.isOwner ? '/' : '/project/resources';
       router.navigate({ to: redirectPath });
     },
     onError: (error: unknown) => {

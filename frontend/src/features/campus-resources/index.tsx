@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from '@tanstack/react-router';
 import {
   BookOpenCheck,
   Check,
   Copy,
+  HeartHandshake,
   KeyRound,
   Layers3,
   Loader2,
@@ -145,13 +147,23 @@ function ChannelCard({ channel }: { channel: CampusResourceChannel }) {
   }, [channel.expiresAt, i18n.language]);
 
   return (
-    <Card className='gap-4 py-5 shadow-none' data-testid='campus-resource-channel' data-channel-source={channel.source}>
+    <Card
+      className={cn('gap-4 py-5 shadow-none', channel.source === 'donated' && 'border-primary/30 bg-primary/[0.025]')}
+      data-testid='campus-resource-channel'
+      data-channel-source={channel.source}
+    >
       <CardHeader className='gap-3 px-5'>
         <div className='flex min-w-0 items-start justify-between gap-3'>
           <div className='min-w-0'>
             <CardTitle className='truncate text-base' title={channel.name}>
               {channel.name}
             </CardTitle>
+            <CardDescription className='text-foreground/80 mt-1 flex items-center gap-1.5 font-medium'>
+              <UserRound className='text-primary size-3.5 shrink-0' aria-hidden='true' />
+              <span className='truncate' title={channel.contributor}>
+                {t('resources.channels.providedBy', { contributor: channel.contributor })}
+              </span>
+            </CardDescription>
             <CardDescription className='mt-1 flex items-center gap-1.5'>
               <RadioTower className='size-3.5 shrink-0' aria-hidden='true' />
               <span className='truncate'>{providerLabel}</span>
@@ -180,15 +192,6 @@ function ChannelCard({ channel }: { channel: CampusResourceChannel }) {
 
         <dl className='mt-auto grid gap-2 border-t pt-4 text-xs'>
           <div className='flex items-center justify-between gap-3'>
-            <dt className='text-muted-foreground flex items-center gap-1.5'>
-              <UserRound className='size-3.5' aria-hidden='true' />
-              {t('resources.channels.contributor')}
-            </dt>
-            <dd className='min-w-0 truncate text-right font-medium' title={channel.contributor}>
-              {channel.contributor}
-            </dd>
-          </div>
-          <div className='flex items-center justify-between gap-3'>
             <dt className='text-muted-foreground'>{t('resources.channels.expiresAt')}</dt>
             <dd className='text-right font-medium'>
               {channel.expiresAt ? <time dateTime={channel.expiresAt}>{formattedExpiry}</time> : t('resources.channels.noExpiry')}
@@ -201,6 +204,68 @@ function ChannelCard({ channel }: { channel: CampusResourceChannel }) {
         </dl>
       </CardContent>
     </Card>
+  );
+}
+
+function GettingStartedCard() {
+  const { t } = useTranslation();
+
+  const useSteps = [
+    t('resources.gettingStarted.use.step1'),
+    t('resources.gettingStarted.use.step2'),
+    t('resources.gettingStarted.use.step3'),
+  ];
+
+  return (
+    <section className='grid gap-4 lg:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]' aria-label={t('resources.gettingStarted.title')}>
+      <Card className='gap-4 border-primary/30 bg-primary/[0.045] py-5 shadow-none' data-testid='campus-resources-getting-started'>
+        <CardHeader className='gap-2 px-5 sm:px-6'>
+          <div className='flex items-start gap-3'>
+            <div className='bg-primary text-primary-foreground rounded-lg p-2'>
+              <KeyRound className='size-5' aria-hidden='true' />
+            </div>
+            <div className='min-w-0'>
+              <CardTitle>{t('resources.gettingStarted.use.title')}</CardTitle>
+              <CardDescription className='mt-1'>{t('resources.gettingStarted.use.description')}</CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className='space-y-4 px-5 sm:px-6'>
+          <ol className='grid gap-2 text-sm sm:grid-cols-3'>
+            {useSteps.map((step, index) => (
+              <li key={step} className='bg-background/70 flex items-start gap-2 rounded-lg border px-3 py-2.5'>
+                <span className='bg-primary/10 text-primary flex size-5 shrink-0 items-center justify-center rounded-full text-xs font-semibold'>
+                  {index + 1}
+                </span>
+                <span>{step}</span>
+              </li>
+            ))}
+          </ol>
+          <Button asChild>
+            <Link to='/project/api-keys'>{t('resources.gettingStarted.use.action')}</Link>
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card className='gap-4 py-5 shadow-none' data-testid='campus-resources-donation-entry'>
+        <CardHeader className='gap-2 px-5'>
+          <div className='flex items-start gap-3'>
+            <div className='bg-muted text-primary rounded-lg p-2'>
+              <HeartHandshake className='size-5' aria-hidden='true' />
+            </div>
+            <div className='min-w-0'>
+              <CardTitle className='text-base'>{t('resources.gettingStarted.donate.title')}</CardTitle>
+              <CardDescription className='mt-1'>{t('resources.gettingStarted.donate.description')}</CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className='px-5'>
+          <Button asChild variant='outline'>
+            <Link to='/channels'>{t('resources.gettingStarted.donate.action')}</Link>
+          </Button>
+        </CardContent>
+      </Card>
+    </section>
   );
 }
 
@@ -543,6 +608,9 @@ export default function CampusResourcesPage() {
     return uniqueModels.filter((model) => model.toLocaleLowerCase().includes(query));
   }, [modelSearch, selectedModels]);
 
+  const donatedChannels = useMemo(() => data?.channels.filter((channel) => channel.source === 'donated') ?? [], [data?.channels]);
+  const projectChannels = useMemo(() => data?.channels.filter((channel) => channel.source === 'project') ?? [], [data?.channels]);
+
   if (isLoading) return <ResourcesLoading />;
 
   if (error || !data) {
@@ -585,6 +653,8 @@ export default function CampusResourcesPage() {
 
       <Main fixed className='overflow-y-auto'>
         <div className='mx-auto flex w-full max-w-7xl flex-col gap-5 pb-8'>
+          {!isOwner && <GettingStartedCard />}
+
           <div className='bg-muted/30 text-muted-foreground flex items-start gap-3 rounded-xl border px-4 py-3 text-sm'>
             <ShieldCheck className='text-primary mt-0.5 size-4 shrink-0' aria-hidden='true' />
             <p>{t('resources.privacyNotice')}</p>
@@ -595,6 +665,26 @@ export default function CampusResourcesPage() {
             <SummaryCard icon={KeyRound} label={t('resources.summary.apiKeys')} value={data.apiKeys.length} />
             <SummaryCard icon={RadioTower} label={t('resources.summary.channels')} value={data.channels.length} />
           </div>
+
+          {donatedChannels.length > 0 && (
+            <section className='space-y-4' aria-labelledby='campus-resource-donations-title'>
+              <div className='flex items-start gap-3'>
+                <HeartHandshake className='text-primary mt-0.5 size-5 shrink-0' aria-hidden='true' />
+                <div>
+                  <h3 id='campus-resource-donations-title' className='font-semibold'>
+                    {t('resources.donations.title')}
+                  </h3>
+                  <p className='text-muted-foreground text-sm'>{t('resources.donations.description')}</p>
+                </div>
+              </div>
+
+              <div className='grid gap-4 md:grid-cols-2 xl:grid-cols-3' data-testid='campus-resource-donated-channel-list'>
+                {donatedChannels.map((channel, index) => (
+                  <ChannelCard key={`${channel.name}-${channel.provider}-${channel.contributor}-${index}`} channel={channel} />
+                ))}
+              </div>
+            </section>
+          )}
 
           <Card className='gap-5 py-5 shadow-none' data-testid='campus-resource-models'>
             <CardHeader className='gap-1 px-5 sm:px-6'>
@@ -683,19 +773,19 @@ export default function CampusResourcesPage() {
               <RadioTower className='text-primary mt-0.5 size-5 shrink-0' aria-hidden='true' />
               <div>
                 <h3 id='campus-resource-channels-title' className='font-semibold'>
-                  {t('resources.channels.title')}
+                  {t('resources.channels.projectTitle')}
                 </h3>
-                <p className='text-muted-foreground text-sm'>{t('resources.channels.description')}</p>
+                <p className='text-muted-foreground text-sm'>{t('resources.channels.projectDescription')}</p>
               </div>
             </div>
 
-            {data.channels.length === 0 ? (
+            {projectChannels.length === 0 ? (
               <div className='text-muted-foreground flex min-h-36 items-center justify-center rounded-xl border border-dashed px-4 text-sm'>
-                {t('resources.channels.empty')}
+                {data.channels.length === 0 ? t('resources.channels.empty') : t('resources.channels.noProjectChannels')}
               </div>
             ) : (
               <div className='grid gap-4 md:grid-cols-2 xl:grid-cols-3' data-testid='campus-resource-channel-list'>
-                {data.channels.map((channel, index) => (
+                {projectChannels.map((channel, index) => (
                   <ChannelCard key={`${channel.name}-${channel.provider}-${channel.contributor}-${index}`} channel={channel} />
                 ))}
               </div>

@@ -1105,6 +1105,7 @@ export function useCreateChannel() {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
   const { handleError } = useErrorHandler();
+  const isOwner = useAuthStore((state) => state.auth.user?.isOwner === true);
 
   return useMutation({
     mutationFn: async (input: CreateChannelInput) => {
@@ -1113,10 +1114,10 @@ export function useCreateChannel() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['channels'] });
-      toast.success(t('channels.messages.createSuccess'));
+      toast.success(t(isOwner ? 'channels.messages.createSuccess' : 'channels.donation.messages.success'));
     },
     onError: (error) => {
-      handleError(error, { context: t('channels.dialogs.create.title') });
+      handleError(error, { context: t(isOwner ? 'channels.dialogs.create.title' : 'channels.donation.dialog.title') });
     },
   });
 }

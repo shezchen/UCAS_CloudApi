@@ -38,6 +38,13 @@ export function ProjectGuard({ children, fallbackPath = '/projects', showNoProje
 
   // 如果没有选中项目
   if (!hasSelectedProject) {
+    // ProjectSwitcher selects the first available project after this shared
+    // query resolves. Keep the landing page stable during that single render
+    // instead of flashing the no-project state for new campus members.
+    if (hasAnyProjects) {
+      return null;
+    }
+
     if (showNoProjectPage) {
       return <NoProjectPage hasAnyProjects={!!hasAnyProjects} onGoToProjects={() => router.navigate({ to: fallbackPath })} />;
     }

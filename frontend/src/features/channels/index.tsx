@@ -1,11 +1,14 @@
 import { useState, useMemo, useCallback, useEffect, lazy, Suspense } from 'react';
 import { SortingState } from '@tanstack/react-table';
+import { Link } from '@tanstack/react-router';
+import { ArrowRight, HandHeart } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useDebounce } from '@/hooks/use-debounce';
 import { usePaginationSearch } from '@/hooks/use-pagination-search';
 import { usePermissions } from '@/hooks/usePermissions';
 import { Header } from '@/components/layout/header';
 import { Main } from '@/components/layout/main';
+import { Button } from '@/components/ui/button';
 import { createColumns } from './components/channels-columns';
 import { ChannelsErrorBanner } from './components/channels-error-banner';
 import { ChannelsPrimaryButtons } from './components/channels-primary-buttons';
@@ -16,6 +19,37 @@ import { useQueryChannels, useChannelTypes, useErrorChannelsCount, useChannelPro
 import { useProvidersData } from '@/features/models/data/providers';
 
 const ChannelsDialogs = lazy(() => import('./components/channels-dialogs').then((m) => ({ default: m.ChannelsDialogs })));
+
+function StudentDonationGuide() {
+  const { t } = useTranslation();
+
+  return (
+    <section
+      className='border-primary/25 bg-primary/5 flex shrink-0 flex-col gap-4 rounded-xl border px-4 py-4 sm:px-5'
+      data-testid='student-donation-guide'
+    >
+      <div className='flex items-start gap-3'>
+        <div className='bg-primary/10 text-primary flex size-9 shrink-0 items-center justify-center rounded-lg'>
+          <HandHeart className='size-5' aria-hidden='true' />
+        </div>
+        <div className='space-y-1'>
+          <h3 className='font-semibold'>{t('channels.donation.guide.title')}</h3>
+          <p className='text-muted-foreground text-sm leading-6'>{t('channels.donation.guide.description')}</p>
+        </div>
+      </div>
+
+      <div className='flex flex-col gap-3 border-t border-primary/15 pt-3 sm:flex-row sm:items-center sm:justify-between'>
+        <p className='text-muted-foreground text-sm'>{t('channels.donation.guide.resourceHint')}</p>
+        <Button variant='outline' className='w-full shrink-0 sm:w-auto' asChild>
+          <Link to='/project/resources'>
+            {t('channels.donation.guide.resourceButton')}
+            <ArrowRight className='size-4' aria-hidden='true' />
+          </Link>
+        </Button>
+      </div>
+    </section>
+  );
+}
 
 function ChannelsContent() {
   const { t } = useTranslation();
@@ -296,20 +330,24 @@ function ChannelsContent() {
 
 export default function ChannelsManagement() {
   const { t } = useTranslation();
+  const { isOwner } = usePermissions();
 
   return (
     <ChannelsProvider>
       <Header fixed>
         <div className='flex w-full flex-1 flex-col gap-2 md:flex-row md:items-center md:justify-between md:gap-0'>
           <div className='min-w-0'>
-            <h2 className='text-xl font-bold tracking-tight'>{t('channels.title')}</h2>
-            <p className='text-sm text-muted-foreground'>{t('channels.description')}</p>
+            <h2 className='text-xl font-bold tracking-tight'>{t(isOwner ? 'channels.title' : 'channels.donation.title')}</h2>
+            <p className='text-sm text-muted-foreground'>
+              {t(isOwner ? 'channels.description' : 'channels.donation.description')}
+            </p>
           </div>
           <ChannelsPrimaryButtons />
         </div>
       </Header>
 
-      <Main fixed>
+      <Main fixed className={isOwner ? undefined : 'gap-4'}>
+        {!isOwner && <StudentDonationGuide />}
         <ChannelsContent />
       </Main>
       <Suspense fallback={null}>

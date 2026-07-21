@@ -1,6 +1,7 @@
 {
   "sidebar.groups.admin": "Admin",
   "sidebar.groups.project": "Project",
+  "sidebar.groups.campusSharing": "Campus sharing",
   "sidebar.groups.settings": "Settings",
   "sidebar.items.dashboard": "Dashboard",
   "sidebar.items.channels": "Channels",
@@ -15,6 +16,9 @@
   "sidebar.items.threads": "Threads",
   "sidebar.items.usageLogs": "Usage Logs",
   "sidebar.items.apiKeys": "API Keys",
+  "sidebar.items.startUsing": "Start using",
+  "sidebar.items.myApiKeys": "My API keys",
+  "sidebar.items.donateChannel": "Donate a channel",
   "sidebar.items.resources": "Available Resources",
   "sidebar.items.usageStats": "Usage Statistics",
   "usageStats.description": "Token usage and cost distribution across users in the project.",

@@ -14,6 +14,7 @@ import {
   IconNote,
   IconChartBar,
   IconBooks,
+  IconHeartHandshake,
 } from '@tabler/icons-react';
 import { Command } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -60,8 +61,8 @@ export function useSidebarData(): SidebarData {
     return 'User';
   };
 
-  // 原始导航组配置
-  const rawNavGroups: NavGroup[] = [
+  // Keep the full management navigation for the system owner.
+  const ownerNavGroups: NavGroup[] = [
     {
       title: t('sidebar.groups.admin'),
       items: [
@@ -200,6 +201,45 @@ export function useSidebarData(): SidebarData {
       ],
     },
   ];
+
+  // Campus members primarily consume the shared API. Donating an upstream
+  // channel remains available, but it is deliberately a separate, secondary
+  // action rather than the default interpretation of “Channels”.
+  const memberNavGroups: NavGroup[] = [
+    {
+      title: t('sidebar.groups.campusSharing'),
+      items: [
+        {
+          title: t('sidebar.items.startUsing'),
+          url: '/project/resources',
+          icon: IconBooks,
+        } as NavLink,
+        {
+          title: t('sidebar.items.myApiKeys'),
+          url: '/project/api-keys',
+          icon: IconKey,
+        } as NavLink,
+        {
+          title: t('sidebar.items.donateChannel'),
+          url: '/channels',
+          icon: IconHeartHandshake,
+        } as NavLink,
+      ],
+    },
+    {
+      title: t('sidebar.groups.settings'),
+      items: [
+        {
+          title: t('sidebar.items.system'),
+          url: '/system',
+          icon: IconSettings,
+          mobileOnly: true,
+        } as NavLink,
+      ],
+    },
+  ];
+
+  const rawNavGroups = user?.isOwner ? ownerNavGroups : memberNavGroups;
 
   // 使用权限过滤导航组
   const filteredNavGroups = filterNavGroups(rawNavGroups);

@@ -8,7 +8,7 @@ export default function SignUp() {
   const { t } = useTranslation();
 
   return (
-    <AuthLayout>
+    <AuthLayout showBrand={false}>
       <Card className='gap-4'>
         <CardHeader>
           <CardTitle className='text-lg tracking-tight'>{t('auth.signUp.title')}</CardTitle>

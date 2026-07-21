@@ -38,7 +38,7 @@ export function ChannelsPrimaryButtons() {
       )}
 
       <Button className='shrink-0 space-x-1' onClick={() => setOpen('add')} data-testid='add-channel-button'>
-        <span>{t('channels.addChannel')}</span> <IconPlus size={18} />
+        <span>{t(isOwner ? 'channels.actions.addManagedChannel' : 'channels.donation.primaryCTA')}</span> <IconPlus size={18} />
       </Button>
     </div>
   );

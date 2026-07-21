@@ -1775,9 +1775,13 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
           className={`flex max-h-[90vh] flex-col transition-all duration-300 ${showFetchedModelsPanel || showSupportedModelsPanel || showApiKeysPanel ? 'sm:max-w-6xl' : 'sm:max-w-4xl'}`}
         >
           <DialogHeader className='flex-shrink-0 text-left'>
-            <DialogTitle>{isEdit ? t('channels.dialogs.edit.title') : t('channels.dialogs.create.title')}</DialogTitle>
+            <DialogTitle>
+              {isEdit ? t('channels.dialogs.edit.title') : t(isOwner ? 'channels.dialogs.create.title' : 'channels.donation.dialog.title')}
+            </DialogTitle>
             <DialogDescription>
-              {isEdit ? t('channels.dialogs.edit.description') : t('channels.dialogs.create.description')}
+              {isEdit
+                ? t('channels.dialogs.edit.description')
+                : t(isOwner ? 'channels.dialogs.create.description' : 'channels.donation.dialog.description')}
             </DialogDescription>
           </DialogHeader>
           <div className='flex min-h-0 flex-1 overflow-hidden md:gap-4'>
@@ -3415,10 +3419,10 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
               {isSubmitting
                 ? isEdit
                   ? t('common.buttons.editing')
-                  : t('common.buttons.creating')
+                  : t(isOwner ? 'common.buttons.creating' : 'channels.donation.dialog.submitting')
                 : isEdit
                   ? t('common.buttons.edit')
-                  : t('common.buttons.create')}
+                  : t(isOwner ? 'common.buttons.create' : 'channels.donation.dialog.submit')}
             </Button>
           </DialogFooter>
         </DialogContent>

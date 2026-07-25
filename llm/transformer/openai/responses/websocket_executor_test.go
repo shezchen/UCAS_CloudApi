@@ -119,6 +119,16 @@ func TestWebSocketExecutorDoStreamSendsResponseCreate(t *testing.T) {
 	require.NoError(t, stream.Err())
 }
 
+func TestWebSocketExecutorRejectsPrivateURLForPublicNetworkClient(t *testing.T) {
+	executor := NewWebSocketExecutor(httpclient.NewHttpClient(httpclient.WithPublicNetworkOnlyAndTrustedEnvironmentProxy()))
+
+	_, err := executor.DoStream(webSocketTestContext(), &httpclient.Request{
+		Method: http.MethodPost,
+		URL:    "ws://127.0.0.1/v1/responses",
+	})
+	require.ErrorContains(t, err, "websocket URL is not allowed")
+}
+
 func TestWebSocketStreamStopsAfterTerminalEventWithoutCloseFrame(t *testing.T) {
 	upgrader := websocket.Upgrader{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

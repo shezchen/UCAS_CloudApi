@@ -90,22 +90,10 @@ func (c *Channel) ChooseModel(model string) (string, error) {
 	return entry.ActualModel, nil
 }
 
-// getProxyConfig extracts proxy configuration from channel settings
-// Returns nil if no proxy configuration is set (backward compatibility).
-func getProxyConfig(channelSettings *objects.ChannelSettings) *httpclient.ProxyConfig {
-	if channelSettings == nil || channelSettings.Proxy == nil {
-		// Backward compatibility: default to environment proxy type
-		return &httpclient.ProxyConfig{
-			Type: httpclient.ProxyTypeEnvironment,
-		}
-	}
-
-	return channelSettings.Proxy
-}
-
-// getHttpClient returns the channel-specific client. Donated channels keep an
-// explicit URL proxy, but both its dial and the provider target are constrained
-// to public addresses; environment proxies are ignored.
+// getHttpClient returns the channel-specific client. Donated channels retain
+// public-network destination protection while being able to use the
+// deployment-managed environment proxy. Explicit URL proxies remain subject to
+// the public-address dial guard.
 func (svc *ChannelService) getHttpClient(c *ent.Channel) *httpclient.HttpClient {
 	httpClient := svc.httpClient
 	if c.Settings != nil && c.Settings.Proxy != nil {
@@ -113,7 +101,7 @@ func (svc *ChannelService) getHttpClient(c *ent.Channel) *httpclient.HttpClient 
 	}
 
 	if c.UserID != nil {
-		return httpClient.WithPublicNetworkOnly()
+		return httpClient.WithPublicNetworkOnlyAndTrustedEnvironmentProxy()
 	}
 
 	return httpClient

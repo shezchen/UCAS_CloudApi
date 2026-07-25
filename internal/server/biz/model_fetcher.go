@@ -364,7 +364,7 @@ func (f *ModelFetcher) FetchModels(ctx context.Context, input FetchModelsInput) 
 	}
 	currentUser, hasCurrentUser := contexts.GetUser(ctx)
 	if donatedChannel || hasCurrentUser && currentUser != nil && !currentUser.IsOwner {
-		httpClient = httpClient.WithPublicNetworkOnly()
+		httpClient = httpClient.WithPublicNetworkOnlyAndTrustedEnvironmentProxy()
 	}
 
 	if channelType.IsGemini() {

@@ -14,7 +14,7 @@ func httpClientForChannel(base *httpclient.HttpClient, ch *ent.Channel) *httpcli
 		hc = hc.WithProxy(ch.Settings.Proxy)
 	}
 	if ch != nil && ch.UserID != nil {
-		hc = hc.WithPublicNetworkOnly()
+		hc = hc.WithPublicNetworkOnlyAndTrustedEnvironmentProxy()
 	}
 
 	return hc

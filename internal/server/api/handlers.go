@@ -26,11 +26,11 @@ func oauthHTTPClientForCaller(
 			return nil, fmt.Errorf("OAuth proxy is not allowed: %w", err)
 		}
 
-		if proxy != nil && proxy.Type == httpclient.ProxyTypeURL {
-			return base.WithProxy(proxy).WithPublicNetworkOnly(), nil
+		if proxy != nil {
+			return base.WithProxy(proxy).WithPublicNetworkOnlyAndTrustedEnvironmentProxy(), nil
 		}
 
-		return base.WithPublicNetworkOnly(), nil
+		return base.WithPublicNetworkOnlyAndTrustedEnvironmentProxy(), nil
 	}
 
 	if proxy != nil && proxy.Type == httpclient.ProxyTypeURL && proxy.URL != "" {

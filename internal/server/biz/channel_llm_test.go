@@ -1,13 +1,32 @@
 package biz
 
 import (
+	"context"
+	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/looplj/axonhub/internal/ent"
 	"github.com/looplj/axonhub/internal/objects"
+	"github.com/looplj/axonhub/llm/httpclient"
 )
+
+func TestChannelServiceGetHTTPClientDonorKeepsManagedEnvironmentProxy(t *testing.T) {
+	donorID := 42
+	svc := &ChannelService{httpClient: httpclient.NewHttpClient()}
+	hc := svc.getHttpClient(&ent.Channel{
+		UserID: &donorID,
+		Settings: &objects.ChannelSettings{Proxy: &httpclient.ProxyConfig{
+			Type: httpclient.ProxyTypeEnvironment,
+		}},
+	})
+
+	transport, ok := hc.GetNativeClient().Transport.(*http.Transport)
+	require.True(t, ok)
+	require.NotNil(t, transport.Proxy)
+	require.ErrorContains(t, hc.ValidateRequestURL(context.Background(), "https://127.0.0.1/private"), "restricted address")
+}
 
 func TestChannel_IsModelSupported_WithExtraModelPrefix(t *testing.T) {
 	tests := []struct {

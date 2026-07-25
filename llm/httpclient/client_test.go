@@ -424,6 +424,59 @@ func TestPublicNetworkOnlyClientRetainsExplicitPublicURLProxy(t *testing.T) {
 	require.Equal(t, "http://8.8.8.8:8080", proxyURL.String())
 }
 
+func TestPublicNetworkOnlyClientRetainsTrustedEnvironmentProxy(t *testing.T) {
+	resolver := staticPublicNetworkResolver{addresses: []net.IPAddr{{IP: net.ParseIP("8.8.8.8")}}}
+	hc := NewHttpClientWithProxy(
+		&ProxyConfig{Type: ProxyTypeEnvironment},
+		WithPublicNetworkOnlyAndTrustedEnvironmentProxy(),
+		withPublicNetworkResolver(resolver),
+	)
+
+	transport, ok := hc.GetNativeClient().Transport.(*http.Transport)
+	require.True(t, ok)
+	require.NotNil(t, transport.Proxy)
+	require.NotNil(t, transport.DialContext)
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://provider.example/v1", nil)
+	require.NoError(t, err)
+	expectedProxy, err := http.ProxyFromEnvironment(req)
+	require.NoError(t, err)
+	actualProxy, err := hc.ProxyFunc()(req)
+	require.NoError(t, err)
+	if expectedProxy == nil {
+		require.Nil(t, actualProxy)
+	} else {
+		require.NotNil(t, actualProxy)
+		require.Equal(t, expectedProxy.String(), actualProxy.String())
+	}
+
+	_, err = hc.Do(t.Context(), &Request{Method: http.MethodGet, URL: "https://169.254.169.254/latest/meta-data"})
+	require.ErrorContains(t, err, "request URL is not allowed")
+}
+
+func TestPublicNetworkDialContextAllowsTrustedEnvironmentProxyAddress(t *testing.T) {
+	sentinel := errors.New("dial stopped for test")
+	dialer := &recordingContextDialer{err: sentinel}
+	resolver := staticPublicNetworkResolver{addresses: []net.IPAddr{{IP: net.ParseIP("8.8.8.8")}}}
+	dial := publicNetworkDialContextWithTrustedAddresses(resolver, dialer, map[string]struct{}{
+		"127.0.0.1:19091": {},
+	})
+
+	_, err := dial(t.Context(), "tcp", "127.0.0.1:19091")
+	require.ErrorIs(t, err, sentinel)
+	require.Equal(t, []string{"127.0.0.1:19091"}, dialer.addresses)
+
+	dialer.addresses = nil
+	_, err = dial(t.Context(), "tcp", "provider.example:443")
+	require.ErrorIs(t, err, sentinel)
+	require.Equal(t, []string{"8.8.8.8:443"}, dialer.addresses)
+
+	dialer.addresses = nil
+	_, err = dial(t.Context(), "tcp", "127.0.0.1:19092")
+	require.ErrorContains(t, err, "restricted address")
+	require.Empty(t, dialer.addresses)
+}
+
 func TestHttpClientImpl_buildHttpRequest(t *testing.T) {
 	client := &HttpClient{
 		client: &http.Client{Timeout: 5 * time.Second},

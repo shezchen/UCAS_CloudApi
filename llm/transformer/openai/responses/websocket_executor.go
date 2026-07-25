@@ -177,6 +177,11 @@ func (e *WebSocketExecutor) DoStream(ctx context.Context, request *httpclient.Re
 	if err != nil {
 		return nil, err
 	}
+	if hc, ok := e.inner.(*httpclient.HttpClient); ok {
+		if err := hc.ValidateRequestURL(ctx, wsURL); err != nil {
+			return nil, fmt.Errorf("websocket URL is not allowed: %w", err)
+		}
+	}
 
 	payload, err := buildWebSocketCreatePayload(request.Body)
 	if err != nil {

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -31,6 +32,7 @@ type HttpClient struct {
 	proxyConfig       *ProxyConfig
 	opts              []ClientOption
 	publicNetworkOnly bool
+	trustedEnvProxy   bool
 	resolver          publicNetworkResolver
 }
 
@@ -40,6 +42,7 @@ type ClientOption func(*clientOptions)
 type clientOptions struct {
 	insecureSkipVerify bool
 	publicNetworkOnly  bool
+	trustedEnvProxy    bool
 	resolver           publicNetworkResolver
 }
 
@@ -59,6 +62,18 @@ func WithInsecureSkipVerify(skip bool) ClientOption {
 func WithPublicNetworkOnly() ClientOption {
 	return func(o *clientOptions) {
 		o.publicNetworkOnly = true
+	}
+}
+
+// WithPublicNetworkOnlyAndTrustedEnvironmentProxy keeps the process-managed
+// environment proxy for public-network-only requests. It is intended for
+// multi-tenant channels where the deployment, not the channel contributor,
+// controls HTTP_PROXY and HTTPS_PROXY. Explicit URL proxies remain subject to
+// the normal public-network dial guard.
+func WithPublicNetworkOnlyAndTrustedEnvironmentProxy() ClientOption {
+	return func(o *clientOptions) {
+		o.publicNetworkOnly = true
+		o.trustedEnvProxy = true
 	}
 }
 
@@ -240,24 +255,115 @@ func publicNetworkDialContext(resolver publicNetworkResolver, dialer contextDial
 	}
 }
 
+func canonicalDialAddress(address string) (string, bool) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil || host == "" || port == "" {
+		return "", false
+	}
+
+	return net.JoinHostPort(strings.TrimSuffix(strings.ToLower(host), "."), port), true
+}
+
+func proxyDialAddress(proxyURL *url.URL) (string, bool) {
+	if proxyURL == nil || proxyURL.Hostname() == "" {
+		return "", false
+	}
+
+	port := proxyURL.Port()
+	if port == "" {
+		switch strings.ToLower(proxyURL.Scheme) {
+		case "http":
+			port = "80"
+		case "https":
+			port = "443"
+		case "socks", "socks5", "socks5h":
+			port = "1080"
+		default:
+			return "", false
+		}
+	}
+
+	return net.JoinHostPort(strings.TrimSuffix(strings.ToLower(proxyURL.Hostname()), "."), port), true
+}
+
+func trustedEnvironmentProxyDialAddresses() map[string]struct{} {
+	addresses := make(map[string]struct{})
+	for _, key := range []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"} {
+		rawProxyURL := strings.TrimSpace(os.Getenv(key))
+		if rawProxyURL == "" {
+			continue
+		}
+
+		proxyURL, err := url.Parse(rawProxyURL)
+		if err != nil || proxyURL.Host == "" {
+			continue
+		}
+
+		if address, ok := proxyDialAddress(proxyURL); ok {
+			addresses[address] = struct{}{}
+		}
+	}
+
+	return addresses
+}
+
+func publicNetworkDialContextWithTrustedAddresses(
+	resolver publicNetworkResolver,
+	dialer contextDialer,
+	trustedAddresses map[string]struct{},
+) func(context.Context, string, string) (net.Conn, error) {
+	publicDial := publicNetworkDialContext(resolver, dialer)
+
+	return func(ctx context.Context, network, address string) (net.Conn, error) {
+		if canonicalAddress, ok := canonicalDialAddress(address); ok {
+			if _, ok := trustedAddresses[canonicalAddress]; ok {
+				return dialer.DialContext(ctx, network, address)
+			}
+		}
+
+		return publicDial(ctx, network, address)
+	}
+}
+
+func usesEnvironmentProxy(proxyConfig *ProxyConfig) bool {
+	return proxyConfig == nil || proxyConfig.Type == "" || proxyConfig.Type == ProxyTypeEnvironment
+}
+
 func applyClientOptions(client *http.Client, transport *http.Transport, options clientOptions, proxyConfig *ProxyConfig) {
 	if options.resolver == nil {
 		options.resolver = net.DefaultResolver
 	}
 
 	if options.publicNetworkOnly {
-		// Never inherit a server-side/environment proxy. Explicit URL proxies are
-		// useful for provider connectivity and are safe here because both the
-		// request target and the proxy dial are constrained to public addresses.
-		if proxyConfig != nil && proxyConfig.Type == ProxyTypeURL {
+		if options.trustedEnvProxy && usesEnvironmentProxy(proxyConfig) {
+			// The environment proxy is controlled by the deployment. Keep the
+			// public-target validation, while allowing its local listener to be
+			// dialed without treating it as an untrusted provider address.
 			transport.Proxy = getProxyFunc(proxyConfig)
+			transport.DialContext = publicNetworkDialContextWithTrustedAddresses(
+				options.resolver,
+				&net.Dialer{
+					Timeout:   30 * time.Second,
+					KeepAlive: 30 * time.Second,
+				},
+				trustedEnvironmentProxyDialAddresses(),
+			)
+		} else if proxyConfig != nil && proxyConfig.Type == ProxyTypeURL {
+			// Explicit URL proxies are useful for provider connectivity and are
+			// safe here because both the request target and proxy dial are
+			// constrained to public addresses.
+			transport.Proxy = getProxyFunc(proxyConfig)
+			transport.DialContext = publicNetworkDialContext(options.resolver, &net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			})
 		} else {
 			transport.Proxy = nil
+			transport.DialContext = publicNetworkDialContext(options.resolver, &net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			})
 		}
-		transport.DialContext = publicNetworkDialContext(options.resolver, &net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second,
-		})
 		client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 10 {
 				return errors.New("stopped after 10 redirects")
@@ -316,6 +422,7 @@ func NewHttpClientWithProxy(proxyConfig *ProxyConfig, opts ...ClientOption) *Htt
 		proxyConfig:       proxyConfig,
 		opts:              opts,
 		publicNetworkOnly: options.publicNetworkOnly,
+		trustedEnvProxy:   options.trustedEnvProxy,
 		resolver:          options.resolver,
 	}
 }
@@ -335,6 +442,15 @@ func (hc *HttpClient) WithPublicNetworkOnly() *HttpClient {
 	return NewHttpClientWithProxy(hc.proxyConfig, opts...)
 }
 
+// WithPublicNetworkOnlyAndTrustedEnvironmentProxy returns a public-network
+// restricted copy that can use a deployment-managed environment proxy.
+func (hc *HttpClient) WithPublicNetworkOnlyAndTrustedEnvironmentProxy() *HttpClient {
+	opts := append([]ClientOption{}, hc.opts...)
+	opts = append(opts, WithPublicNetworkOnlyAndTrustedEnvironmentProxy())
+
+	return NewHttpClientWithProxy(hc.proxyConfig, opts...)
+}
+
 // GetNativeClient returns the underlying *http.Client for advanced use cases.
 func (hc *HttpClient) GetNativeClient() *http.Client {
 	return hc.client
@@ -347,6 +463,9 @@ func (hc *HttpClient) ProxyFunc() func(*http.Request) (*url.URL, error) {
 
 	if hc.publicNetworkOnly {
 		if hc.proxyConfig != nil && hc.proxyConfig.Type == ProxyTypeURL {
+			return getProxyFunc(hc.proxyConfig)
+		}
+		if hc.trustedEnvProxy && usesEnvironmentProxy(hc.proxyConfig) {
 			return getProxyFunc(hc.proxyConfig)
 		}
 
@@ -441,6 +560,7 @@ func NewHttpClient(opts ...ClientOption) *HttpClient {
 		client:            client,
 		opts:              opts,
 		publicNetworkOnly: options.publicNetworkOnly,
+		trustedEnvProxy:   options.trustedEnvProxy,
 		resolver:          options.resolver,
 	}
 }
@@ -460,10 +580,8 @@ func (hc *HttpClient) Do(ctx context.Context, request *Request) (*Response, erro
 	if err != nil {
 		return nil, fmt.Errorf("failed to build HTTP request: %w", err)
 	}
-	if hc.publicNetworkOnly {
-		if err := validatePublicURLWithResolver(ctx, rawReq.URL.String(), hc.resolver); err != nil {
-			return nil, fmt.Errorf("request URL is not allowed: %w", err)
-		}
+	if err := hc.ValidateRequestURL(ctx, rawReq.URL.String()); err != nil {
+		return nil, fmt.Errorf("request URL is not allowed: %w", err)
 	}
 
 	// Only set the default Accept when the transformer did not specify one
@@ -548,10 +666,8 @@ func (hc *HttpClient) DoStream(ctx context.Context, request *Request) (streams.S
 	if err != nil {
 		return nil, fmt.Errorf("failed to build HTTP request: %w", err)
 	}
-	if hc.publicNetworkOnly {
-		if err := validatePublicURLWithResolver(ctx, rawReq.URL.String(), hc.resolver); err != nil {
-			return nil, fmt.Errorf("request URL is not allowed: %w", err)
-		}
+	if err := hc.ValidateRequestURL(ctx, rawReq.URL.String()); err != nil {
+		return nil, fmt.Errorf("request URL is not allowed: %w", err)
 	}
 
 	// Add streaming headers. Force SSE Accept unless the outbound transformer
@@ -687,6 +803,16 @@ func (hc *HttpClient) BuildHttpRequest(
 	request *Request,
 ) (*http.Request, error) {
 	return BuildHttpRequest(ctx, request)
+}
+
+// ValidateRequestURL checks the configured public-network restriction before
+// a custom executor (such as WebSocket) opens a connection.
+func (hc *HttpClient) ValidateRequestURL(ctx context.Context, rawURL string) error {
+	if hc == nil || !hc.publicNetworkOnly {
+		return nil
+	}
+
+	return validatePublicURLWithResolver(ctx, rawURL, hc.resolver)
 }
 
 // applyAuth applies authentication to the HTTP request.

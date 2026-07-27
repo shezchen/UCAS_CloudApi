@@ -792,17 +792,33 @@ const (
 )
 
 var (
-	executionBearerPattern = regexp.MustCompile(`(?i)\b(bearer\s+)[^\s,;]+`)
-	executionAPIKeyPattern = regexp.MustCompile(`(?i)\b(api[-_ ]?key|authorization|cookie|set-cookie)\s*[:=]\s*[^\s,;]+`)
+	executionLineAuthHeaderPattern   = regexp.MustCompile(`(?im)^([ \t]*(?:proxy[-_ ]?)?authorization[ \t]*:[ \t]*)[^\r\n]*`)
+	executionLineCookieHeaderPattern = regexp.MustCompile(`(?im)^([ \t]*(?:set-cookie|cookie)[ \t]*:[ \t]*)[^\r\n]*`)
+	executionAuthSchemePattern       = regexp.MustCompile(`(?i)\b((?:proxy[-_ ]?)?authorization\s*[:=]\s*"?)(bearer|basic)\s+[^\s"',;}\]]+`)
+	executionDigestAuthPattern       = regexp.MustCompile(`(?i)\b((?:proxy[-_ ]?)?authorization\s*[:=]\s*"?)(digest)\s+[^;\r\n}\]]+`)
+	executionJSONCookiePattern       = regexp.MustCompile(`(?i)"(?:set-cookie|cookie)"\s*:\s*"([^"\\]|\\.)*"`)
+	executionPlainCookieTailPattern  = regexp.MustCompile(`(?is)\b(?:set-cookie|cookie)\s*[:=]\s*.*$`)
+	executionBearerPattern           = regexp.MustCompile(`(?i)\b(bearer\s+)[^\s,;]+`)
+	executionAPIKeyPattern           = regexp.MustCompile(`(?i)\b(api[-_ ]?key|authorization|cookie|set-cookie)\s*[:=]\s*[^\s,;]+`)
+	executionJSONSecretPattern       = regexp.MustCompile(`(?i)("(access[_ -]?token|refresh[_ -]?token|id[_ -]?token|client[_ -]?secret|password|secret|token|x[_ -]?api[_ -]?key|api[_ -]?key|authorization|cookie|set-cookie)"\s*:\s*)"([^"\\]|\\.)*"`)
+	executionNamedSecretPattern      = regexp.MustCompile(
+		`(?i)(\b(access[_ -]?token|refresh[_ -]?token|id[_ -]?token|client[_ -]?secret|password|secret|token|x[_ -]?api[_ -]?key)\b\s*[:=]\s*)"?[^",;\s}\]]+"?`,
+	)
 	executionSecretPattern = regexp.MustCompile(`\b(?:sk|sess|eyJ)[-_A-Za-z0-9.]{12,}\b`)
 	executionEmailPattern  = regexp.MustCompile(`\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b`)
-	executionQueryPattern  = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://[^\s?#]+)\?[^\s#]*`)
+	executionQueryPattern  = regexp.MustCompile(
+		`(?i)((?:[a-z][a-z0-9+.-]*://|//|\.\.?/|/|[a-z0-9._~-]+/)[^\s?#"'<>]*)\?[^\s#"',;<>)}\]]*`,
+	)
 )
 
 // sanitizeRequestExecutionErrorMessage keeps enough provider context for the
 // request owner to diagnose a failed call while ensuring credentials and
 // personal contact details are never persisted in the six-hour error window.
 func sanitizeRequestExecutionErrorMessage(message string) string {
+	message = executionLineAuthHeaderPattern.ReplaceAllString(message, "${1}[REDACTED]")
+	message = executionLineCookieHeaderPattern.ReplaceAllString(message, "[COOKIE]=[REDACTED]")
+	message = executionJSONCookiePattern.ReplaceAllString(message, `"redacted_cookie_header":"[REDACTED]"`)
+
 	message = strings.Map(func(r rune) rune {
 		switch {
 		case r == '\n' || r == '\r' || r == '\t':
@@ -814,8 +830,13 @@ func sanitizeRequestExecutionErrorMessage(message string) string {
 		}
 	}, strings.TrimSpace(message))
 	message = strings.Join(strings.Fields(message), " ")
+	message = executionJSONSecretPattern.ReplaceAllString(message, `${1}"[REDACTED]"`)
+	message = executionAuthSchemePattern.ReplaceAllString(message, "${1}${2} [REDACTED]")
+	message = executionDigestAuthPattern.ReplaceAllString(message, "${1}${2} [REDACTED]")
+	message = executionPlainCookieTailPattern.ReplaceAllString(message, "[COOKIE]=[REDACTED]")
 	message = executionBearerPattern.ReplaceAllString(message, "${1}[REDACTED]")
 	message = executionAPIKeyPattern.ReplaceAllString(message, "${1}=[REDACTED]")
+	message = executionNamedSecretPattern.ReplaceAllString(message, "${1}[REDACTED]")
 	message = executionSecretPattern.ReplaceAllString(message, "[REDACTED]")
 	message = executionEmailPattern.ReplaceAllString(message, "[EMAIL]")
 	message = executionQueryPattern.ReplaceAllString(message, "$1?[REDACTED]")
@@ -826,6 +847,13 @@ func sanitizeRequestExecutionErrorMessage(message string) string {
 	}
 
 	return message
+}
+
+// SanitizeCampusDiagnosticError preserves actionable provider diagnostics for
+// authenticated campus users while applying the same credential and personal
+// data redaction used by the six-hour API activity window.
+func SanitizeCampusDiagnosticError(message string) string {
+	return sanitizeRequestExecutionErrorMessage(message)
 }
 
 // ScrubExpiredCampusExecutionErrors removes the only short-lived diagnostic

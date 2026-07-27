@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -72,10 +73,12 @@ type TestChannelRequest struct {
 
 // TestChannelResult represents the result of a channel test.
 type TestChannelResult struct {
-	Latency float64
-	Success bool
-	Message *string
-	Error   *string
+	Latency          float64
+	Success          bool
+	Message          *string
+	Error            *string
+	StatusCode       *int
+	ModelUnsupported bool
 }
 
 // TestChannel tests a specific channel with a simple request.
@@ -166,21 +169,35 @@ func (processor *TestChannelOrchestrator) TestChannel(
 		Body: body,
 	})
 
-	rawErr := inbound.TransformError(ctx, err)
-	message := gjson.GetBytes(rawErr.Body, "error.message").String()
-
 	if err != nil {
+		rawErr := inbound.TransformError(ctx, err)
+		actualStatusCode := ExtractStatusCodeFromError(err)
+		statusCode, message := testChannelHTTPError(rawErr, actualStatusCode, err)
 		return &TestChannelResult{
-			Latency: time.Since(startTime).Seconds(),
-			Success: false,
-			Message: new(""),
-			Error:   new(message),
+			Latency:    time.Since(startTime).Seconds(),
+			Success:    false,
+			Message:    new(""),
+			Error:      new(message),
+			StatusCode: statusCode,
+			ModelUnsupported: isExplicitUnsupportedTestModel(
+				actualStatusCode,
+				testChannelModelErrorEvidence(rawErr, message),
+			),
 		}, nil
+	}
+
+	statusCode := http.StatusOK
+	if rawResponse.ChatCompletion != nil && rawResponse.ChatCompletion.StatusCode > 0 {
+		statusCode = rawResponse.ChatCompletion.StatusCode
 	}
 
 	// Handle streaming response
 	if rawResponse.ChatCompletionStream != nil {
-		return processor.handleStreamResponse(ctx, rawResponse.ChatCompletionStream, startTime)
+		result, handleErr := processor.handleStreamResponse(ctx, rawResponse.ChatCompletionStream, startTime)
+		if result != nil && result.StatusCode == nil {
+			result.StatusCode = &statusCode
+		}
+		return result, handleErr
 	}
 
 	latency := time.Since(startTime).Seconds()
@@ -189,28 +206,186 @@ func (processor *TestChannelOrchestrator) TestChannel(
 	response, err := xjson.To[llm.Response](rawResponse.ChatCompletion.Body)
 	if err != nil {
 		return &TestChannelResult{
-			Latency: latency,
-			Success: false,
-			Message: new(""),
-			Error:   new(err.Error()),
+			Latency:    latency,
+			Success:    false,
+			Message:    new(""),
+			Error:      new(err.Error()),
+			StatusCode: &statusCode,
 		}, nil
 	}
 
 	if len(response.Choices) == 0 {
 		return &TestChannelResult{
-			Latency: latency,
-			Success: false,
-			Message: new(""),
-			Error:   new("No message in response"),
+			Latency:    latency,
+			Success:    false,
+			Message:    new(""),
+			Error:      new("No message in response"),
+			StatusCode: &statusCode,
+		}, nil
+	}
+
+	message, hasMeaningfulOutput := testChannelNonStreamOutput(&response)
+	if !hasMeaningfulOutput {
+		return &TestChannelResult{
+			Latency:    latency,
+			Success:    false,
+			Message:    new(""),
+			Error:      new("No content in response"),
+			StatusCode: &statusCode,
 		}, nil
 	}
 
 	return &TestChannelResult{
-		Latency: latency,
-		Success: true,
-		Message: response.Choices[0].Message.Content.Content,
-		Error:   nil,
+		Latency:    latency,
+		Success:    true,
+		Message:    message,
+		Error:      nil,
+		StatusCode: &statusCode,
 	}, nil
+}
+
+func testChannelNonStreamOutput(response *llm.Response) (*string, bool) {
+	if response == nil {
+		return nil, false
+	}
+
+	for _, choice := range response.Choices {
+		message := choice.Message
+		if message == nil {
+			continue
+		}
+		if content := message.Content.Content; content != nil && strings.TrimSpace(*content) != "" {
+			return content, true
+		}
+		if len(message.Content.MultipleContent) > 0 ||
+			len(message.ToolCalls) > 0 ||
+			strings.TrimSpace(lo.FromPtr(message.ReasoningContent)) != "" ||
+			strings.TrimSpace(lo.FromPtr(message.Reasoning)) != "" ||
+			strings.TrimSpace(lo.FromPtr(message.ReasoningSignature)) != "" ||
+			strings.TrimSpace(message.Refusal) != "" ||
+			message.Audio != nil {
+			return message.Content.Content, true
+		}
+	}
+
+	return nil, false
+}
+
+func testChannelHTTPError(rawErr *httpclient.Error, actualStatusCode int, cause error) (*int, string) {
+	var statusCode *int
+	if actualStatusCode > 0 {
+		statusCode = new(actualStatusCode)
+	}
+
+	if rawErr != nil {
+		for _, path := range []string{"error.message", "errors.0.message", "errors.message", "detail", "message", "error"} {
+			if message, ok := testChannelSafeScalar(rawErr.Body, path, false); ok {
+				if metadata := testChannelErrorMetadata(rawErr); len(metadata) > 0 {
+					message += " (" + strings.Join(metadata, ", ") + ")"
+				}
+				return statusCode, message
+			}
+		}
+
+		if metadata := testChannelErrorMetadata(rawErr); len(metadata) > 0 {
+			return statusCode, "Upstream error (" + strings.Join(metadata, ", ") + ")"
+		}
+		if len(strings.TrimSpace(string(rawErr.Body))) > 0 {
+			return statusCode, "Upstream returned an error without a public diagnostic message"
+		}
+	}
+	if cause != nil {
+		return statusCode, cause.Error()
+	}
+
+	return statusCode, "No upstream error detail was returned"
+}
+
+func testChannelSafeScalar(body []byte, path string, allowNumber bool) (string, bool) {
+	result := gjson.GetBytes(body, path)
+	if !result.Exists() {
+		return "", false
+	}
+	if result.Type != gjson.String && !(allowNumber && result.Type == gjson.Number) {
+		return "", false
+	}
+
+	value := strings.TrimSpace(result.String())
+	return value, value != ""
+}
+
+func testChannelErrorMetadata(rawErr *httpclient.Error) []string {
+	if rawErr == nil {
+		return nil
+	}
+
+	fields := []struct {
+		label string
+		paths []string
+	}{
+		{label: "code", paths: []string{"error.code", "code", "detail.code"}},
+		{label: "type", paths: []string{"error.type", "type", "detail.type"}},
+		{label: "param", paths: []string{"error.param", "param", "detail.param"}},
+	}
+	metadata := make([]string, 0, len(fields))
+	for _, field := range fields {
+		for _, path := range field.paths {
+			if value, ok := testChannelSafeScalar(rawErr.Body, path, true); ok {
+				metadata = append(metadata, field.label+": "+value)
+				break
+			}
+		}
+	}
+	return metadata
+}
+
+func testChannelModelErrorEvidence(rawErr *httpclient.Error, message string) string {
+	evidence := []string{message}
+	if rawErr != nil {
+		for _, path := range []string{
+			"error.code",
+			"error.type",
+			"error.param",
+			"code",
+			"type",
+			"detail.code",
+			"detail.type",
+		} {
+			if value, ok := testChannelSafeScalar(rawErr.Body, path, true); ok {
+				evidence = append(evidence, value)
+			}
+		}
+	}
+
+	return strings.Join(evidence, " ")
+}
+
+func isExplicitUnsupportedTestModel(statusCode int, message string) bool {
+	switch statusCode {
+	case http.StatusBadRequest, http.StatusNotFound, http.StatusUnprocessableEntity:
+	default:
+		return false
+	}
+
+	message = strings.ToLower(message)
+	if !strings.Contains(message, "model") {
+		return false
+	}
+	for _, signal := range []string{
+		"not supported",
+		"unsupported",
+		"not found",
+		"does not exist",
+		"unknown model",
+		"invalid model",
+		"model_not_found",
+	} {
+		if strings.Contains(message, signal) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // handleStreamResponse processes a streaming response and accumulates the content.
@@ -225,6 +400,7 @@ func (processor *TestChannelOrchestrator) handleStreamResponse(
 
 	// Accumulate stream chunks
 	var accumulatedContent string
+	hasMeaningfulOutput := false
 
 	for stream.Next() {
 		select {
@@ -256,8 +432,19 @@ func (processor *TestChannelOrchestrator) handleStreamResponse(
 		}
 
 		// Accumulate content from the first choice
-		if len(chunk.Choices) > 0 && chunk.Choices[0].Delta != nil && chunk.Choices[0].Delta.Content.Content != nil {
-			accumulatedContent += *chunk.Choices[0].Delta.Content.Content
+		if len(chunk.Choices) > 0 && chunk.Choices[0].Delta != nil {
+			delta := chunk.Choices[0].Delta
+			if delta.Content.Content != nil {
+				accumulatedContent += *delta.Content.Content
+				if strings.TrimSpace(*delta.Content.Content) != "" {
+					hasMeaningfulOutput = true
+				}
+			}
+			if len(delta.ToolCalls) > 0 ||
+				strings.TrimSpace(lo.FromPtr(delta.ReasoningContent)) != "" ||
+				strings.TrimSpace(delta.Refusal) != "" {
+				hasMeaningfulOutput = true
+			}
 		}
 	}
 
@@ -273,16 +460,24 @@ func (processor *TestChannelOrchestrator) handleStreamResponse(
 		}, nil
 	}
 
-	if stream.Err() != nil {
+	if streamErr := stream.Err(); streamErr != nil {
+		actualStatusCode := ExtractStatusCodeFromError(streamErr)
+		rawErr := openai.NewInboundTransformer().TransformError(ctx, streamErr)
+		statusCode, message := testChannelHTTPError(rawErr, actualStatusCode, streamErr)
 		return &TestChannelResult{
-			Latency: latency,
-			Success: false,
-			Message: lo.ToPtr(""),
-			Error:   lo.ToPtr(stream.Err().Error()),
+			Latency:    latency,
+			Success:    false,
+			Message:    lo.ToPtr(""),
+			Error:      lo.ToPtr(message),
+			StatusCode: statusCode,
+			ModelUnsupported: isExplicitUnsupportedTestModel(
+				actualStatusCode,
+				testChannelModelErrorEvidence(rawErr, message),
+			),
 		}, nil
 	}
 
-	if accumulatedContent == "" {
+	if !hasMeaningfulOutput {
 		return &TestChannelResult{
 			Latency: latency,
 			Success: false,

@@ -17,6 +17,8 @@ import (
 	"github.com/looplj/axonhub/internal/ent/channel"
 	"github.com/looplj/axonhub/internal/ent/enttest"
 	"github.com/looplj/axonhub/internal/ent/project"
+	"github.com/looplj/axonhub/internal/ent/request"
+	"github.com/looplj/axonhub/internal/ent/requestexecution"
 	"github.com/looplj/axonhub/internal/objects"
 	"github.com/looplj/axonhub/internal/scopes"
 )
@@ -533,4 +535,195 @@ func TestSanitizeCampusChannelDescriptionCapsAndRemovesFormatting(t *testing.T) 
 	got := sanitizeCampusChannelDescription(&input)
 	require.Len(t, []rune(got), campusChannelDescriptionMaxRunes)
 	require.NotContains(t, got, "\u200b")
+}
+
+func TestSanitizeCampusDiagnosticErrorRedactsNamedSecrets(t *testing.T) {
+	got := SanitizeCampusDiagnosticError(`{
+		"access_token":"access-value",
+		"refresh_token":"refresh-value",
+		"client_secret":"client-value",
+		"password":"pass-value",
+		"x-api-key":"x-value",
+		"headers":{"Authorization":"Bearer auth-value"}
+	}`)
+
+	for _, secret := range []string{
+		"access-value",
+		"refresh-value",
+		"client-value",
+		"pass-value",
+		"x-value",
+		"auth-value",
+	} {
+		require.NotContains(t, got, secret)
+	}
+	require.Contains(t, got, "[REDACTED]")
+}
+
+func TestSanitizeCampusDiagnosticErrorRedactsHeadersAndQueriesWithoutHidingDiagnosis(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		secrets     []string
+		diagnostics []string
+	}{
+		{
+			name: "basic authorization header",
+			input: "request failed; Authorization: Basic YWxpY2U6c2VjcmV0; " +
+				"reason: upstream rejected the account",
+			secrets:     []string{"YWxpY2U6c2VjcmV0"},
+			diagnostics: []string{"reason:", "upstream rejected the account"},
+		},
+		{
+			name: "digest proxy authorization header",
+			input: `proxy failed; Proxy-Authorization: Digest username="alice", realm="private", response="digest-secret"; ` +
+				`status: proxy authentication required`,
+			secrets:     []string{"alice", "private", "digest-secret"},
+			diagnostics: []string{"status:", "proxy authentication required"},
+		},
+		{
+			name: "one-line cookie text fails closed even with diagnostic-looking cookie names",
+			input: "request failed; Cookie: session=session-secret; cf_clearance=clearance-secret; " +
+				"reason=reason-cookie-secret; status=status-cookie-secret; provider rejected the model",
+			secrets: []string{"session-secret", "clearance-secret", "reason-cookie-secret", "status-cookie-secret"},
+		},
+		{
+			name:    "ambiguous cookie text fails closed",
+			input:   "request failed; Set-Cookie: session=opaque-secret; Path=/; Secure; unrelated trailing prose",
+			secrets: []string{"opaque-secret"},
+		},
+		{
+			name: "structured headers",
+			input: `{"headers":{"Cookie":"session=json-cookie-secret; Path=/","Set-Cookie":"auth=json-set-cookie-secret; HttpOnly",` +
+				`"Authorization":"Basic json-basic-secret"},"message":"provider rejected the model"}`,
+			secrets:     []string{"json-cookie-secret", "json-set-cookie-secret", "json-basic-secret"},
+			diagnostics: []string{"provider rejected the model"},
+		},
+		{
+			name: "header lines preserve following diagnosis",
+			input: "Authorization: Bearer bearer-secret\nCookie: session=line-cookie-secret; Path=/\n" +
+				"upstream TLS handshake failed",
+			secrets:     []string{"bearer-secret", "line-cookie-secret"},
+			diagnostics: []string{"upstream TLS handshake failed"},
+		},
+		{
+			name: "absolute and relative URL queries",
+			input: "GET https://api.example.com/v1/models?signature=absolute-secret&trace=1 failed; " +
+				"POST /v1/chat/completions?sig=relative-secret&attempt=2 failed; " +
+				"retry v1/responses?code=bare-relative-secret&attempt=3 status=502",
+			secrets: []string{"absolute-secret", "relative-secret", "bare-relative-secret"},
+			diagnostics: []string{
+				"https://api.example.com/v1/models?[REDACTED]",
+				"/v1/chat/completions?[REDACTED]",
+				"v1/responses?[REDACTED]",
+				"status=502",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := SanitizeCampusDiagnosticError(tt.input)
+			for _, secret := range tt.secrets {
+				require.NotContains(t, got, secret)
+			}
+			for _, diagnostic := range tt.diagnostics {
+				require.Contains(t, got, diagnostic)
+			}
+			require.Contains(t, got, "[REDACTED]")
+		})
+	}
+}
+
+func TestCampusProbeModelCandidatesPreferEvidenceOverArrayPosition(t *testing.T) {
+	ch := &ent.Channel{
+		DefaultTestModel: "gpt-5.5-codex",
+		SupportedModels: []string{
+			"gpt-5",
+			"gpt-5.4",
+			"gpt-5.6-sol",
+			"gpt-5.5-codex",
+			"gpt-5.6-terra",
+			"",
+		},
+	}
+
+	require.Equal(t, []string{
+		"gpt-5.5-codex",
+		"gpt-5.4",
+		"gpt-5.6-terra",
+		"gpt-5.6-sol",
+		"gpt-5",
+	}, campusProbeModelCandidates(ch, []string{"gpt-5.4", "gpt-5.5-codex", "gpt-5.4"}))
+
+	require.Equal(t, "gpt-5.4", firstCampusProbeModel(&ent.Channel{
+		SupportedModels: []string{"gpt-5", "gpt-5.4"},
+	}))
+	require.Equal(t, []string{"gpt-5.6-sol", "gpt-5.4", "gpt-5"}, campusProbeModelCandidates(&ent.Channel{
+		SupportedModels: []string{"gpt-5", "gpt-5.6-sol", "gpt-5.4"},
+	}, nil))
+	require.Equal(t, []string{"gpt-5.6-sol", "gpt-5.4"}, campusProbeModelCandidates(&ent.Channel{
+		DefaultTestModel: "retired-default",
+		SupportedModels:  []string{"gpt-5.4", "gpt-5.6-sol"},
+	}, []string{"retired-history"}))
+}
+
+func TestPrepareCampusChannelProbeUsesRecentProductionSuccessOnly(t *testing.T) {
+	client := enttest.NewEntClient(t, "sqlite3", "file:campus_probe_models?mode=memory&_fk=1")
+	defer client.Close()
+
+	setupCtx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+	projectRow := client.Project.Create().
+		SetName("Campus").
+		SetStatus(project.StatusActive).
+		SaveX(setupCtx)
+	member := client.User.Create().
+		SetEmail("member@mails.ucas.ac.cn").
+		SetPassword("hash").
+		SaveX(setupCtx)
+	client.UserProject.Create().SetUser(member).SetProject(projectRow).SaveX(setupCtx)
+	ch := client.Channel.Create().
+		SetType(channel.TypeCodex).
+		SetName("Adaptive probe").
+		SetStatus(channel.StatusEnabled).
+		SetCredentials(objects.ChannelCredentials{APIKey: "provider-secret"}).
+		SetSupportedModels([]string{"gpt-5", "gpt-5.6-sol", "gpt-5.4"}).
+		SetDefaultTestModel("gpt-5").
+		SaveX(setupCtx)
+
+	createCompletedExecution := func(source request.Source, modelID string, createdAt time.Time) {
+		req := client.Request.Create().
+			SetProjectID(projectRow.ID).
+			SetSource(source).
+			SetModelID(modelID).
+			SetRequestBody(objects.JSONRawMessage(`{}`)).
+			SetStatus(request.StatusCompleted).
+			SetChannelID(ch.ID).
+			SetCreatedAt(createdAt).
+			SetUpdatedAt(createdAt).
+			SaveX(setupCtx)
+		client.RequestExecution.Create().
+			SetProjectID(projectRow.ID).
+			SetRequest(req).
+			SetChannel(ch).
+			SetModelID(modelID).
+			SetRequestBody(objects.JSONRawMessage(`{}`)).
+			SetStatus(requestexecution.StatusCompleted).
+			SetCreatedAt(createdAt).
+			SetUpdatedAt(createdAt).
+			SaveX(setupCtx)
+	}
+	createCompletedExecution(request.SourceAPI, "gpt-5.4", time.Now().Add(-time.Minute))
+	createCompletedExecution(request.SourceTest, "test-only-model", time.Now())
+
+	requestCtx := authz.NewUserContext(context.Background(), member.ID)
+	requestCtx = contexts.WithUser(requestCtx, member)
+	requestCtx = contexts.WithProjectID(requestCtx, projectRow.ID)
+	svc := &CampusCatalogService{client: client}
+
+	guid, models, err := svc.PrepareChannelProbe(requestCtx, ch.ID)
+	require.NoError(t, err)
+	require.Equal(t, ch.ID, guid.ID)
+	require.Equal(t, []string{"gpt-5", "gpt-5.4", "gpt-5.6-sol"}, models)
+	require.NotContains(t, models, "test-only-model")
 }

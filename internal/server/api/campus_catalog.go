@@ -36,8 +36,16 @@ type campusAPIActivityReader interface {
 }
 
 type campusChannelProbeReader interface {
-	PrepareChannelProbe(context.Context, int) (objects.GUID, string, error)
+	PrepareChannelProbe(context.Context, int) (objects.GUID, []string, error)
 	GetChannelHealth(context.Context, int) (*biz.CampusChannelHealth, error)
+}
+
+type campusChannelTester interface {
+	TestChannel(context.Context, objects.GUID, *string, *httpclient.ProxyConfig) (*orchestrator.TestChannelResult, error)
+}
+
+type campusChannelProbeRecorder interface {
+	RecordManualProbeResult(context.Context, int, bool) error
 }
 
 type CampusCatalogHandlersParams struct {
@@ -71,8 +79,8 @@ func NewCampusCatalogHandlers(params CampusCatalogHandlersParams) *CampusCatalog
 
 type CampusCatalogHandlers struct {
 	catalog       campusCatalogReader
-	probe         *orchestrator.TestChannelOrchestrator
-	channelProbes *biz.ChannelProbeService
+	probe         campusChannelTester
+	channelProbes campusChannelProbeRecorder
 	probeMu       sync.Mutex
 	probeLast     map[string]time.Time
 }
@@ -118,6 +126,27 @@ func (h *CampusCatalogHandlers) GetAPIActivity(c *gin.Context) {
 
 const campusPublicProbeCooldown = 30 * time.Second
 
+type campusChannelProbeAttempt struct {
+	ModelID          string  `json:"modelID"`
+	Success          bool    `json:"success"`
+	Latency          float64 `json:"latency"`
+	StatusCode       *int    `json:"statusCode,omitempty"`
+	Error            string  `json:"error,omitempty"`
+	modelUnsupported bool
+}
+
+type campusChannelProbeResponse struct {
+	Success       bool                        `json:"success"`
+	ChannelID     string                      `json:"channelID"`
+	ModelID       string                      `json:"modelID"`
+	Latency       float64                     `json:"latency"`
+	StatusCode    *int                        `json:"statusCode,omitempty"`
+	Error         string                      `json:"error,omitempty"`
+	ErrorCategory string                      `json:"errorCategory,omitempty"`
+	Attempts      []campusChannelProbeAttempt `json:"attempts"`
+	Health        *biz.CampusChannelHealth    `json:"health,omitempty"`
+}
+
 func (h *CampusCatalogHandlers) PostChannelProbe(c *gin.Context) {
 	c.Header("Cache-Control", "private, no-store")
 	reader, ok := h.catalog.(campusChannelProbeReader)
@@ -132,7 +161,7 @@ func (h *CampusCatalogHandlers) PostChannelProbe(c *gin.Context) {
 		return
 	}
 
-	channelGUID, modelID, err := reader.PrepareChannelProbe(c.Request.Context(), channelID)
+	channelGUID, modelIDs, err := reader.PrepareChannelProbe(c.Request.Context(), channelID)
 	if err != nil {
 		h.writeCampusCatalogError(c, err, "failed to prepare campus channel probe")
 		return
@@ -150,36 +179,84 @@ func (h *CampusCatalogHandlers) PostChannelProbe(c *gin.Context) {
 	}
 
 	probeCtx := contexts.WithSource(c.Request.Context(), request.SourceTest)
-	result, err := authz.RunWithSystemBypass(probeCtx, "campus-public-channel-probe-execution", func(bypassCtx context.Context) (*orchestrator.TestChannelResult, error) {
-		return h.probe.TestChannel(bypassCtx, channelGUID, &modelID, nil)
-	})
-	if err != nil {
-		h.recordPublicProbeResult(probeCtx, channelID, false)
-		log.Error(
-			probeCtx,
-			"campus public channel probe failed",
-			log.Int("channel_id", channelID),
-			log.String("error_type", fmt.Sprintf("%T", err)),
-		)
-		JSONError(c, http.StatusBadGateway, errors.New("channel test failed"))
+	attempts := make([]campusChannelProbeAttempt, 0, len(modelIDs))
+	totalLatency := 0.0
+	for _, modelID := range modelIDs {
+		result, testErr := authz.RunWithSystemBypass(probeCtx, "campus-public-channel-probe-execution", func(bypassCtx context.Context) (*orchestrator.TestChannelResult, error) {
+			return h.probe.TestChannel(bypassCtx, channelGUID, &modelID, nil)
+		})
+		if testErr != nil {
+			errorMessage := biz.SanitizeCampusDiagnosticError(testErr.Error())
+			attempts = append(attempts, campusChannelProbeAttempt{
+				ModelID: modelID,
+				Error:   errorMessage,
+			})
+			log.Error(
+				probeCtx,
+				"campus public channel probe execution failed before an upstream result",
+				log.Int("channel_id", channelID),
+				log.String("model_id", modelID),
+				log.String("error_type", fmt.Sprintf("%T", testErr)),
+			)
+			break
+		}
+		if result == nil {
+			attempts = append(attempts, campusChannelProbeAttempt{
+				ModelID: modelID,
+				Error:   "No channel test result was returned",
+			})
+			break
+		}
+
+		attempt := campusChannelProbeAttempt{
+			ModelID:          modelID,
+			Success:          result.Success,
+			Latency:          result.Latency,
+			StatusCode:       result.StatusCode,
+			modelUnsupported: result.ModelUnsupported,
+		}
+		totalLatency += result.Latency
+		if result.Error != nil {
+			attempt.Error = biz.SanitizeCampusDiagnosticError(*result.Error)
+		}
+		attempts = append(attempts, attempt)
+
+		if result.Success || !shouldRetryCampusProbeWithNextModel(attempt) {
+			break
+		}
+	}
+
+	if len(attempts) == 0 {
+		log.Error(probeCtx, "campus public channel probe had no model candidates", log.Int("channel_id", channelID))
+		JSONError(c, http.StatusInternalServerError, errors.New("channel test has no usable model candidates"))
 		return
 	}
 
-	h.recordPublicProbeResult(probeCtx, channelID, result.Success)
+	finalAttempt := attempts[len(attempts)-1]
+	h.recordPublicProbeResult(probeCtx, channelID, finalAttempt.Success)
 	health, healthErr := reader.GetChannelHealth(c.Request.Context(), channelID)
 	if healthErr != nil {
 		log.Error(c.Request.Context(), "failed to reload channel health after probe", log.Int("channel_id", channelID), log.Cause(healthErr))
 	}
 
-	response := gin.H{
-		"success": result.Success,
-		"latency": result.Latency,
-		"health":  health,
+	response := campusChannelProbeResponse{
+		Success:    finalAttempt.Success,
+		ChannelID:  strconv.Itoa(channelID),
+		ModelID:    finalAttempt.ModelID,
+		Latency:    totalLatency,
+		StatusCode: finalAttempt.StatusCode,
+		Error:      finalAttempt.Error,
+		Attempts:   attempts,
+		Health:     health,
 	}
-	if !result.Success {
-		response["errorCategory"] = "probe_failed"
+	if !finalAttempt.Success {
+		response.ErrorCategory = "probe_failed"
 	}
 	c.JSON(http.StatusOK, response)
+}
+
+func shouldRetryCampusProbeWithNextModel(attempt campusChannelProbeAttempt) bool {
+	return !attempt.Success && attempt.modelUnsupported
 }
 
 func (h *CampusCatalogHandlers) reservePublicProbe(userID, channelID int, now time.Time) (time.Duration, bool) {

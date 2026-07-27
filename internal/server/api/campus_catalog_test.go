@@ -7,11 +7,17 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 
+	"github.com/looplj/axonhub/internal/contexts"
+	"github.com/looplj/axonhub/internal/ent"
+	"github.com/looplj/axonhub/internal/objects"
 	"github.com/looplj/axonhub/internal/server/biz"
+	"github.com/looplj/axonhub/internal/server/orchestrator"
+	"github.com/looplj/axonhub/llm/httpclient"
 )
 
 type stubCampusCatalogReader struct {
@@ -21,6 +27,11 @@ type stubCampusCatalogReader struct {
 	capabilitiesErr error
 	updateErr       error
 	updatedInput    *biz.UpdateCampusChannelModelCapabilitiesInput
+	probeGUID       objects.GUID
+	probeModels     []string
+	probeErr        error
+	health          *biz.CampusChannelHealth
+	healthErr       error
 }
 
 func (s *stubCampusCatalogReader) GetResources(context.Context) (*biz.CampusResources, error) {
@@ -34,6 +45,43 @@ func (s *stubCampusCatalogReader) GetChannelModelCapabilities(context.Context) (
 func (s *stubCampusCatalogReader) UpdateChannelModelCapabilities(_ context.Context, input biz.UpdateCampusChannelModelCapabilitiesInput) error {
 	s.updatedInput = &input
 	return s.updateErr
+}
+
+func (s *stubCampusCatalogReader) PrepareChannelProbe(context.Context, int) (objects.GUID, []string, error) {
+	return s.probeGUID, s.probeModels, s.probeErr
+}
+
+func (s *stubCampusCatalogReader) GetChannelHealth(context.Context, int) (*biz.CampusChannelHealth, error) {
+	return s.health, s.healthErr
+}
+
+type stubCampusChannelTester struct {
+	results map[string]*orchestrator.TestChannelResult
+	errs    map[string]error
+	calls   []string
+}
+
+func (s *stubCampusChannelTester) TestChannel(
+	_ context.Context,
+	_ objects.GUID,
+	modelID *string,
+	_ *httpclient.ProxyConfig,
+) (*orchestrator.TestChannelResult, error) {
+	model := ""
+	if modelID != nil {
+		model = *modelID
+	}
+	s.calls = append(s.calls, model)
+	return s.results[model], s.errs[model]
+}
+
+type stubCampusChannelProbeRecorder struct {
+	results []bool
+}
+
+func (s *stubCampusChannelProbeRecorder) RecordManualProbeResult(_ context.Context, _ int, success bool) error {
+	s.results = append(s.results, success)
+	return nil
 }
 
 func TestCampusCatalogHandlerSuccessIsPrivateAndNoStore(t *testing.T) {
@@ -226,4 +274,113 @@ func TestCampusCatalogPatchChannelCapabilitiesErrorMappingAndRedaction(t *testin
 			}
 		})
 	}
+}
+
+func TestCampusChannelProbeFallsBackOnlyForExplicitUnsupportedModelAndReturnsTruth(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	badStatus := http.StatusBadRequest
+	okStatus := http.StatusOK
+	upstreamError := "The 'gpt-5' model is not supported when using Codex with a ChatGPT account. Authorization: Bearer upstream-secret student@example.com"
+	tester := &stubCampusChannelTester{
+		results: map[string]*orchestrator.TestChannelResult{
+			"gpt-5": {
+				Success:          false,
+				Latency:          0.12,
+				StatusCode:       &badStatus,
+				Error:            &upstreamError,
+				ModelUnsupported: true,
+			},
+			"gpt-5.6-sol": {
+				Success:    true,
+				Latency:    0.34,
+				StatusCode: &okStatus,
+			},
+		},
+		errs: map[string]error{},
+	}
+	recorder := &stubCampusChannelProbeRecorder{}
+	catalog := &stubCampusCatalogReader{
+		probeGUID:   objects.GUID{Type: ent.TypeChannel, ID: 7},
+		probeModels: []string{"gpt-5", "gpt-5.6-sol", "gpt-5.4"},
+		health:      &biz.CampusChannelHealth{State: "healthy"},
+	}
+	handler := &CampusCatalogHandlers{
+		catalog:       catalog,
+		probe:         tester,
+		channelProbes: recorder,
+		probeLast:     make(map[string]time.Time),
+	}
+
+	response := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(response)
+	ctx.Params = gin.Params{{Key: "id", Value: "7"}}
+	requestCtx := contexts.WithUser(context.Background(), &ent.User{ID: 42})
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/admin/campus/channels/7/probe", nil).WithContext(requestCtx)
+	handler.PostChannelProbe(ctx)
+
+	require.Equal(t, http.StatusOK, response.Code)
+	require.Equal(t, []string{"gpt-5", "gpt-5.6-sol"}, tester.calls)
+	require.Equal(t, []bool{true}, recorder.results)
+	require.Contains(t, response.Body.String(), `"modelID":"gpt-5.6-sol"`)
+	require.Contains(t, response.Body.String(), `"statusCode":400`)
+	require.Contains(t, response.Body.String(), `"statusCode":200`)
+	require.Contains(t, response.Body.String(), "not supported")
+	require.NotContains(t, response.Body.String(), "upstream-secret")
+	require.NotContains(t, response.Body.String(), "student@example.com")
+	require.Contains(t, response.Body.String(), "[REDACTED]")
+	require.Contains(t, response.Body.String(), "[EMAIL]")
+	require.JSONEq(t, `{
+		"success":true,
+		"channelID":"7",
+		"modelID":"gpt-5.6-sol",
+		"latency":0.46,
+		"statusCode":200,
+		"attempts":[
+			{"modelID":"gpt-5","success":false,"latency":0.12,"statusCode":400,"error":"The 'gpt-5' model is not supported when using Codex with a ChatGPT account. Authorization=[REDACTED] [REDACTED] [EMAIL]"},
+			{"modelID":"gpt-5.6-sol","success":true,"latency":0.34,"statusCode":200}
+		],
+		"health":{"state":"healthy","recentSuccessRate":0,"recentRequestCount":0}
+	}`, response.Body.String())
+}
+
+func TestCampusChannelProbeDoesNotHideAuthenticationFailureBehindFallback(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	status := http.StatusUnauthorized
+	upstreamError := "Your authentication token has been invalidated. Please try signing in again."
+	tester := &stubCampusChannelTester{
+		results: map[string]*orchestrator.TestChannelResult{
+			"gpt-5.6-sol": {
+				Success:    false,
+				Latency:    0.2,
+				StatusCode: &status,
+				Error:      &upstreamError,
+			},
+		},
+		errs: map[string]error{},
+	}
+	recorder := &stubCampusChannelProbeRecorder{}
+	handler := &CampusCatalogHandlers{
+		catalog: &stubCampusCatalogReader{
+			probeGUID:   objects.GUID{Type: ent.TypeChannel, ID: 10},
+			probeModels: []string{"gpt-5.6-sol", "gpt-5.4"},
+			health:      &biz.CampusChannelHealth{State: "unhealthy"},
+		},
+		probe:         tester,
+		channelProbes: recorder,
+		probeLast:     make(map[string]time.Time),
+	}
+
+	response := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(response)
+	ctx.Params = gin.Params{{Key: "id", Value: "10"}}
+	requestCtx := contexts.WithUser(context.Background(), &ent.User{ID: 43})
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/admin/campus/channels/10/probe", nil).WithContext(requestCtx)
+	handler.PostChannelProbe(ctx)
+
+	require.Equal(t, http.StatusOK, response.Code)
+	require.Equal(t, []string{"gpt-5.6-sol"}, tester.calls)
+	require.Equal(t, []bool{false}, recorder.results)
+	require.Contains(t, response.Body.String(), `"statusCode":401`)
+	require.Contains(t, response.Body.String(), upstreamError)
+	require.Contains(t, response.Body.String(), `"errorCategory":"probe_failed"`)
 }

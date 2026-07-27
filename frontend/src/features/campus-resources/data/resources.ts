@@ -91,9 +91,22 @@ const campusDonationBenefitsSchema = z.preprocess(
   })
 );
 
+const campusChannelProbeAttemptSchema = z.object({
+  success: z.boolean(),
+  modelID: z.string().min(1),
+  statusCode: z.number().int().nonnegative().nullable().optional(),
+  error: z.string().optional(),
+  latency: z.number().nonnegative(),
+});
+
 const campusChannelProbeResultSchema = z.object({
-  success: z.boolean().optional(),
-  channelID: z.string().optional(),
+  success: z.boolean(),
+  channelID: z.string().min(1),
+  modelID: z.string().min(1),
+  statusCode: z.number().int().nonnegative().nullable().optional(),
+  error: z.string().optional(),
+  latency: z.number().nonnegative(),
+  attempts: z.array(campusChannelProbeAttemptSchema).min(1),
   health: campusChannelHealthSchema.optional(),
   errorCategory: z.string().optional(),
 });
@@ -122,6 +135,8 @@ export type CampusResourceChannel = z.infer<typeof campusResourceChannelSchema>;
 export type CampusManagedChannel = z.infer<typeof campusManagedChannelSchema>;
 export type CampusUsageOverview = z.infer<typeof campusUsageOverviewSchema>;
 export type CampusDonationBenefits = z.infer<typeof campusDonationBenefitsSchema>;
+export type CampusChannelProbeAttempt = z.infer<typeof campusChannelProbeAttemptSchema>;
+export type CampusChannelProbeResult = z.infer<typeof campusChannelProbeResultSchema>;
 
 export interface CampusModelCapabilityOverride {
   vision: boolean;
@@ -176,8 +191,7 @@ export function useProbeCampusChannel() {
         headers: { 'X-Project-ID': selectedProjectId },
       });
 
-      const parsed = campusChannelProbeResultSchema.safeParse(data);
-      return parsed.success ? parsed.data : undefined;
+      return campusChannelProbeResultSchema.parse(data);
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['campusResources', selectedProjectId] });

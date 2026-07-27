@@ -846,16 +846,105 @@ func (svc *CampusCatalogService) listPublicChannels(ctx context.Context, project
 }
 
 func firstCampusProbeModel(ch *ent.Channel) string {
-	if ch == nil {
+	candidates := campusProbeModelCandidates(ch, nil)
+	if len(candidates) == 0 {
 		return ""
 	}
-	for _, modelID := range ch.SupportedModels {
+
+	return candidates[0]
+}
+
+// campusProbeModelCandidates deliberately does not trust any single source of
+// model truth. A configured default is preferred only while it is still in the
+// synchronized catalog; recent successful production models are the next
+// fallback; remaining synchronized models are ordered by version rather than
+// by their incidental array position.
+func campusProbeModelCandidates(ch *ent.Channel, recentSuccessfulModels []string) []string {
+	if ch == nil {
+		return nil
+	}
+
+	supportedModels := append([]string(nil), ch.SupportedModels...)
+	sort.SliceStable(supportedModels, func(i, j int) bool {
+		return campusModelVersionNewer(supportedModels[i], supportedModels[j])
+	})
+	supportedSet := make(map[string]struct{}, len(supportedModels))
+	for _, modelID := range supportedModels {
 		if modelID = strings.TrimSpace(modelID); modelID != "" {
-			return modelID
+			supportedSet[modelID] = struct{}{}
 		}
 	}
 
-	return strings.TrimSpace(ch.DefaultTestModel)
+	candidates := make([]string, 0, 1+len(recentSuccessfulModels)+len(supportedModels))
+	seen := make(map[string]struct{}, cap(candidates))
+	appendUnique := func(modelID string) {
+		modelID = strings.TrimSpace(modelID)
+		if modelID == "" {
+			return
+		}
+		if _, ok := seen[modelID]; ok {
+			return
+		}
+		seen[modelID] = struct{}{}
+		candidates = append(candidates, modelID)
+	}
+	appendIfSynchronized := func(modelID string) {
+		modelID = strings.TrimSpace(modelID)
+		if _, ok := supportedSet[modelID]; !ok {
+			return
+		}
+		appendUnique(modelID)
+	}
+
+	appendIfSynchronized(ch.DefaultTestModel)
+	for _, modelID := range recentSuccessfulModels {
+		appendIfSynchronized(modelID)
+	}
+	for _, modelID := range supportedModels {
+		appendUnique(modelID)
+	}
+
+	return candidates
+}
+
+func campusModelVersionNewer(left, right string) bool {
+	left = strings.TrimSpace(left)
+	right = strings.TrimSpace(right)
+	leftNumbers := campusModelVersionNumbers(left)
+	rightNumbers := campusModelVersionNumbers(right)
+
+	common := min(len(leftNumbers), len(rightNumbers))
+	for i := 0; i < common; i++ {
+		if leftNumbers[i] != rightNumbers[i] {
+			return leftNumbers[i] > rightNumbers[i]
+		}
+	}
+	if len(leftNumbers) != len(rightNumbers) {
+		return len(leftNumbers) > len(rightNumbers)
+	}
+
+	return strings.ToLower(left) > strings.ToLower(right)
+}
+
+func campusModelVersionNumbers(modelID string) []int {
+	numbers := make([]int, 0, 4)
+	for i := 0; i < len(modelID); {
+		if modelID[i] < '0' || modelID[i] > '9' {
+			i++
+			continue
+		}
+		start := i
+		for i < len(modelID) && modelID[i] >= '0' && modelID[i] <= '9' {
+			i++
+		}
+		value, err := strconv.Atoi(modelID[start:i])
+		if err != nil {
+			value = int(^uint(0) >> 1)
+		}
+		numbers = append(numbers, value)
+	}
+
+	return numbers
 }
 
 func (svc *CampusCatalogService) channelHealthMap(
@@ -1009,23 +1098,23 @@ func campusFailureCategory(statusCode *int, message string) string {
 }
 
 // PrepareChannelProbe authorizes a project member against the privacy-safe
-// catalog and selects the first non-empty model server-side. The caller never
+// catalog and prepares an ordered server-side fallback chain. The caller never
 // supplies a model, URL, proxy or credential.
 func (svc *CampusCatalogService) PrepareChannelProbe(
 	ctx context.Context,
 	channelID int,
-) (objects.GUID, string, error) {
+) (objects.GUID, []string, error) {
 	currentUser, projectID, err := campusCatalogIdentity(ctx)
 	if err != nil {
-		return objects.GUID{}, "", err
+		return objects.GUID{}, nil, err
 	}
 	if channelID <= 0 {
-		return objects.GUID{}, "", ErrCampusCatalogInvalidInput
+		return objects.GUID{}, nil, ErrCampusCatalogInvalidInput
 	}
 
 	type preparedProbe struct {
-		guid  objects.GUID
-		model string
+		guid   objects.GUID
+		models []string
 	}
 	prepared, err := authz.RunWithSystemBypass(ctx, "campus-public-channel-probe", func(bypassCtx context.Context) (preparedProbe, error) {
 		if _, err := svc.verifyCampusProjectAccess(bypassCtx, currentUser, projectID); err != nil {
@@ -1047,21 +1136,40 @@ func (svc *CampusCatalogService) PrepareChannelProbe(
 			return preparedProbe{}, fmt.Errorf("load channel for public probe: %w", err)
 		}
 
-		modelID := firstCampusProbeModel(ch)
-		if modelID == "" {
+		recentExecutions, err := svc.client.RequestExecution.Query().
+			Where(
+				requestexecution.ChannelIDEQ(ch.ID),
+				requestexecution.StatusEQ(requestexecution.StatusCompleted),
+				requestexecution.ModelIDNEQ(""),
+				requestexecution.HasRequestWith(request.SourceEQ(request.SourceAPI)),
+			).
+			Select(requestexecution.FieldModelID).
+			Order(ent.Desc(requestexecution.FieldCreatedAt), ent.Desc(requestexecution.FieldID)).
+			Limit(50).
+			All(bypassCtx)
+		if err != nil {
+			return preparedProbe{}, fmt.Errorf("query recent successful channel models: %w", err)
+		}
+		recentModels := make([]string, 0, len(recentExecutions))
+		for _, execution := range recentExecutions {
+			recentModels = append(recentModels, execution.ModelID)
+		}
+
+		models := campusProbeModelCandidates(ch, recentModels)
+		if len(models) == 0 {
 			return preparedProbe{}, ErrCampusCatalogInvalidInput
 		}
 
 		return preparedProbe{
-			guid:  objects.GUID{Type: ent.TypeChannel, ID: ch.ID},
-			model: modelID,
+			guid:   objects.GUID{Type: ent.TypeChannel, ID: ch.ID},
+			models: models,
 		}, nil
 	})
 	if err != nil {
-		return objects.GUID{}, "", err
+		return objects.GUID{}, nil, err
 	}
 
-	return prepared.guid, prepared.model, nil
+	return prepared.guid, prepared.models, nil
 }
 
 // GetChannelHealth returns only the narrow health projection after verifying

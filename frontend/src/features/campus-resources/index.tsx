@@ -41,6 +41,7 @@ import { Header } from '@/components/layout/header';
 import { Main } from '@/components/layout/main';
 import {
   type CampusManagedChannel,
+  type CampusChannelProbeResult,
   type CampusDonationBenefits,
   type CampusModelDetail,
   type CampusResourceChannel,
@@ -166,9 +167,29 @@ const channelHealthPresentation = {
   },
 } as const;
 
+function formatProbeLatency(value: number | undefined, locale: string) {
+  if (value === undefined) return '—';
+  return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(value)} s`;
+}
+
+function formatProbeStatus(value: number | null | undefined) {
+  return value === undefined || value === null ? '—' : `HTTP ${value}`;
+}
+
+function getProbeRequestError(error: unknown) {
+  const statusCode =
+    typeof error === 'object' && error !== null && 'status' in error && typeof error.status === 'number' ? error.status : undefined;
+  const message = error instanceof Error ? error.message : '';
+
+  return { statusCode, message };
+}
+
 function ChannelCard({ channel }: { channel: CampusResourceChannel }) {
   const { t, i18n } = useTranslation();
   const probeChannel = useProbeCampusChannel();
+  const [lastProbeResult, setLastProbeResult] = useState<CampusChannelProbeResult>();
+  const [probeRequestError, setProbeRequestError] = useState<{ statusCode?: number; message: string }>();
+  const locale = i18n.language.startsWith('zh') ? 'zh-CN' : 'en-US';
   const providerLabel = t(`channels.providers.${channel.provider}`, {
     defaultValue: t(`channels.types.${channel.provider}`, { defaultValue: channel.provider }),
   });
@@ -184,6 +205,9 @@ function ChannelCard({ channel }: { channel: CampusResourceChannel }) {
     successRatePercent === undefined || channel.health?.recentRequestCount === undefined
       ? undefined
       : Math.round((successRatePercent / 100) * channel.health.recentRequestCount);
+  const finalAttempt = lastProbeResult?.attempts.at(-1);
+  const finalModelID = lastProbeResult?.modelID || finalAttempt?.modelID;
+  const finalStatusCode = lastProbeResult?.statusCode ?? finalAttempt?.statusCode;
 
   const formattedExpiry = useMemo(() => {
     if (!channel.expiresAt) return null;
@@ -210,12 +234,34 @@ function ChannelCard({ channel }: { channel: CampusResourceChannel }) {
   const probe = () => {
     if (!channel.id) return;
 
+    setProbeRequestError(undefined);
     probeChannel.mutate(channel.id, {
-      onSuccess: (result) =>
-        result?.success === false
-          ? toast.error(t('resources.channels.probe.failed'))
-          : toast.success(t('resources.channels.probe.success')),
-      onError: () => toast.error(t('resources.channels.probe.error')),
+      onSuccess: (result) => {
+        setLastProbeResult(result);
+        const description = t('resources.channels.probe.toastDetails', {
+          model: result.modelID || result.attempts.at(-1)?.modelID || t('resources.channels.probe.notReported'),
+          status: formatProbeStatus(result.statusCode ?? result.attempts.at(-1)?.statusCode),
+          latency: formatProbeLatency(result.latency, locale),
+          error: result.error || t('resources.channels.probe.noError'),
+        });
+
+        if (result.success) {
+          toast.success(t('resources.channels.probe.success'), { description });
+        } else {
+          toast.error(t('resources.channels.probe.failed'), { description });
+        }
+      },
+      onError: (error) => {
+        const details = getProbeRequestError(error);
+        setLastProbeResult(undefined);
+        setProbeRequestError(details);
+        toast.error(t('resources.channels.probe.error'), {
+          description: t('resources.channels.probe.requestErrorDetails', {
+            status: formatProbeStatus(details.statusCode),
+            error: details.message || t('resources.channels.probe.notReported'),
+          }),
+        });
+      },
     });
   };
 
@@ -294,7 +340,7 @@ function ChannelCard({ channel }: { channel: CampusResourceChannel }) {
       <CardContent className='flex flex-1 flex-col gap-4 px-5'>
         <p className='text-muted-foreground min-h-10 text-sm leading-5'>{channel.description || t('resources.channels.noDescription')}</p>
 
-        <dl className='grid gap-2 rounded-lg border bg-muted/20 p-3 text-xs' data-testid='campus-channel-health-details'>
+        <dl className='bg-muted/20 grid gap-2 rounded-lg border p-3 text-xs' data-testid='campus-channel-health-details'>
           <div className='flex items-center justify-between gap-3'>
             <dt className='text-muted-foreground'>{t('resources.channels.health.successRate')}</dt>
             <dd className='font-mono font-medium tabular-nums'>
@@ -333,6 +379,94 @@ function ChannelCard({ channel }: { channel: CampusResourceChannel }) {
             </dd>
           </div>
         </dl>
+
+        {(lastProbeResult || probeRequestError) && (
+          <div
+            className={cn(
+              'space-y-3 rounded-lg border p-3 text-xs',
+              lastProbeResult?.success ? 'border-emerald-500/30 bg-emerald-500/[0.06]' : 'border-red-500/30 bg-red-500/[0.05]'
+            )}
+            role='status'
+            aria-live='polite'
+            data-testid='campus-channel-probe-result'
+          >
+            <div className='flex items-center justify-between gap-3'>
+              <span className='font-semibold'>{t('resources.channels.probe.resultTitle')}</span>
+              <Badge variant='outline'>
+                {t(lastProbeResult?.success ? 'resources.channels.probe.resultSuccess' : 'resources.channels.probe.resultFailure')}
+              </Badge>
+            </div>
+
+            {lastProbeResult ? (
+              <>
+                <dl className='grid gap-2 sm:grid-cols-3'>
+                  <div className='min-w-0'>
+                    <dt className='text-muted-foreground'>{t('resources.channels.probe.finalModel')}</dt>
+                    <dd className='mt-0.5 truncate font-mono font-medium' title={finalModelID}>
+                      {finalModelID || t('resources.channels.probe.notReported')}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className='text-muted-foreground'>{t('resources.channels.probe.httpStatus')}</dt>
+                    <dd className='mt-0.5 font-mono font-medium'>{formatProbeStatus(finalStatusCode)}</dd>
+                  </div>
+                  <div>
+                    <dt className='text-muted-foreground'>{t('resources.channels.probe.latency')}</dt>
+                    <dd className='mt-0.5 font-mono font-medium'>{formatProbeLatency(lastProbeResult.latency, locale)}</dd>
+                  </div>
+                </dl>
+
+                {lastProbeResult.error && (
+                  <div>
+                    <div className='text-muted-foreground'>{t('resources.channels.probe.upstreamError')}</div>
+                    <code className='bg-background/70 mt-1 block rounded border p-2 text-[11px] leading-4 break-all whitespace-pre-wrap'>
+                      {lastProbeResult.error}
+                    </code>
+                  </div>
+                )}
+
+                <div className='space-y-2'>
+                  <div className='text-muted-foreground font-medium'>{t('resources.channels.probe.attemptsTitle')}</div>
+                  <ol className='space-y-2'>
+                    {lastProbeResult.attempts.map((attempt, index) => (
+                      <li
+                        key={`${attempt.modelID}-${index}`}
+                        className='bg-background/60 space-y-2 rounded border p-2'
+                        data-testid='campus-channel-probe-attempt'
+                      >
+                        <div className='grid gap-2 sm:grid-cols-[auto_minmax(0,1fr)_auto_auto] sm:items-center'>
+                          <Badge variant={attempt.success ? 'outline' : 'destructive'}>
+                            {t('resources.channels.probe.attemptNumber', { number: index + 1 })}
+                          </Badge>
+                          <code className='min-w-0 truncate font-medium' title={attempt.modelID}>
+                            {attempt.modelID}
+                          </code>
+                          <span className='font-mono'>{formatProbeStatus(attempt.statusCode)}</span>
+                          <span className='font-mono'>{formatProbeLatency(attempt.latency, locale)}</span>
+                        </div>
+                        {attempt.error && (
+                          <code className='block text-[11px] leading-4 break-all whitespace-pre-wrap text-red-700 dark:text-red-400'>
+                            {attempt.error}
+                          </code>
+                        )}
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              </>
+            ) : (
+              <div className='space-y-2'>
+                <div className='flex flex-wrap gap-x-4 gap-y-1'>
+                  <span className='text-muted-foreground'>{t('resources.channels.probe.httpStatus')}</span>
+                  <span className='font-mono font-medium'>{formatProbeStatus(probeRequestError?.statusCode)}</span>
+                </div>
+                <code className='bg-background/70 block rounded border p-2 text-[11px] leading-4 break-all whitespace-pre-wrap'>
+                  {probeRequestError?.message || t('resources.channels.probe.notReported')}
+                </code>
+              </div>
+            )}
+          </div>
+        )}
 
         <dl className='mt-auto grid gap-2 border-t pt-4 text-xs'>
           <div className='flex items-center justify-between gap-3'>
@@ -445,7 +579,7 @@ function UsageAndBenefits({
           resetDescription={t('resources.usage.weekly.reset')}
           locale={locale}
         />
-        <Card className='gap-3 border-primary/25 bg-primary/[0.025] py-4 shadow-none' data-testid='campus-token-wallet'>
+        <Card className='border-primary/25 bg-primary/[0.025] gap-3 py-4 shadow-none' data-testid='campus-token-wallet'>
           <CardHeader className='gap-1 px-4'>
             <div className='flex items-center gap-2'>
               <div className='bg-primary/10 text-primary rounded-lg p-2'>
@@ -455,22 +589,16 @@ function UsageAndBenefits({
             </div>
           </CardHeader>
           <CardContent className='space-y-2 px-4'>
-            <div className='text-xl font-semibold tabular-nums'>
-              {formatTokenCount(usageOverview?.wallet?.balance, locale)}
-            </div>
+            <div className='text-xl font-semibold tabular-nums'>{formatTokenCount(usageOverview?.wallet?.balance, locale)}</div>
             <p className='text-muted-foreground text-xs'>{t('resources.usage.wallet.description')}</p>
             <dl className='grid gap-1 border-t pt-2 text-xs'>
               <div className='flex justify-between gap-3'>
                 <dt className='text-muted-foreground'>{t('resources.usage.wallet.credited')}</dt>
-                <dd className='font-mono tabular-nums'>
-                  {formatTokenCount(usageOverview?.wallet?.lifetimeEarned, locale)}
-                </dd>
+                <dd className='font-mono tabular-nums'>{formatTokenCount(usageOverview?.wallet?.lifetimeEarned, locale)}</dd>
               </div>
               <div className='flex justify-between gap-3'>
                 <dt className='text-muted-foreground'>{t('resources.usage.wallet.spent')}</dt>
-                <dd className='font-mono tabular-nums'>
-                  {formatTokenCount(usageOverview?.wallet?.lifetimeSpent, locale)}
-                </dd>
+                <dd className='font-mono tabular-nums'>{formatTokenCount(usageOverview?.wallet?.lifetimeSpent, locale)}</dd>
               </div>
             </dl>
           </CardContent>
@@ -531,7 +659,7 @@ function GettingStartedCard() {
 
   return (
     <section className='grid gap-4 lg:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]' aria-label={t('resources.gettingStarted.title')}>
-      <Card className='gap-4 border-primary/30 bg-primary/[0.045] py-5 shadow-none' data-testid='campus-resources-getting-started'>
+      <Card className='border-primary/30 bg-primary/[0.045] gap-4 py-5 shadow-none' data-testid='campus-resources-getting-started'>
         <CardHeader className='gap-2 px-5 sm:px-6'>
           <div className='flex items-start gap-3'>
             <div className='bg-primary text-primary-foreground rounded-lg p-2'>
@@ -995,7 +1123,10 @@ export default function CampusResourcesPage() {
 
               <div className='grid gap-4 md:grid-cols-2 xl:grid-cols-3' data-testid='campus-resource-donated-channel-list'>
                 {donatedChannels.map((channel, index) => (
-                  <ChannelCard key={`${channel.name}-${channel.provider}-${channel.contributor}-${index}`} channel={channel} />
+                  <ChannelCard
+                    key={channel.id ?? `${channel.name}-${channel.provider}-${channel.contributor}-${index}`}
+                    channel={channel}
+                  />
                 ))}
               </div>
             </section>
@@ -1101,7 +1232,10 @@ export default function CampusResourcesPage() {
             ) : (
               <div className='grid gap-4 md:grid-cols-2 xl:grid-cols-3' data-testid='campus-resource-channel-list'>
                 {projectChannels.map((channel, index) => (
-                  <ChannelCard key={`${channel.name}-${channel.provider}-${channel.contributor}-${index}`} channel={channel} />
+                  <ChannelCard
+                    key={channel.id ?? `${channel.name}-${channel.provider}-${channel.contributor}-${index}`}
+                    channel={channel}
+                  />
                 ))}
               </div>
             )}

@@ -498,11 +498,7 @@ export function useCampusFriendLinks(options?: { enabled?: boolean }) {
     queryFn: async () => {
       try {
         const headers = selectedProjectId ? { 'X-Project-ID': selectedProjectId } : undefined;
-        const data = await graphqlRequest<{ campusFriendLinks: CampusFriendLink[] }>(
-          CAMPUS_FRIEND_LINKS_QUERY,
-          undefined,
-          headers
-        );
+        const data = await graphqlRequest<{ campusFriendLinks: CampusFriendLink[] }>(CAMPUS_FRIEND_LINKS_QUERY, undefined, headers);
         return data.campusFriendLinks;
       } catch (error) {
         handleError(error, i18n.t('common.errors.internalServerError'));
@@ -813,10 +809,9 @@ export function useExportCacheDiagnostics() {
 
   return useMutation({
     mutationFn: async () => {
-      const data = await graphqlRequest<{ getCacheDiagnostics: GetCacheDiagnosticsPayload }>(
-        GET_CACHE_DIAGNOSTICS_QUERY,
-        { input: { targets: ['CHANNEL_CACHE'] } }
-      );
+      const data = await graphqlRequest<{ getCacheDiagnostics: GetCacheDiagnosticsPayload }>(GET_CACHE_DIAGNOSTICS_QUERY, {
+        input: { targets: ['CHANNEL_CACHE'] },
+      });
       return data.getCacheDiagnostics;
     },
     onSuccess: (data) => {
@@ -1588,7 +1583,6 @@ export function useDeleteProxyPreset() {
   });
 }
 
-
 // User-Agent Pass-Through Settings
 const USER_AGENT_PASS_THROUGH_SETTINGS_QUERY = `
   query UserAgentPassThroughSettings {
@@ -1619,7 +1613,9 @@ export function useUserAgentPassThroughSettings() {
     queryKey: ['userAgentPassThroughSettings'],
     queryFn: async () => {
       try {
-        const data = await graphqlRequest<{ userAgentPassThroughSettings: UserAgentPassThroughSettings }>(USER_AGENT_PASS_THROUGH_SETTINGS_QUERY);
+        const data = await graphqlRequest<{ userAgentPassThroughSettings: UserAgentPassThroughSettings }>(
+          USER_AGENT_PASS_THROUGH_SETTINGS_QUERY
+        );
         return data.userAgentPassThroughSettings;
       } catch (error) {
         handleError(error, i18n.t('common.errors.internalServerError'));
@@ -1634,7 +1630,9 @@ export function useUpdateUserAgentPassThroughSettings() {
 
   return useMutation({
     mutationFn: async (input: UpdateUserAgentPassThroughSettingsInput) => {
-      const data = await graphqlRequest<{ updateUserAgentPassThroughSettings: boolean }>(UPDATE_USER_AGENT_PASS_THROUGH_SETTINGS_MUTATION, { input });
+      const data = await graphqlRequest<{ updateUserAgentPassThroughSettings: boolean }>(UPDATE_USER_AGENT_PASS_THROUGH_SETTINGS_MUTATION, {
+        input,
+      });
       return data.updateUserAgentPassThroughSettings;
     },
     onSuccess: () => {
@@ -1732,11 +1730,12 @@ export interface UpdateQuotaEnforcementSettingsInput {
   mode?: QuotaEnforcementMode;
 }
 
-export function useQuotaEnforcementSettings() {
+export function useQuotaEnforcementSettings(enabled = true) {
   const { handleError } = useErrorHandler();
 
   return useQuery({
     queryKey: ['quotaEnforcementSettings'],
+    enabled,
     queryFn: async () => {
       try {
         const data = await graphqlRequest<{ quotaEnforcementSettings: QuotaEnforcementSettings }>(QUOTA_ENFORCEMENT_SETTINGS_QUERY);

@@ -236,6 +236,11 @@ func (r *mutationResolver) UpdateSecuritySettings(ctx context.Context, input Upd
 
 // CheckProviderQuotas is the resolver for the checkProviderQuotas field.
 func (r *mutationResolver) CheckProviderQuotas(ctx context.Context) (bool, error) {
+	currentUser, ok := contexts.GetUser(ctx)
+	if !ok || currentUser == nil || !currentUser.IsOwner {
+		return false, ErrNotOwner
+	}
+
 	if r.providerQuotaService == nil {
 		return false, fmt.Errorf("provider quota service is not available")
 	}
@@ -247,8 +252,9 @@ func (r *mutationResolver) CheckProviderQuotas(ctx context.Context) (bool, error
 
 // ResetChannelQuotaNow is the resolver for the resetChannelQuotaNow field.
 func (r *mutationResolver) ResetChannelQuotaNow(ctx context.Context, channelID objects.GUID) (bool, error) {
-	if !scopes.UserHasScope(ctx, scopes.ScopeWriteChannels) {
-		return false, fmt.Errorf("permission denied: requires write:channels scope")
+	currentUser, ok := contexts.GetUser(ctx)
+	if !ok || currentUser == nil || !currentUser.IsOwner {
+		return false, ErrNotOwner
 	}
 
 	if r.providerQuotaService == nil {

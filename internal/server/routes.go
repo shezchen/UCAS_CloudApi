@@ -115,6 +115,11 @@ func SetupRoutes(server *Server, handlers Handlers, client *ent.Client, services
 			handlers.Graphql.Graphql.ServeHTTP(c.Writer, c.Request)
 		})
 		adminGroup.GET(
+			"/provider-quotas",
+			middleware.WithTimeout(server.Config.RequestTimeout),
+			handlers.System.GetProviderQuotaView,
+		)
+		adminGroup.GET(
 			"/campus/resources",
 			middleware.WithTimeout(server.Config.RequestTimeout),
 			handlers.CampusCatalog.GetResources,

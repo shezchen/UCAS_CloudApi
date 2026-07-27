@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Loader2, RefreshCw, Zap, Battery, BatteryLow, BatteryMedium, BatteryFull, BatteryWarning } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import { usePermissions } from '@/hooks/usePermissions';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -249,7 +250,15 @@ function formatTokenCount(n: number): string {
   return `${n}`;
 }
 
-function QuotaRow({ channel, enforcementMode }: { channel: ProviderQuotaChannel; enforcementMode?: QuotaEnforcementMode | null }) {
+function QuotaRow({
+  channel,
+  enforcementMode,
+  canManage,
+}: {
+  channel: ProviderQuotaChannel;
+  enforcementMode?: QuotaEnforcementMode | null;
+  canManage: boolean;
+}) {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
   const [isResetting, setIsResetting] = useState(false);
@@ -747,7 +756,7 @@ function QuotaRow({ channel, enforcementMode }: { channel: ProviderQuotaChannel;
                   </div>
                 )}
 
-                {(status === 'exhausted' || status === 'warning') && (
+                {canManage && (status === 'exhausted' || status === 'warning') && (
                   <div className='border-border/60 flex items-center justify-end gap-2 border-t border-dashed pt-3'>
                     <Button size='sm' variant='outline' className='h-7 text-xs' disabled={isResetting} onClick={handleResetCodexQuota}>
                       {isResetting ? <Loader2 className='mr-1.5 h-3.5 w-3.5 animate-spin' /> : <Zap className='mr-1.5 h-3.5 w-3.5' />}
@@ -832,7 +841,10 @@ function QuotaRow({ channel, enforcementMode }: { channel: ProviderQuotaChannel;
               );
             } else if (qd.model_scope === 'direct_only') {
               items.push(
-                <div key='balance-unavailable' className='border-border/60 flex items-center justify-between border-t border-dashed pt-3 text-xs'>
+                <div
+                  key='balance-unavailable'
+                  className='border-border/60 flex items-center justify-between border-t border-dashed pt-3 text-xs'
+                >
                   <span className='text-muted-foreground font-medium'>{t('quota.label.cline_balance')}</span>
                   <span className='text-muted-foreground'>{t('quota.label.unavailable')}</span>
                 </div>
@@ -1347,7 +1359,7 @@ function QuotaBadgeTrigger({ channels, isLoading, isError }: { channels: Provide
     return <BatteryWarning className='h-5 w-5 text-red-500 transition-colors' />;
   }
 
-  const highestUsed = Math.max(...channels.map(getChannelPercentage));
+  const highestUsed = channels.length > 0 ? Math.max(...channels.map(getChannelPercentage)) : 0;
 
   const hasExhausted = channels.some((c) => c.quotaStatus.status === 'exhausted');
   const hasWarning = channels.some((c) => c.quotaStatus.status === 'warning');
@@ -1366,11 +1378,10 @@ function QuotaBadgeTrigger({ channels, isLoading, isError }: { channels: Provide
 
 export function QuotaBadges({ isRefreshing, onRefresh }: { isRefreshing: boolean; onRefresh: () => void }) {
   const { t } = useTranslation();
+  const { isOwner } = usePermissions();
   const { channels, isLoading, isError, error } = useProviderQuotaStatuses();
-  const { data: enforcementSettings } = useQuotaEnforcementSettings();
+  const { data: enforcementSettings } = useQuotaEnforcementSettings(isOwner);
   const enforcementMode = enforcementSettings?.enabled ? enforcementSettings.mode : null;
-
-  if (!isLoading && !isError && channels.length === 0) return null;
 
   const groupedChannels = channels.reduce((acc: ProviderQuotaChannel[], channel: ProviderQuotaChannel) => {
     if (channel.type === 'nanogpt_responses') {
@@ -1412,9 +1423,14 @@ export function QuotaBadges({ isRefreshing, onRefresh }: { isRefreshing: boolean
     if (isError) {
       return (
         <div className='rounded bg-red-500/10 p-2 text-xs break-words text-red-500'>
-          <span className='font-medium'>{t('system.providerQuota.error')}:</span> {error instanceof Error ? error.message : t('quota.label.unavailable')}
+          <span className='font-medium'>{t('system.providerQuota.error')}:</span>{' '}
+          {error instanceof Error ? error.message : t('quota.label.unavailable')}
         </div>
       );
+    }
+
+    if (groupedChannels.length === 0) {
+      return <div className='text-muted-foreground px-1 py-3 text-sm'>{t('system.providerQuota.empty')}</div>;
     }
 
     return (
@@ -1422,7 +1438,7 @@ export function QuotaBadges({ isRefreshing, onRefresh }: { isRefreshing: boolean
         className={`max-h-[60vh] overflow-y-auto pr-1 pl-1 ${groupedChannels.length > 4 ? 'grid grid-cols-1 gap-x-4 sm:grid-cols-2' : ''}`}
       >
         {groupedChannels.map((channel: ProviderQuotaChannel) => (
-          <QuotaRow key={channel.id} channel={channel} enforcementMode={enforcementMode} />
+          <QuotaRow key={channel.id} channel={channel} enforcementMode={enforcementMode} canManage={isOwner} />
         ))}
       </div>
     );
@@ -1431,22 +1447,32 @@ export function QuotaBadges({ isRefreshing, onRefresh }: { isRefreshing: boolean
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <button type='button' className='hover:bg-muted relative rounded-md p-2 transition-colors'>
+        <button
+          type='button'
+          className='hover:bg-muted relative rounded-md p-2 transition-colors'
+          aria-label={t('system.providerQuota.title')}
+          title={t('system.providerQuota.title')}
+        >
           <QuotaBadgeTrigger channels={groupedChannels} isLoading={isLoading} isError={isError} />
         </button>
       </PopoverTrigger>
-      <PopoverContent className={!isLoading && !isError && groupedChannels.length > 4 ? 'w-full sm:w-[640px]' : 'w-full sm:w-80'} align='end'>
+      <PopoverContent
+        className={!isLoading && !isError && groupedChannels.length > 4 ? 'w-full sm:w-[640px]' : 'w-full sm:w-80'}
+        align='end'
+      >
         <div className='space-y-1'>
           <div className='mb-2 flex items-center justify-between'>
             <div className='text-muted-foreground text-xs font-medium tracking-wide uppercase'>{t('system.providerQuota.title')}</div>
-            <button
-              onClick={onRefresh}
-              disabled={isRefreshing || isLoading}
-              className='text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50'
-              aria-label={t('system.providerQuota.refresh.label')}
-            >
-              {isRefreshing ? <Loader2 className='h-4 w-4 animate-spin' /> : <RefreshCw className='h-4 w-4' />}
-            </button>
+            {isOwner && (
+              <button
+                onClick={onRefresh}
+                disabled={isRefreshing || isLoading}
+                className='text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50'
+                aria-label={t('system.providerQuota.refresh.label')}
+              >
+                {isRefreshing ? <Loader2 className='h-4 w-4 animate-spin' /> : <RefreshCw className='h-4 w-4' />}
+              </button>
+            )}
           </div>
           {renderContent()}
         </div>

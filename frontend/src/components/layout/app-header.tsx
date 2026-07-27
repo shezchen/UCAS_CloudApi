@@ -1,18 +1,18 @@
 import { useState, useCallback } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { IconSettings } from '@tabler/icons-react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { SidebarTrigger, useSidebar } from '@/components/ui/sidebar';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { SidebarTrigger, useSidebar } from '@/components/ui/sidebar';
 import { LanguageSwitch } from '@/components/language-switch';
-import { ThemeSwitch } from '@/components/theme-switch';
-import { QuotaBadges } from '@/components/quota-badges';
 import { PermissionGuard } from '@/components/permission-guard';
+import { QuotaBadges } from '@/components/quota-badges';
+import { ThemeSwitch } from '@/components/theme-switch';
 import { checkProviderQuotas } from '@/features/system/data/quotas';
 import { useBrandSettings } from '@/features/system/data/system';
 import { ProjectSwitcher } from './project-switcher';
-import { toast } from 'sonner';
 
 export function AppHeader() {
   const { data: brandSettings } = useBrandSettings();
@@ -22,7 +22,7 @@ export function AppHeader() {
   const { isMobile } = useSidebar();
   const displayName = brandSettings?.brandName || 'AxonHub';
 
-  const refreshMutation = useMutation({
+  const { mutate: refreshQuotas } = useMutation({
     mutationFn: async () => {
       return checkProviderQuotas();
     },
@@ -37,10 +37,10 @@ export function AppHeader() {
 
   const handleRefresh = useCallback(() => {
     setIsRefreshing(true);
-    refreshMutation.mutate(undefined, {
+    refreshQuotas(undefined, {
       onSettled: () => setIsRefreshing(false),
     });
-  }, [refreshMutation]);
+  }, [refreshQuotas]);
 
   return (
     <header className='bg-background/95 supports-[backdrop-filter]:bg-background/60 fixed top-0 z-50 w-full backdrop-blur'>
@@ -80,10 +80,8 @@ export function AppHeader() {
 
         {/* 右侧控件 */}
         <div className='flex items-center gap-2 pr-6'>
-          {/* Quota Badges - only visible to users with channel read permission */}
-          <PermissionGuard requiredSystemScope='read_channels'>
-            <QuotaBadges onRefresh={handleRefresh} isRefreshing={isRefreshing} />
-          </PermissionGuard>
+          {/* Read-only provider quota telemetry is visible to every authenticated user. */}
+          <QuotaBadges onRefresh={handleRefresh} isRefreshing={isRefreshing} />
 
           {/* Desktop-only controls - hidden on mobile */}
           {!isMobile && (

@@ -322,6 +322,7 @@
   "system.providerQuota.title": "提供商配额",
   "system.providerQuota.loading": "正在加载配额状态...",
   "system.providerQuota.error": "加载配额状态失败",
+  "system.providerQuota.empty": "暂时没有可展示的提供商配额。",
   "system.providerQuota.refresh.success": "配额状态已刷新",
   "system.providerQuota.refresh.failure": "刷新配额状态失败",
   "quota.label.primary_window": "主要窗口",

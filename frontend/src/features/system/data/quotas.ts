@@ -1,5 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { graphqlRequest } from '@/gql/graphql';
+import { getTokenFromStorage } from '@/stores/authStore';
+import { useSelectedProjectId } from '@/stores/projectStore';
 
 const CHECK_PROVIDER_QUOTAS_QUERY = `
   mutation CheckProviderQuotas {
@@ -10,34 +12,6 @@ const CHECK_PROVIDER_QUOTAS_QUERY = `
 const RESET_CHANNEL_QUOTA_NOW_MUTATION = `
   mutation ResetChannelQuotaNow($channelID: ID!) {
     resetChannelQuotaNow(channelID: $channelID)
-  }
-`;
-
-const PROVIDER_QUOTA_STATUSES_QUERY = `
-  query ProviderQuotaStatuses($input: QueryChannelInput!) {
-    queryChannels(input: $input) {
-      edges {
-        node {
-          id
-          name
-          type
-          providerQuotaStatus {
-            status
-            nextResetAt
-            ready
-            quotaData
-            providerType
-          }
-          settings {
-            providerQuota {
-              opencodeGo {
-                workspaceId
-              }
-            }
-          }
-        }
-      }
-    }
   }
 `;
 
@@ -385,21 +359,10 @@ type QueryChannelNode = {
   name: string;
   type: string;
   providerQuotaStatus: ProviderQuotaStatusNode | null;
-  settings?: {
-    providerQuota?: {
-      opencodeGo?: {
-        workspaceId?: string | null;
-      } | null;
-    } | null;
-  } | null;
 };
 
-type QueryChannelsResponse = {
-  queryChannels: {
-    edges: Array<{
-      node: QueryChannelNode | null;
-    } | null>;
-  };
+type ProviderQuotaViewResponse = {
+  channels: QueryChannelNode[];
 };
 
 type QueryChannelNodeWithQuota = QueryChannelNode & {
@@ -470,7 +433,7 @@ function parseChannelNode(node: QueryChannelNodeWithQuota): ProviderQuotaChannel
     return {
       ...base,
       type: node.type as 'opencode_go' | 'opencode_go_anthropic',
-      workspaceId: node.settings?.providerQuota?.opencodeGo?.workspaceId ?? null,
+      workspaceId: null,
       quotaStatus: { ...base.quotaStatus, quotaData: node.providerQuotaStatus.quotaData as ProviderOpenCodeGoQuotaData },
     };
   }
@@ -524,31 +487,28 @@ function parseChannelNode(node: QueryChannelNodeWithQuota): ProviderQuotaChannel
 }
 
 export function useProviderQuotaStatuses() {
+  const selectedProjectId = useSelectedProjectId();
   const query = useQuery({
-    queryKey: ['provider-quotas'],
+    queryKey: ['provider-quotas', selectedProjectId],
     queryFn: async () => {
-      const input = {
-        where: {
-          statusIn: ['enabled'],
+      const token = getTokenFromStorage();
+      const response = await fetch('/admin/provider-quotas', {
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...(selectedProjectId ? { 'X-Project-ID': selectedProjectId } : {}),
         },
-      };
-      return graphqlRequest<QueryChannelsResponse>(PROVIDER_QUOTA_STATUSES_QUERY, { input });
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to load provider quotas (${response.status})`);
+      }
+      return (await response.json()) as ProviderQuotaViewResponse;
     },
     refetchInterval: 60000,
     refetchIntervalInBackground: true,
+    enabled: !!selectedProjectId,
   });
 
-  const channels = (query.data?.queryChannels?.edges ?? [])
-    .map((edge) => edge?.node ?? null)
-    .filter(hasProviderQuotaStatus)
-    .filter((c) => {
-      // Skip channels that have no credentials configured, since they cannot be
-      // checked and only add noise to the quota popover. Other errors are still
-      // shown so admins can spot credential/permission issues.
-      const quotaData = c.providerQuotaStatus.quotaData as { error?: string } | undefined;
-      return quotaData?.error !== 'channel has no credentials';
-    })
-    .map(parseChannelNode);
+  const channels = (query.data?.channels ?? []).filter(hasProviderQuotaStatus).map(parseChannelNode);
 
   return {
     channels,

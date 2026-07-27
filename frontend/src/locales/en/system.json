@@ -322,6 +322,7 @@
   "system.providerQuota.title": "Provider Quotas",
   "system.providerQuota.loading": "Loading quota status...",
   "system.providerQuota.error": "Failed to load quota status",
+  "system.providerQuota.empty": "No provider quota data is available yet.",
   "system.providerQuota.refresh.success": "Quota status refreshed",
   "system.providerQuota.refresh.failure": "Failed to refresh quota status",
   "quota.label.primary_window": "Primary window",

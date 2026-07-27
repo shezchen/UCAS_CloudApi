@@ -1,8 +1,10 @@
 import { useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
+import { z } from 'zod';
 import { graphqlRequest } from '@/gql/graphql';
 
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import { apiRequest } from '@/lib/api-client';
 import { useSelectedProjectId } from '@/stores/projectStore';
 import { useErrorHandler } from '@/hooks/use-error-handler';
 import { useRequestPermissions } from '../../../hooks/useRequestPermissions';
@@ -21,6 +23,41 @@ import type {
 import { apiKeyConnectionSchema, apiKeyProfileQuotaUsageSchema, apiKeyProfileTemplateSchema, apiKeySchema, apiKeyTokenUsageStatsSchema } from './schema';
 
 const NOAUTH_API_KEY_TYPE = 'noauth';
+
+const campusApiActivityKeySchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  suffix: z.string().optional().default(''),
+  inputTokens: z.number().int().nonnegative().optional().default(0),
+  cachedReadTokens: z.number().int().nonnegative().optional().default(0),
+  outputTokens: z.number().int().nonnegative().optional().default(0),
+  effectiveTokens: z.number().int().nonnegative().optional().default(0),
+  successCount: z.number().int().nonnegative().optional().default(0),
+  errorCount: z.number().int().nonnegative().optional().default(0),
+  lastStatus: z.string().optional(),
+});
+
+const campusApiActivityEventSchema = z.object({
+  requestId: z.string(),
+  apiKeyId: z.string(),
+  apiKeyName: z.string(),
+  apiKeySuffix: z.string().optional().default(''),
+  model: z.string().optional().default(''),
+  status: z.string(),
+  statusCode: z.number().int().optional(),
+  errorCategory: z.string().optional(),
+  errorMessage: z.string().optional(),
+  latencyMs: z.number().nonnegative().optional(),
+  createdAt: z.string(),
+});
+
+const campusApiActivitySchema = z.object({
+  windowStartedAt: z.string().optional(),
+  apiKeys: z.array(campusApiActivityKeySchema).optional().default([]),
+  events: z.array(campusApiActivityEventSchema).optional().default([]),
+});
+
+export type CampusApiActivity = z.infer<typeof campusApiActivitySchema>;
 
 // Dynamic GraphQL query builders
 function buildApiKeysQuery(permissions: { canViewUsers: boolean }) {
@@ -522,6 +559,31 @@ export function useApiKeyTokenUsageStats(
     enabled: !!selectedProjectId && (options?.enabled ?? true),
     placeholderData: keepPreviousData,
     staleTime: 30000, // Consider data fresh for 30 seconds
+  });
+}
+
+export function useCampusApiActivity(apiKeyId?: string, options?: { enabled?: boolean }) {
+  const selectedProjectId = useSelectedProjectId();
+
+  return useQuery({
+    queryKey: ['campusApiActivity', selectedProjectId, apiKeyId ?? 'all'],
+    queryFn: async () => {
+      if (!selectedProjectId) {
+        throw new Error('A project must be selected before loading API activity.');
+      }
+
+      const query = apiKeyId ? `?apiKeyID=${encodeURIComponent(apiKeyId)}` : '';
+      const data = await apiRequest<unknown>(`/admin/campus/api-activity${query}`, {
+        requireAuth: true,
+        headers: { 'X-Project-ID': selectedProjectId },
+      });
+
+      return campusApiActivitySchema.parse(data);
+    },
+    enabled: !!selectedProjectId && (options?.enabled ?? true),
+    refetchInterval: 30_000,
+    placeholderData: keepPreviousData,
+    retry: false,
   });
 }
 

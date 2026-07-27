@@ -7,6 +7,7 @@ import { type DateTimeRangeValue } from '@/utils/date-range';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Header } from '@/components/layout/header';
 import { Main } from '@/components/layout/main';
+import { ApiKeyActivityPanel } from './components/api-key-activity-panel';
 import { createColumns } from './components/apikeys-columns';
 import { ApiKeysDialogs } from './components/apikeys-dialogs';
 import { ApiKeysPrimaryButtons } from './components/apikeys-primary-buttons';
@@ -124,7 +125,8 @@ function ApiKeysContent() {
   );
 
   return (
-    <div className='flex min-h-0 flex-1 flex-col overflow-hidden'>
+    <div className='flex min-h-0 flex-1 flex-col overflow-hidden' data-testid='api-keys-content'>
+      <ApiKeyActivityPanel />
       <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as ApiKeyTabKey)} className='w-full'>
         <TabsList className='shadow-soft border-border bg-background grid w-full grid-cols-4 rounded-2xl border'>
           <TabsTrigger value='all' data-value='all'>

@@ -2,17 +2,26 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import {
   BookOpenCheck,
+  CalendarDays,
   Check,
+  CircleAlert,
+  CircleCheckBig,
+  CircleHelp,
+  CircleX,
   Copy,
+  Gauge,
   HeartHandshake,
   KeyRound,
   Layers3,
   Loader2,
+  Play,
   RadioTower,
+  RefreshCw,
   Search,
   Settings2,
   ShieldCheck,
   UserRound,
+  WalletCards,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
@@ -32,15 +41,20 @@ import { Header } from '@/components/layout/header';
 import { Main } from '@/components/layout/main';
 import {
   type CampusManagedChannel,
+  type CampusDonationBenefits,
   type CampusModelDetail,
   type CampusResourceChannel,
+  type CampusUsageOverview,
   useCampusResources,
   useChannelModelCapabilities,
+  useProbeCampusChannel,
   useUpdateChannelModelCapability,
 } from './data/resources';
 
 const ALL_API_KEYS = 'all';
 const MAX_CAPABILITY_TOKENS = 10_000_000;
+const DEFAULT_DAILY_EFFECTIVE_TOKEN_LIMIT = 16_000_000;
+const DEFAULT_WEEKLY_EFFECTIVE_TOKEN_LIMIT = 64_000_000;
 
 function ModelCapabilityBadge({ label, enabled }: { label: string; enabled: boolean }) {
   const { t } = useTranslation();
@@ -129,11 +143,47 @@ function SummaryCard({ icon: Icon, label, value }: { icon: typeof Layers3; label
   );
 }
 
+const channelHealthPresentation = {
+  healthy: {
+    icon: CircleCheckBig,
+    className: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
+  },
+  degraded: {
+    icon: CircleAlert,
+    className: 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400',
+  },
+  unhealthy: {
+    icon: CircleX,
+    className: 'border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-400',
+  },
+  recovering: {
+    icon: RefreshCw,
+    className: 'border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-400',
+  },
+  unknown: {
+    icon: CircleHelp,
+    className: 'text-muted-foreground border-border bg-muted/40',
+  },
+} as const;
+
 function ChannelCard({ channel }: { channel: CampusResourceChannel }) {
   const { t, i18n } = useTranslation();
+  const probeChannel = useProbeCampusChannel();
   const providerLabel = t(`channels.providers.${channel.provider}`, {
     defaultValue: t(`channels.types.${channel.provider}`, { defaultValue: channel.provider }),
   });
+  const healthState = channel.health?.state ?? 'unknown';
+  const healthPresentation = channelHealthPresentation[healthState];
+  const HealthIcon = healthPresentation.icon;
+  const recentSuccessRate = channel.health?.recentSuccessRate;
+  const successRatePercent =
+    recentSuccessRate === undefined || channel.health?.recentRequestCount === 0
+      ? undefined
+      : Math.min(100, Math.max(0, recentSuccessRate <= 1 ? recentSuccessRate * 100 : recentSuccessRate));
+  const recentSuccessCount =
+    successRatePercent === undefined || channel.health?.recentRequestCount === undefined
+      ? undefined
+      : Math.round((successRatePercent / 100) * channel.health.recentRequestCount);
 
   const formattedExpiry = useMemo(() => {
     if (!channel.expiresAt) return null;
@@ -145,6 +195,29 @@ function ChannelCard({ channel }: { channel: CampusResourceChannel }) {
       timeStyle: 'short',
     }).format(value);
   }, [channel.expiresAt, i18n.language]);
+
+  const formattedLastChecked = useMemo(() => {
+    if (!channel.health?.lastCheckedAt) return null;
+    const value = new Date(channel.health.lastCheckedAt);
+    if (Number.isNaN(value.getTime())) return channel.health.lastCheckedAt;
+
+    return new Intl.DateTimeFormat(i18n.language.startsWith('zh') ? 'zh-CN' : 'en-US', {
+      dateStyle: 'short',
+      timeStyle: 'short',
+    }).format(value);
+  }, [channel.health?.lastCheckedAt, i18n.language]);
+
+  const probe = () => {
+    if (!channel.id) return;
+
+    probeChannel.mutate(channel.id, {
+      onSuccess: (result) =>
+        result?.success === false
+          ? toast.error(t('resources.channels.probe.failed'))
+          : toast.success(t('resources.channels.probe.success')),
+      onError: () => toast.error(t('resources.channels.probe.error')),
+    });
+  };
 
   return (
     <Card
@@ -169,26 +242,97 @@ function ChannelCard({ channel }: { channel: CampusResourceChannel }) {
               <span className='truncate'>{providerLabel}</span>
             </CardDescription>
           </div>
-          <Badge
-            variant='outline'
-            className={cn(
-              'shrink-0',
-              channel.status === 'enabled'
-                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
-                : 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400'
-            )}
-          >
-            {t(`resources.channels.status.${channel.status}`)}
-          </Badge>
+          <div className='flex shrink-0 flex-col items-end gap-2'>
+            <Badge
+              variant='outline'
+              className={cn(
+                channel.status === 'enabled'
+                  ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+                  : 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400'
+              )}
+            >
+              {t(`resources.channels.status.${channel.status}`)}
+            </Badge>
+            <Badge
+              variant='outline'
+              className={cn('gap-1', healthPresentation.className)}
+              data-testid='campus-channel-health-state'
+              data-health-state={healthState}
+            >
+              <HealthIcon className={cn('size-3', healthState === 'recovering' && 'animate-spin')} aria-hidden='true' />
+              {t(`resources.channels.health.state.${healthState}`)}
+            </Badge>
+          </div>
         </div>
 
-        <div>
+        <div className='flex items-center justify-between gap-3'>
           <Badge variant='secondary'>{t(`resources.channels.source.${channel.source}`)}</Badge>
+          {channel.canProbe && channel.id && (
+            <Button
+              type='button'
+              variant='outline'
+              size='sm'
+              className='h-8 gap-1.5'
+              onClick={probe}
+              disabled={probeChannel.isPending}
+              aria-label={t('resources.channels.probe.action', { channel: channel.name })}
+              title={t('resources.channels.probe.hint')}
+              data-testid='campus-channel-probe'
+              data-channel-id={channel.id}
+            >
+              {probeChannel.isPending ? (
+                <Loader2 className='size-3.5 animate-spin' aria-hidden='true' />
+              ) : (
+                <Play className='size-3.5 fill-current' aria-hidden='true' />
+              )}
+              {t(probeChannel.isPending ? 'resources.channels.probe.testing' : 'resources.channels.probe.test')}
+            </Button>
+          )}
         </div>
       </CardHeader>
 
       <CardContent className='flex flex-1 flex-col gap-4 px-5'>
         <p className='text-muted-foreground min-h-10 text-sm leading-5'>{channel.description || t('resources.channels.noDescription')}</p>
+
+        <dl className='grid gap-2 rounded-lg border bg-muted/20 p-3 text-xs' data-testid='campus-channel-health-details'>
+          <div className='flex items-center justify-between gap-3'>
+            <dt className='text-muted-foreground'>{t('resources.channels.health.successRate')}</dt>
+            <dd className='font-mono font-medium tabular-nums'>
+              {successRatePercent === undefined ? t('resources.channels.health.unknown') : `${successRatePercent.toFixed(1)}%`}
+            </dd>
+          </div>
+          <div className='flex items-center justify-between gap-3'>
+            <dt className='text-muted-foreground'>{t('resources.channels.health.successCount')}</dt>
+            <dd className='font-mono font-medium tabular-nums'>
+              {recentSuccessCount === undefined || channel.health?.recentRequestCount === undefined
+                ? t('resources.channels.health.unknown')
+                : t('resources.channels.health.countValue', {
+                    success: recentSuccessCount,
+                    total: channel.health.recentRequestCount,
+                  })}
+            </dd>
+          </div>
+          <div className='flex items-center justify-between gap-3'>
+            <dt className='text-muted-foreground'>{t('resources.channels.health.lastChecked')}</dt>
+            <dd className='text-right font-medium'>
+              {channel.health?.lastCheckedAt ? (
+                <time dateTime={channel.health.lastCheckedAt}>{formattedLastChecked}</time>
+              ) : (
+                t('resources.channels.health.neverChecked')
+              )}
+            </dd>
+          </div>
+          <div className='flex items-center justify-between gap-3'>
+            <dt className='text-muted-foreground'>{t('resources.channels.health.failureCategory')}</dt>
+            <dd className='max-w-[65%] truncate text-right font-medium' title={channel.health?.lastFailureCategory}>
+              {channel.health?.lastFailureCategory
+                ? t(`resources.channels.health.failure.${channel.health.lastFailureCategory}`, {
+                    defaultValue: channel.health.lastFailureCategory,
+                  })
+                : t('resources.channels.health.none')}
+            </dd>
+          </div>
+        </dl>
 
         <dl className='mt-auto grid gap-2 border-t pt-4 text-xs'>
           <div className='flex items-center justify-between gap-3'>
@@ -204,6 +348,175 @@ function ChannelCard({ channel }: { channel: CampusResourceChannel }) {
         </dl>
       </CardContent>
     </Card>
+  );
+}
+
+function formatTokenCount(value: number | undefined, locale: string) {
+  if (value === undefined) return '—';
+  return new Intl.NumberFormat(locale, { notation: 'compact', maximumFractionDigits: 2 }).format(value);
+}
+
+function EffectiveTokenQuotaCard({
+  icon: Icon,
+  title,
+  period,
+  fallbackLimit,
+  resetDescription,
+  locale,
+}: {
+  icon: typeof CalendarDays;
+  title: string;
+  period: CampusUsageOverview['daily'];
+  fallbackLimit: number;
+  resetDescription: string;
+  locale: string;
+}) {
+  const { t } = useTranslation();
+  const limit = period?.limit ?? fallbackLimit;
+  const used = period?.used;
+  const remaining = period?.remaining ?? (used === undefined ? undefined : Math.max(limit - used, 0));
+  const percent = used === undefined || limit === 0 ? undefined : Math.min(100, (used / limit) * 100);
+
+  return (
+    <Card className='gap-3 py-4 shadow-none' data-testid='campus-effective-token-quota'>
+      <CardHeader className='gap-1 px-4'>
+        <div className='flex items-center gap-2'>
+          <div className='bg-primary/10 text-primary rounded-lg p-2'>
+            <Icon className='size-4' aria-hidden='true' />
+          </div>
+          <CardTitle className='text-sm'>{title}</CardTitle>
+        </div>
+      </CardHeader>
+      <CardContent className='space-y-3 px-4'>
+        <div>
+          <div className='text-xl font-semibold tabular-nums'>
+            {formatTokenCount(used, locale)} / {formatTokenCount(limit, locale)}
+          </div>
+          <p className='text-muted-foreground mt-1 text-xs'>
+            {t('resources.usage.remaining', { value: formatTokenCount(remaining, locale) })}
+          </p>
+        </div>
+        <div className='bg-muted h-2 overflow-hidden rounded-full' aria-hidden='true'>
+          <div className='bg-primary h-full rounded-full transition-[width]' style={{ width: `${percent ?? 0}%` }} />
+        </div>
+        <p className='text-muted-foreground text-xs'>{resetDescription}</p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function UsageAndBenefits({
+  usageOverview,
+  donationBenefits,
+}: {
+  usageOverview?: CampusUsageOverview;
+  donationBenefits?: CampusDonationBenefits;
+}) {
+  const { t, i18n } = useTranslation();
+  const locale = i18n.language.startsWith('zh') ? 'zh-CN' : 'en-US';
+  const benefits = usageOverview?.donations.length ? usageOverview.donations : (donationBenefits?.channels ?? []);
+
+  return (
+    <section className='space-y-4' aria-labelledby='campus-usage-overview-title' data-testid='campus-usage-overview'>
+      <div className='flex items-start gap-3'>
+        <Gauge className='text-primary mt-0.5 size-5 shrink-0' aria-hidden='true' />
+        <div>
+          <h3 id='campus-usage-overview-title' className='font-semibold'>
+            {t('resources.usage.title')}
+          </h3>
+          <p className='text-muted-foreground text-sm'>{t('resources.usage.description')}</p>
+        </div>
+      </div>
+
+      <div className='grid gap-3 md:grid-cols-3'>
+        <EffectiveTokenQuotaCard
+          icon={CalendarDays}
+          title={t('resources.usage.daily.title')}
+          period={usageOverview?.daily}
+          fallbackLimit={DEFAULT_DAILY_EFFECTIVE_TOKEN_LIMIT}
+          resetDescription={t('resources.usage.daily.reset')}
+          locale={locale}
+        />
+        <EffectiveTokenQuotaCard
+          icon={CalendarDays}
+          title={t('resources.usage.weekly.title')}
+          period={usageOverview?.weekly}
+          fallbackLimit={DEFAULT_WEEKLY_EFFECTIVE_TOKEN_LIMIT}
+          resetDescription={t('resources.usage.weekly.reset')}
+          locale={locale}
+        />
+        <Card className='gap-3 border-primary/25 bg-primary/[0.025] py-4 shadow-none' data-testid='campus-token-wallet'>
+          <CardHeader className='gap-1 px-4'>
+            <div className='flex items-center gap-2'>
+              <div className='bg-primary/10 text-primary rounded-lg p-2'>
+                <WalletCards className='size-4' aria-hidden='true' />
+              </div>
+              <CardTitle className='text-sm'>{t('resources.usage.wallet.title')}</CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent className='space-y-2 px-4'>
+            <div className='text-xl font-semibold tabular-nums'>
+              {formatTokenCount(usageOverview?.wallet?.balance, locale)}
+            </div>
+            <p className='text-muted-foreground text-xs'>{t('resources.usage.wallet.description')}</p>
+            <dl className='grid gap-1 border-t pt-2 text-xs'>
+              <div className='flex justify-between gap-3'>
+                <dt className='text-muted-foreground'>{t('resources.usage.wallet.credited')}</dt>
+                <dd className='font-mono tabular-nums'>
+                  {formatTokenCount(usageOverview?.wallet?.lifetimeEarned, locale)}
+                </dd>
+              </div>
+              <div className='flex justify-between gap-3'>
+                <dt className='text-muted-foreground'>{t('resources.usage.wallet.spent')}</dt>
+                <dd className='font-mono tabular-nums'>
+                  {formatTokenCount(usageOverview?.wallet?.lifetimeSpent, locale)}
+                </dd>
+              </div>
+            </dl>
+          </CardContent>
+        </Card>
+      </div>
+
+      {benefits.length > 0 && (
+        <Card className='gap-3 py-4 shadow-none' data-testid='campus-donation-benefits'>
+          <CardHeader className='gap-1 px-4 sm:px-5'>
+            <CardTitle className='flex items-center gap-2 text-base'>
+              <HeartHandshake className='text-primary size-4' aria-hidden='true' />
+              {t('resources.usage.benefits.title')}
+            </CardTitle>
+            <CardDescription>{t('resources.usage.benefits.description')}</CardDescription>
+          </CardHeader>
+          <CardContent className='grid gap-2 px-4 sm:px-5'>
+            {benefits.map((benefit, index) => (
+              <div
+                key={benefit.channelId ?? `${benefit.name}-${index}`}
+                className='grid gap-2 rounded-lg border px-3 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_auto_auto_auto] sm:items-center'
+                data-testid='campus-donation-benefit-row'
+              >
+                <span className='min-w-0 truncate font-medium' title={benefit.name}>
+                  {benefit.name}
+                </span>
+                <span className='text-muted-foreground'>
+                  {t('resources.usage.benefits.used', {
+                    value: formatTokenCount(benefit.effectiveTokens, locale),
+                  })}
+                </span>
+                <span className='text-muted-foreground'>
+                  {t('resources.usage.benefits.eligible', {
+                    value: formatTokenCount(benefit.rewardEligibleTokens, locale),
+                  })}
+                </span>
+                <span className='font-medium text-emerald-700 dark:text-emerald-400'>
+                  {t('resources.usage.benefits.credited', {
+                    value: formatTokenCount(benefit.creditTokens, locale),
+                  })}
+                </span>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+    </section>
   );
 }
 
@@ -665,6 +978,8 @@ export default function CampusResourcesPage() {
             <SummaryCard icon={KeyRound} label={t('resources.summary.apiKeys')} value={data.apiKeys.length} />
             <SummaryCard icon={RadioTower} label={t('resources.summary.channels')} value={data.channels.length} />
           </div>
+
+          <UsageAndBenefits usageOverview={data.usageOverview} donationBenefits={data.donationBenefits} />
 
           {donatedChannels.length > 0 && (
             <section className='space-y-4' aria-labelledby='campus-resource-donations-title'>

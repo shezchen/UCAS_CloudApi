@@ -95,12 +95,15 @@
   "users.messages.addToProjectSuccess": "用户已成功添加到项目",
   "users.messages.removeFromProjectSuccess": "用户已成功从项目中移除",
   "users.errors.insufficientPermissions": "您没有足够的权限编辑此用户",
-  "users.dailyQuota.title": "全体账户实时每日 Token 上限",
-  "users.dailyQuota.description": "仅 Owner 可管理。保存后下一次请求会按每个账户已记录的当日总用量检查此上限，并立即作用于所有已有和新账户；每个账户的所有 API Key 共用此总额，并且仍会同时受各 API Key 自己的细分额度约束。并发中的请求结算后可能略有超出。",
-  "users.dailyQuota.limitLabel": "每账户每日 Token 总上限",
-  "users.dailyQuota.limitHint": "设为 0 会阻止所有账户发起新的计量请求。",
+  "users.dailyQuota.title": "全体账户日、周默认有效 Token 额度",
+  "users.dailyQuota.description": "仅 Owner 可管理。这里修改的是全体账户共同采用的默认日额度和周额度，不是为某个用户设置例外；保存后从下一次请求起实时作用于所有已有和新账户。每个账户的所有 API Key 共用这两项总额，并仍受各 API Key 自己设置的细分额度约束。",
+  "users.dailyQuota.limitLabel": "每账户每日有效 Token 上限",
+  "users.dailyQuota.limitHint": "默认 16,000,000；北京时间每日 00:00 重置。设为 0 会阻止普通额度的新计量请求。",
+  "users.dailyQuota.weeklyLimitLabel": "每账户每周有效 Token 上限",
+  "users.dailyQuota.weeklyLimitHint": "默认 64,000,000；北京时间每周一 00:00 重置。",
+  "users.dailyQuota.accountingNotice": "有效 Token = 输入 Token − 缓存读取 Token + 输出 Token。缓存读取不扣日、周额度；永久回馈钱包会优先消费且不随日、周重置。并发中的请求结算后可能略有超出。",
   "users.dailyQuota.save": "保存全局上限",
   "users.dailyQuota.saving": "保存中…",
-  "users.dailyQuota.messages.updateSuccess": "全体账户的每日 Token 总上限已实时更新",
-  "users.dailyQuota.messages.updateFailed": "更新每日 Token 总上限失败"
+  "users.dailyQuota.messages.updateSuccess": "全体账户的日、周默认有效 Token 额度已实时更新",
+  "users.dailyQuota.messages.updateFailed": "更新日、周默认有效 Token 额度失败"
 }

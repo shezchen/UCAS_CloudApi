@@ -112,6 +112,7 @@ export type ChangePasswordInput = z.infer<typeof changePasswordInputSchema>;
 
 export const userDailyQuotaSettingsSchema = z.object({
   dailyTokenLimit: z.number().int().nonnegative(),
+  weeklyTokenLimit: z.number().int().nonnegative().optional().default(64_000_000),
 });
 
 export type UserDailyQuotaSettings = z.infer<typeof userDailyQuotaSettingsSchema>;

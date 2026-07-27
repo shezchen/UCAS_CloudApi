@@ -19,6 +19,15 @@ const USER_DAILY_QUOTA_SETTINGS_QUERY = `
   query UserDailyQuotaSettings {
     userDailyQuotaSettings {
       dailyTokenLimit
+      weeklyTokenLimit
+    }
+  }
+`;
+
+const LEGACY_USER_DAILY_QUOTA_SETTINGS_QUERY = `
+  query LegacyUserDailyQuotaSettings {
+    userDailyQuotaSettings {
+      dailyTokenLimit
     }
   }
 `;
@@ -95,8 +104,15 @@ export function useUserDailyQuotaSettings(options?: { enabled?: boolean }) {
     queryKey: ['userDailyQuotaSettings'],
     queryFn: async () => {
       try {
-        const data = await graphqlRequest<{ userDailyQuotaSettings: UserDailyQuotaSettings }>(USER_DAILY_QUOTA_SETTINGS_QUERY);
-        return userDailyQuotaSettingsSchema.parse(data.userDailyQuotaSettings);
+        try {
+          const data = await graphqlRequest<{ userDailyQuotaSettings: UserDailyQuotaSettings }>(USER_DAILY_QUOTA_SETTINGS_QUERY);
+          return userDailyQuotaSettingsSchema.parse(data.userDailyQuotaSettings);
+        } catch {
+          const legacyData = await graphqlRequest<{ userDailyQuotaSettings: { dailyTokenLimit: number } }>(
+            LEGACY_USER_DAILY_QUOTA_SETTINGS_QUERY
+          );
+          return userDailyQuotaSettingsSchema.parse(legacyData.userDailyQuotaSettings);
+        }
       } catch (error) {
         handleError(error, t('common.errors.loadFailed'));
         throw error;

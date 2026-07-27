@@ -30,6 +30,20 @@ const CAMPUS_USAGE_LEADERBOARD_QUERY = `
   }
 `;
 
+const CAMPUS_MODEL_USAGE_LEADERBOARD_QUERY = `
+  query GetCampusModelUsageLeaderboard($timeWindow: String) {
+    campusModelUsageLeaderboard(timeWindow: $timeWindow) {
+      rank
+      modelId
+      effectiveTokens
+      inputTokens
+      cachedReadTokens
+      outputTokens
+      meteredRequestCount
+    }
+  }
+`;
+
 export const campusUsageLeaderboardEntrySchema = z.object({
   rank: z.number().int().positive(),
   displayName: z.string(),
@@ -40,7 +54,18 @@ export const campusUsageLeaderboardEntrySchema = z.object({
   limitPercent: z.number().nonnegative(),
 });
 
+export const campusModelUsageLeaderboardEntrySchema = z.object({
+  rank: z.number().int().positive(),
+  modelId: z.string(),
+  effectiveTokens: z.number().nonnegative().optional().default(0),
+  inputTokens: z.number().nonnegative().optional().default(0),
+  cachedReadTokens: z.number().nonnegative().optional().default(0),
+  outputTokens: z.number().nonnegative().optional().default(0),
+  meteredRequestCount: z.number().int().nonnegative().optional().default(0),
+});
+
 export type CampusUsageLeaderboardEntry = z.infer<typeof campusUsageLeaderboardEntrySchema>;
+export type CampusModelUsageLeaderboardEntry = z.infer<typeof campusModelUsageLeaderboardEntrySchema>;
 export type CampusUsageLeaderboardTimeWindow = 'day' | 'week' | 'month';
 
 export function useUsageStatsByUser(timeWindow?: string) {
@@ -63,7 +88,10 @@ export function useUsageStatsByUser(timeWindow?: string) {
   });
 }
 
-export function useCampusUsageLeaderboard(timeWindow: CampusUsageLeaderboardTimeWindow = 'day') {
+export function useCampusUsageLeaderboard(
+  timeWindow: CampusUsageLeaderboardTimeWindow = 'day',
+  options?: { enabled?: boolean }
+) {
   const selectedProjectId = useSelectedProjectId();
 
   return useQuery({
@@ -77,7 +105,30 @@ export function useCampusUsageLeaderboard(timeWindow: CampusUsageLeaderboardTime
       );
       return data.campusUsageLeaderboard.map((item) => campusUsageLeaderboardEntrySchema.parse(item));
     },
-    enabled: !!selectedProjectId,
+    enabled: !!selectedProjectId && (options?.enabled ?? true),
+    refetchInterval: 60000,
+    placeholderData: (previousData) => previousData,
+  });
+}
+
+export function useCampusModelUsageLeaderboard(
+  period: CampusUsageLeaderboardTimeWindow = 'day',
+  options?: { enabled?: boolean }
+) {
+  const selectedProjectId = useSelectedProjectId();
+
+  return useQuery({
+    queryKey: ['campusModelUsageLeaderboard', period, selectedProjectId],
+    queryFn: async () => {
+      const headers = selectedProjectId ? { 'X-Project-ID': selectedProjectId } : undefined;
+      const data = await graphqlRequest<{ campusModelUsageLeaderboard?: CampusModelUsageLeaderboardEntry[] }>(
+        CAMPUS_MODEL_USAGE_LEADERBOARD_QUERY,
+        { timeWindow: period },
+        headers
+      );
+      return (data.campusModelUsageLeaderboard ?? []).map((item) => campusModelUsageLeaderboardEntrySchema.parse(item));
+    },
+    enabled: !!selectedProjectId && (options?.enabled ?? true),
     refetchInterval: 60000,
     placeholderData: (previousData) => previousData,
   });

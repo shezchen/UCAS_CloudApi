@@ -70,7 +70,8 @@ export function ApiKeyTokenChartDialog({ apiKey, open, onOpenChange }: ApiKeyTok
   );
 
   const stat = usageStats?.[0];
-  const totalTokens = stat ? stat.inputTokens + stat.outputTokens + stat.cachedTokens + stat.reasoningTokens : 0;
+  const totalTokens = stat ? stat.inputTokens + stat.outputTokens : 0;
+  const effectiveTokens = stat ? Math.max(stat.inputTokens - stat.cachedTokens, 0) + stat.outputTokens : 0;
   const hasTopModels = stat && stat.topModels && stat.topModels.length > 0;
 
   return (
@@ -109,6 +110,13 @@ export function ApiKeyTokenChartDialog({ apiKey, open, onOpenChange }: ApiKeyTok
                       </TableRow>
                     </TableHeader>
                     <TableBody>
+                      <TableRow className="bg-primary/5 font-semibold" data-testid="api-key-effective-token-total">
+                        <TableCell>{t('apikeys.columns.effectiveTokens')}</TableCell>
+                        <TableCell className="text-center tabular-nums">{formatNumber(effectiveTokens)}</TableCell>
+                        <TableCell className="text-center text-xs text-muted-foreground">
+                          {t('apikeys.tokenUsageChart.excludesCache')}
+                        </TableCell>
+                      </TableRow>
                       <TableRow>
                         <TableCell className="font-medium">{t('apikeys.columns.inputTokens')}</TableCell>
                         <TableCell className="text-center tabular-nums">{formatNumber(stat.inputTokens)}</TableCell>
@@ -153,7 +161,8 @@ export function ApiKeyTokenChartDialog({ apiKey, open, onOpenChange }: ApiKeyTok
                   <h3 className="mb-3 text-sm font-medium">{t('apikeys.tokenUsageChart.topModels')}</h3>
                   <div className="space-y-4">
                     {stat.topModels.map((model, index) => {
-                      const modelTotal = model.inputTokens + model.outputTokens + model.cachedTokens + model.reasoningTokens;
+                      const modelTotal = model.inputTokens + model.outputTokens;
+                      const modelEffectiveTokens = Math.max(model.inputTokens - model.cachedTokens, 0) + model.outputTokens;
                       return (
                         <div key={model.modelId} className="rounded-lg border">
                           <div className="bg-muted/30 px-4 py-2">
@@ -169,6 +178,15 @@ export function ApiKeyTokenChartDialog({ apiKey, open, onOpenChange }: ApiKeyTok
                           <div className="overflow-x-auto">
                             <Table>
                               <TableBody>
+                                <TableRow className="bg-primary/5 font-semibold">
+                                  <TableCell className="w-2/5 whitespace-nowrap">{t('apikeys.columns.effectiveTokens')}</TableCell>
+                                  <TableCell className="w-[30%] text-center tabular-nums">
+                                    {formatNumber(modelEffectiveTokens)}
+                                  </TableCell>
+                                  <TableCell className="w-[30%] text-center text-xs text-muted-foreground">
+                                    {t('apikeys.tokenUsageChart.excludesCache')}
+                                  </TableCell>
+                                </TableRow>
                                 <TableRow>
                                   <TableCell className="w-2/5 font-medium whitespace-nowrap">{t('apikeys.columns.inputTokens')}</TableCell>
                                   <TableCell className="w-[30%] text-center tabular-nums">{formatNumber(model.inputTokens)}</TableCell>

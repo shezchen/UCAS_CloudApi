@@ -1165,12 +1165,11 @@ func TestAPIKeyService_PersonalAPIKeyIsolation(t *testing.T) {
 		_, err = apiKeyService.UpdateAPIKey(otherCtx, otherKey.ID, ent.UpdateAPIKeyInput{
 			Name: &sharedName,
 		})
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "already exists")
+		require.NoError(t, err)
 
 		persisted, err := client.APIKey.Get(setupCtx, otherKey.ID)
 		require.NoError(t, err)
-		require.Equal(t, "other-personal", persisted.Name)
+		require.Equal(t, sharedName, persisted.Name)
 
 		err = client.APIKey.DeleteOneID(otherSharedKey.ID).Exec(setupCtx)
 		require.NoError(t, err)
@@ -1437,11 +1436,10 @@ func TestAPIKeyService_CreateLLMAPIKey(t *testing.T) {
 	})
 }
 
-// TestAPIKeyService_NameUniqueness verifies application-level name uniqueness
-// (Path A', no DB unique index): names are unique per creator within a project,
-// reusable after soft-delete, and still occupied by archived (not deleted) keys.
-// It drives CreateLLMAPIKey, whose post-insert live-count check enforces the invariant.
-func TestAPIKeyService_NameUniqueness(t *testing.T) {
+// TestAPIKeyService_DuplicateDisplayNames verifies that API key names remain
+// presentation-only labels. Duplicate labels are allowed; callers use the
+// unique key id or value whenever a name is ambiguous.
+func TestAPIKeyService_DuplicateDisplayNames(t *testing.T) {
 	apiKeyService, client := setupTestAPIKeyService(t, xcache.Config{Mode: xcache.ModeMemory})
 	defer apiKeyService.Stop()
 	defer client.Close()
@@ -1485,24 +1483,23 @@ func TestAPIKeyService_NameUniqueness(t *testing.T) {
 	ctx := ent.NewContext(context.Background(), client)
 	ctx = contexts.WithAPIKey(ctx, ownerAPIKey)
 
-	t.Run("rejects duplicate name for the same creator", func(t *testing.T) {
+	t.Run("allows duplicate name for the same creator", func(t *testing.T) {
 		_, err := apiKeyService.CreateLLMAPIKey(ctx, ownerAPIKey, "dup-name")
 		require.NoError(t, err)
 
 		_, err = apiKeyService.CreateLLMAPIKey(ctx, ownerAPIKey, "dup-name")
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "already exists")
+		require.NoError(t, err)
 
-		// Regression: CreateLLMAPIKey inserts the row, then checks the live count
-		// post-insert and returns DuplicateNameError on a collision. Because there
-		// is no DB unique constraint, correctness depends on the enclosing top-level
-		// transaction rolling that insert back. Assert exactly one live key keeps the
-		// name, i.e. the rejected attempt left no extra live row behind.
 		live, err := client.APIKey.Query().
 			Where(apikey.NameEQ("dup-name"), apikey.ProjectIDEQ(ownerProject.ID), apikey.UserIDEQ(ownerUser.ID)).
 			Count(setupCtx)
 		require.NoError(t, err)
-		require.Equal(t, 1, live, "rejected duplicate create must leave no extra live row")
+		require.Equal(t, 2, live)
+
+		name := "dup-name"
+		_, err = apiKeyService.GetForRead(ctx, nil, nil, &name)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "use id or key")
 	})
 
 	t.Run("allows another creator to reuse a name and resolves each caller's key", func(t *testing.T) {
@@ -1561,7 +1558,7 @@ func TestAPIKeyService_NameUniqueness(t *testing.T) {
 		require.NotEqual(t, created.ID, recreated.ID)
 	})
 
-	t.Run("archived key still occupies the name", func(t *testing.T) {
+	t.Run("archived key does not reserve a display name", func(t *testing.T) {
 		created, err := apiKeyService.CreateLLMAPIKey(ctx, ownerAPIKey, "archived-name")
 		require.NoError(t, err)
 
@@ -1572,8 +1569,7 @@ func TestAPIKeyService_NameUniqueness(t *testing.T) {
 		require.NoError(t, err)
 
 		_, err = apiKeyService.CreateLLMAPIKey(ctx, ownerAPIKey, "archived-name")
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "already exists")
+		require.NoError(t, err)
 	})
 }
 

@@ -33,11 +33,13 @@ import (
 	"github.com/looplj/axonhub/internal/ent/role"
 	"github.com/looplj/axonhub/internal/ent/system"
 	"github.com/looplj/axonhub/internal/ent/thread"
+	"github.com/looplj/axonhub/internal/ent/tokenwalletledger"
 	"github.com/looplj/axonhub/internal/ent/trace"
 	"github.com/looplj/axonhub/internal/ent/usagelog"
 	"github.com/looplj/axonhub/internal/ent/user"
 	"github.com/looplj/axonhub/internal/ent/userproject"
 	"github.com/looplj/axonhub/internal/ent/userrole"
+	"github.com/looplj/axonhub/internal/ent/usertokenwallet"
 	"github.com/vektah/gqlparser/v2/gqlerror"
 )
 
@@ -6148,6 +6150,320 @@ func (_m *Thread) ToEdge(order *ThreadOrder) *ThreadEdge {
 	}
 }
 
+// TokenWalletLedgerEdge is the edge representation of TokenWalletLedger.
+type TokenWalletLedgerEdge struct {
+	Node   *TokenWalletLedger `json:"node"`
+	Cursor Cursor             `json:"cursor"`
+}
+
+// TokenWalletLedgerConnection is the connection containing edges to TokenWalletLedger.
+type TokenWalletLedgerConnection struct {
+	Edges      []*TokenWalletLedgerEdge `json:"edges"`
+	PageInfo   PageInfo                 `json:"pageInfo"`
+	TotalCount int                      `json:"totalCount"`
+}
+
+func (c *TokenWalletLedgerConnection) build(nodes []*TokenWalletLedger, pager *tokenwalletledgerPager, after *Cursor, first *int, before *Cursor, last *int) {
+	c.PageInfo.HasNextPage = before != nil
+	c.PageInfo.HasPreviousPage = after != nil
+	if first != nil && *first+1 == len(nodes) {
+		c.PageInfo.HasNextPage = true
+		nodes = nodes[:len(nodes)-1]
+	} else if last != nil && *last+1 == len(nodes) {
+		c.PageInfo.HasPreviousPage = true
+		nodes = nodes[:len(nodes)-1]
+	}
+	var nodeAt func(int) *TokenWalletLedger
+	if last != nil {
+		n := len(nodes) - 1
+		nodeAt = func(i int) *TokenWalletLedger {
+			return nodes[n-i]
+		}
+	} else {
+		nodeAt = func(i int) *TokenWalletLedger {
+			return nodes[i]
+		}
+	}
+	c.Edges = make([]*TokenWalletLedgerEdge, len(nodes))
+	for i := range nodes {
+		node := nodeAt(i)
+		c.Edges[i] = &TokenWalletLedgerEdge{
+			Node:   node,
+			Cursor: pager.toCursor(node),
+		}
+	}
+	if l := len(c.Edges); l > 0 {
+		c.PageInfo.StartCursor = &c.Edges[0].Cursor
+		c.PageInfo.EndCursor = &c.Edges[l-1].Cursor
+	}
+	if c.TotalCount == 0 {
+		c.TotalCount = len(nodes)
+	}
+}
+
+// TokenWalletLedgerPaginateOption enables pagination customization.
+type TokenWalletLedgerPaginateOption func(*tokenwalletledgerPager) error
+
+// WithTokenWalletLedgerOrder configures pagination ordering.
+func WithTokenWalletLedgerOrder(order *TokenWalletLedgerOrder) TokenWalletLedgerPaginateOption {
+	if order == nil {
+		order = DefaultTokenWalletLedgerOrder
+	}
+	o := *order
+	return func(pager *tokenwalletledgerPager) error {
+		if err := o.Direction.Validate(); err != nil {
+			return err
+		}
+		if o.Field == nil {
+			o.Field = DefaultTokenWalletLedgerOrder.Field
+		}
+		pager.order = &o
+		return nil
+	}
+}
+
+// WithTokenWalletLedgerFilter configures pagination filter.
+func WithTokenWalletLedgerFilter(filter func(*TokenWalletLedgerQuery) (*TokenWalletLedgerQuery, error)) TokenWalletLedgerPaginateOption {
+	return func(pager *tokenwalletledgerPager) error {
+		if filter == nil {
+			return errors.New("TokenWalletLedgerQuery filter cannot be nil")
+		}
+		pager.filter = filter
+		return nil
+	}
+}
+
+type tokenwalletledgerPager struct {
+	reverse bool
+	order   *TokenWalletLedgerOrder
+	filter  func(*TokenWalletLedgerQuery) (*TokenWalletLedgerQuery, error)
+}
+
+func newTokenWalletLedgerPager(opts []TokenWalletLedgerPaginateOption, reverse bool) (*tokenwalletledgerPager, error) {
+	pager := &tokenwalletledgerPager{reverse: reverse}
+	for _, opt := range opts {
+		if err := opt(pager); err != nil {
+			return nil, err
+		}
+	}
+	if pager.order == nil {
+		pager.order = DefaultTokenWalletLedgerOrder
+	}
+	return pager, nil
+}
+
+func (p *tokenwalletledgerPager) applyFilter(query *TokenWalletLedgerQuery) (*TokenWalletLedgerQuery, error) {
+	if p.filter != nil {
+		return p.filter(query)
+	}
+	return query, nil
+}
+
+func (p *tokenwalletledgerPager) toCursor(_m *TokenWalletLedger) Cursor {
+	return p.order.Field.toCursor(_m)
+}
+
+func (p *tokenwalletledgerPager) applyCursors(query *TokenWalletLedgerQuery, after, before *Cursor) (*TokenWalletLedgerQuery, error) {
+	direction := p.order.Direction
+	if p.reverse {
+		direction = direction.Reverse()
+	}
+	for _, predicate := range entgql.CursorsPredicate(after, before, DefaultTokenWalletLedgerOrder.Field.column, p.order.Field.column, direction) {
+		query = query.Where(predicate)
+	}
+	return query, nil
+}
+
+func (p *tokenwalletledgerPager) applyOrder(query *TokenWalletLedgerQuery) *TokenWalletLedgerQuery {
+	direction := p.order.Direction
+	if p.reverse {
+		direction = direction.Reverse()
+	}
+	query = query.Order(p.order.Field.toTerm(direction.OrderTermOption()))
+	if p.order.Field != DefaultTokenWalletLedgerOrder.Field {
+		query = query.Order(DefaultTokenWalletLedgerOrder.Field.toTerm(direction.OrderTermOption()))
+	}
+	if len(query.ctx.Fields) > 0 {
+		query.ctx.AppendFieldOnce(p.order.Field.column)
+	}
+	return query
+}
+
+func (p *tokenwalletledgerPager) orderExpr(query *TokenWalletLedgerQuery) sql.Querier {
+	direction := p.order.Direction
+	if p.reverse {
+		direction = direction.Reverse()
+	}
+	if len(query.ctx.Fields) > 0 {
+		query.ctx.AppendFieldOnce(p.order.Field.column)
+	}
+	return sql.ExprFunc(func(b *sql.Builder) {
+		b.Ident(p.order.Field.column).Pad().WriteString(string(direction))
+		if p.order.Field != DefaultTokenWalletLedgerOrder.Field {
+			b.Comma().Ident(DefaultTokenWalletLedgerOrder.Field.column).Pad().WriteString(string(direction))
+		}
+	})
+}
+
+// Paginate executes the query and returns a relay based cursor connection to TokenWalletLedger.
+func (_m *TokenWalletLedgerQuery) Paginate(
+	ctx context.Context, after *Cursor, first *int,
+	before *Cursor, last *int, opts ...TokenWalletLedgerPaginateOption,
+) (*TokenWalletLedgerConnection, error) {
+	if err := validateFirstLast(first, last); err != nil {
+		return nil, err
+	}
+	pager, err := newTokenWalletLedgerPager(opts, last != nil)
+	if err != nil {
+		return nil, err
+	}
+	if _m, err = pager.applyFilter(_m); err != nil {
+		return nil, err
+	}
+	conn := &TokenWalletLedgerConnection{Edges: []*TokenWalletLedgerEdge{}}
+	ignoredEdges := !hasCollectedField(ctx, edgesField)
+	if hasCollectedField(ctx, totalCountField) || hasCollectedField(ctx, pageInfoField) {
+		hasPagination := after != nil || first != nil || before != nil || last != nil
+		if hasPagination || ignoredEdges {
+			c := _m.Clone()
+			c.ctx.Fields = nil
+			if conn.TotalCount, err = c.Count(ctx); err != nil {
+				return nil, err
+			}
+			conn.PageInfo.HasNextPage = first != nil && conn.TotalCount > 0
+			conn.PageInfo.HasPreviousPage = last != nil && conn.TotalCount > 0
+		}
+	}
+	if ignoredEdges || (first != nil && *first == 0) || (last != nil && *last == 0) {
+		return conn, nil
+	}
+	if _m, err = pager.applyCursors(_m, after, before); err != nil {
+		return nil, err
+	}
+	limit := paginateLimit(first, last)
+	if limit != 0 {
+		_m.Limit(limit)
+	}
+	if field := collectedField(ctx, edgesField, nodeField); field != nil {
+		if err := _m.collectField(ctx, limit == 1, graphql.GetOperationContext(ctx), *field, []string{edgesField, nodeField}); err != nil {
+			return nil, err
+		}
+	}
+	_m = pager.applyOrder(_m)
+	nodes, err := _m.All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	conn.build(nodes, pager, after, first, before, last)
+	return conn, nil
+}
+
+var (
+	// TokenWalletLedgerOrderFieldCreatedAt orders TokenWalletLedger by created_at.
+	TokenWalletLedgerOrderFieldCreatedAt = &TokenWalletLedgerOrderField{
+		Value: func(_m *TokenWalletLedger) (ent.Value, error) {
+			return _m.CreatedAt, nil
+		},
+		column: tokenwalletledger.FieldCreatedAt,
+		toTerm: tokenwalletledger.ByCreatedAt,
+		toCursor: func(_m *TokenWalletLedger) Cursor {
+			return Cursor{
+				ID:    _m.ID,
+				Value: _m.CreatedAt,
+			}
+		},
+	}
+	// TokenWalletLedgerOrderFieldUpdatedAt orders TokenWalletLedger by updated_at.
+	TokenWalletLedgerOrderFieldUpdatedAt = &TokenWalletLedgerOrderField{
+		Value: func(_m *TokenWalletLedger) (ent.Value, error) {
+			return _m.UpdatedAt, nil
+		},
+		column: tokenwalletledger.FieldUpdatedAt,
+		toTerm: tokenwalletledger.ByUpdatedAt,
+		toCursor: func(_m *TokenWalletLedger) Cursor {
+			return Cursor{
+				ID:    _m.ID,
+				Value: _m.UpdatedAt,
+			}
+		},
+	}
+)
+
+// String implement fmt.Stringer interface.
+func (f TokenWalletLedgerOrderField) String() string {
+	var str string
+	switch f.column {
+	case TokenWalletLedgerOrderFieldCreatedAt.column:
+		str = "CREATED_AT"
+	case TokenWalletLedgerOrderFieldUpdatedAt.column:
+		str = "UPDATED_AT"
+	}
+	return str
+}
+
+// MarshalGQL implements graphql.Marshaler interface.
+func (f TokenWalletLedgerOrderField) MarshalGQL(w io.Writer) {
+	io.WriteString(w, strconv.Quote(f.String()))
+}
+
+// UnmarshalGQL implements graphql.Unmarshaler interface.
+func (f *TokenWalletLedgerOrderField) UnmarshalGQL(v interface{}) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("TokenWalletLedgerOrderField %T must be a string", v)
+	}
+	switch str {
+	case "CREATED_AT":
+		*f = *TokenWalletLedgerOrderFieldCreatedAt
+	case "UPDATED_AT":
+		*f = *TokenWalletLedgerOrderFieldUpdatedAt
+	default:
+		return fmt.Errorf("%s is not a valid TokenWalletLedgerOrderField", str)
+	}
+	return nil
+}
+
+// TokenWalletLedgerOrderField defines the ordering field of TokenWalletLedger.
+type TokenWalletLedgerOrderField struct {
+	// Value extracts the ordering value from the given TokenWalletLedger.
+	Value    func(*TokenWalletLedger) (ent.Value, error)
+	column   string // field or computed.
+	toTerm   func(...sql.OrderTermOption) tokenwalletledger.OrderOption
+	toCursor func(*TokenWalletLedger) Cursor
+}
+
+// TokenWalletLedgerOrder defines the ordering of TokenWalletLedger.
+type TokenWalletLedgerOrder struct {
+	Direction OrderDirection               `json:"direction"`
+	Field     *TokenWalletLedgerOrderField `json:"field"`
+}
+
+// DefaultTokenWalletLedgerOrder is the default ordering of TokenWalletLedger.
+var DefaultTokenWalletLedgerOrder = &TokenWalletLedgerOrder{
+	Direction: entgql.OrderDirectionAsc,
+	Field: &TokenWalletLedgerOrderField{
+		Value: func(_m *TokenWalletLedger) (ent.Value, error) {
+			return _m.ID, nil
+		},
+		column: tokenwalletledger.FieldID,
+		toTerm: tokenwalletledger.ByID,
+		toCursor: func(_m *TokenWalletLedger) Cursor {
+			return Cursor{ID: _m.ID}
+		},
+	},
+}
+
+// ToEdge converts TokenWalletLedger into TokenWalletLedgerEdge.
+func (_m *TokenWalletLedger) ToEdge(order *TokenWalletLedgerOrder) *TokenWalletLedgerEdge {
+	if order == nil {
+		order = DefaultTokenWalletLedgerOrder
+	}
+	return &TokenWalletLedgerEdge{
+		Node:   _m,
+		Cursor: order.Field.toCursor(_m),
+	}
+}
+
 // TraceEdge is the edge representation of Trace.
 type TraceEdge struct {
 	Node   *Trace `json:"node"`
@@ -7713,6 +8029,320 @@ func (_m *UserRole) ToEdge(order *UserRoleOrder) *UserRoleEdge {
 		order = DefaultUserRoleOrder
 	}
 	return &UserRoleEdge{
+		Node:   _m,
+		Cursor: order.Field.toCursor(_m),
+	}
+}
+
+// UserTokenWalletEdge is the edge representation of UserTokenWallet.
+type UserTokenWalletEdge struct {
+	Node   *UserTokenWallet `json:"node"`
+	Cursor Cursor           `json:"cursor"`
+}
+
+// UserTokenWalletConnection is the connection containing edges to UserTokenWallet.
+type UserTokenWalletConnection struct {
+	Edges      []*UserTokenWalletEdge `json:"edges"`
+	PageInfo   PageInfo               `json:"pageInfo"`
+	TotalCount int                    `json:"totalCount"`
+}
+
+func (c *UserTokenWalletConnection) build(nodes []*UserTokenWallet, pager *usertokenwalletPager, after *Cursor, first *int, before *Cursor, last *int) {
+	c.PageInfo.HasNextPage = before != nil
+	c.PageInfo.HasPreviousPage = after != nil
+	if first != nil && *first+1 == len(nodes) {
+		c.PageInfo.HasNextPage = true
+		nodes = nodes[:len(nodes)-1]
+	} else if last != nil && *last+1 == len(nodes) {
+		c.PageInfo.HasPreviousPage = true
+		nodes = nodes[:len(nodes)-1]
+	}
+	var nodeAt func(int) *UserTokenWallet
+	if last != nil {
+		n := len(nodes) - 1
+		nodeAt = func(i int) *UserTokenWallet {
+			return nodes[n-i]
+		}
+	} else {
+		nodeAt = func(i int) *UserTokenWallet {
+			return nodes[i]
+		}
+	}
+	c.Edges = make([]*UserTokenWalletEdge, len(nodes))
+	for i := range nodes {
+		node := nodeAt(i)
+		c.Edges[i] = &UserTokenWalletEdge{
+			Node:   node,
+			Cursor: pager.toCursor(node),
+		}
+	}
+	if l := len(c.Edges); l > 0 {
+		c.PageInfo.StartCursor = &c.Edges[0].Cursor
+		c.PageInfo.EndCursor = &c.Edges[l-1].Cursor
+	}
+	if c.TotalCount == 0 {
+		c.TotalCount = len(nodes)
+	}
+}
+
+// UserTokenWalletPaginateOption enables pagination customization.
+type UserTokenWalletPaginateOption func(*usertokenwalletPager) error
+
+// WithUserTokenWalletOrder configures pagination ordering.
+func WithUserTokenWalletOrder(order *UserTokenWalletOrder) UserTokenWalletPaginateOption {
+	if order == nil {
+		order = DefaultUserTokenWalletOrder
+	}
+	o := *order
+	return func(pager *usertokenwalletPager) error {
+		if err := o.Direction.Validate(); err != nil {
+			return err
+		}
+		if o.Field == nil {
+			o.Field = DefaultUserTokenWalletOrder.Field
+		}
+		pager.order = &o
+		return nil
+	}
+}
+
+// WithUserTokenWalletFilter configures pagination filter.
+func WithUserTokenWalletFilter(filter func(*UserTokenWalletQuery) (*UserTokenWalletQuery, error)) UserTokenWalletPaginateOption {
+	return func(pager *usertokenwalletPager) error {
+		if filter == nil {
+			return errors.New("UserTokenWalletQuery filter cannot be nil")
+		}
+		pager.filter = filter
+		return nil
+	}
+}
+
+type usertokenwalletPager struct {
+	reverse bool
+	order   *UserTokenWalletOrder
+	filter  func(*UserTokenWalletQuery) (*UserTokenWalletQuery, error)
+}
+
+func newUserTokenWalletPager(opts []UserTokenWalletPaginateOption, reverse bool) (*usertokenwalletPager, error) {
+	pager := &usertokenwalletPager{reverse: reverse}
+	for _, opt := range opts {
+		if err := opt(pager); err != nil {
+			return nil, err
+		}
+	}
+	if pager.order == nil {
+		pager.order = DefaultUserTokenWalletOrder
+	}
+	return pager, nil
+}
+
+func (p *usertokenwalletPager) applyFilter(query *UserTokenWalletQuery) (*UserTokenWalletQuery, error) {
+	if p.filter != nil {
+		return p.filter(query)
+	}
+	return query, nil
+}
+
+func (p *usertokenwalletPager) toCursor(_m *UserTokenWallet) Cursor {
+	return p.order.Field.toCursor(_m)
+}
+
+func (p *usertokenwalletPager) applyCursors(query *UserTokenWalletQuery, after, before *Cursor) (*UserTokenWalletQuery, error) {
+	direction := p.order.Direction
+	if p.reverse {
+		direction = direction.Reverse()
+	}
+	for _, predicate := range entgql.CursorsPredicate(after, before, DefaultUserTokenWalletOrder.Field.column, p.order.Field.column, direction) {
+		query = query.Where(predicate)
+	}
+	return query, nil
+}
+
+func (p *usertokenwalletPager) applyOrder(query *UserTokenWalletQuery) *UserTokenWalletQuery {
+	direction := p.order.Direction
+	if p.reverse {
+		direction = direction.Reverse()
+	}
+	query = query.Order(p.order.Field.toTerm(direction.OrderTermOption()))
+	if p.order.Field != DefaultUserTokenWalletOrder.Field {
+		query = query.Order(DefaultUserTokenWalletOrder.Field.toTerm(direction.OrderTermOption()))
+	}
+	if len(query.ctx.Fields) > 0 {
+		query.ctx.AppendFieldOnce(p.order.Field.column)
+	}
+	return query
+}
+
+func (p *usertokenwalletPager) orderExpr(query *UserTokenWalletQuery) sql.Querier {
+	direction := p.order.Direction
+	if p.reverse {
+		direction = direction.Reverse()
+	}
+	if len(query.ctx.Fields) > 0 {
+		query.ctx.AppendFieldOnce(p.order.Field.column)
+	}
+	return sql.ExprFunc(func(b *sql.Builder) {
+		b.Ident(p.order.Field.column).Pad().WriteString(string(direction))
+		if p.order.Field != DefaultUserTokenWalletOrder.Field {
+			b.Comma().Ident(DefaultUserTokenWalletOrder.Field.column).Pad().WriteString(string(direction))
+		}
+	})
+}
+
+// Paginate executes the query and returns a relay based cursor connection to UserTokenWallet.
+func (_m *UserTokenWalletQuery) Paginate(
+	ctx context.Context, after *Cursor, first *int,
+	before *Cursor, last *int, opts ...UserTokenWalletPaginateOption,
+) (*UserTokenWalletConnection, error) {
+	if err := validateFirstLast(first, last); err != nil {
+		return nil, err
+	}
+	pager, err := newUserTokenWalletPager(opts, last != nil)
+	if err != nil {
+		return nil, err
+	}
+	if _m, err = pager.applyFilter(_m); err != nil {
+		return nil, err
+	}
+	conn := &UserTokenWalletConnection{Edges: []*UserTokenWalletEdge{}}
+	ignoredEdges := !hasCollectedField(ctx, edgesField)
+	if hasCollectedField(ctx, totalCountField) || hasCollectedField(ctx, pageInfoField) {
+		hasPagination := after != nil || first != nil || before != nil || last != nil
+		if hasPagination || ignoredEdges {
+			c := _m.Clone()
+			c.ctx.Fields = nil
+			if conn.TotalCount, err = c.Count(ctx); err != nil {
+				return nil, err
+			}
+			conn.PageInfo.HasNextPage = first != nil && conn.TotalCount > 0
+			conn.PageInfo.HasPreviousPage = last != nil && conn.TotalCount > 0
+		}
+	}
+	if ignoredEdges || (first != nil && *first == 0) || (last != nil && *last == 0) {
+		return conn, nil
+	}
+	if _m, err = pager.applyCursors(_m, after, before); err != nil {
+		return nil, err
+	}
+	limit := paginateLimit(first, last)
+	if limit != 0 {
+		_m.Limit(limit)
+	}
+	if field := collectedField(ctx, edgesField, nodeField); field != nil {
+		if err := _m.collectField(ctx, limit == 1, graphql.GetOperationContext(ctx), *field, []string{edgesField, nodeField}); err != nil {
+			return nil, err
+		}
+	}
+	_m = pager.applyOrder(_m)
+	nodes, err := _m.All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	conn.build(nodes, pager, after, first, before, last)
+	return conn, nil
+}
+
+var (
+	// UserTokenWalletOrderFieldCreatedAt orders UserTokenWallet by created_at.
+	UserTokenWalletOrderFieldCreatedAt = &UserTokenWalletOrderField{
+		Value: func(_m *UserTokenWallet) (ent.Value, error) {
+			return _m.CreatedAt, nil
+		},
+		column: usertokenwallet.FieldCreatedAt,
+		toTerm: usertokenwallet.ByCreatedAt,
+		toCursor: func(_m *UserTokenWallet) Cursor {
+			return Cursor{
+				ID:    _m.ID,
+				Value: _m.CreatedAt,
+			}
+		},
+	}
+	// UserTokenWalletOrderFieldUpdatedAt orders UserTokenWallet by updated_at.
+	UserTokenWalletOrderFieldUpdatedAt = &UserTokenWalletOrderField{
+		Value: func(_m *UserTokenWallet) (ent.Value, error) {
+			return _m.UpdatedAt, nil
+		},
+		column: usertokenwallet.FieldUpdatedAt,
+		toTerm: usertokenwallet.ByUpdatedAt,
+		toCursor: func(_m *UserTokenWallet) Cursor {
+			return Cursor{
+				ID:    _m.ID,
+				Value: _m.UpdatedAt,
+			}
+		},
+	}
+)
+
+// String implement fmt.Stringer interface.
+func (f UserTokenWalletOrderField) String() string {
+	var str string
+	switch f.column {
+	case UserTokenWalletOrderFieldCreatedAt.column:
+		str = "CREATED_AT"
+	case UserTokenWalletOrderFieldUpdatedAt.column:
+		str = "UPDATED_AT"
+	}
+	return str
+}
+
+// MarshalGQL implements graphql.Marshaler interface.
+func (f UserTokenWalletOrderField) MarshalGQL(w io.Writer) {
+	io.WriteString(w, strconv.Quote(f.String()))
+}
+
+// UnmarshalGQL implements graphql.Unmarshaler interface.
+func (f *UserTokenWalletOrderField) UnmarshalGQL(v interface{}) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("UserTokenWalletOrderField %T must be a string", v)
+	}
+	switch str {
+	case "CREATED_AT":
+		*f = *UserTokenWalletOrderFieldCreatedAt
+	case "UPDATED_AT":
+		*f = *UserTokenWalletOrderFieldUpdatedAt
+	default:
+		return fmt.Errorf("%s is not a valid UserTokenWalletOrderField", str)
+	}
+	return nil
+}
+
+// UserTokenWalletOrderField defines the ordering field of UserTokenWallet.
+type UserTokenWalletOrderField struct {
+	// Value extracts the ordering value from the given UserTokenWallet.
+	Value    func(*UserTokenWallet) (ent.Value, error)
+	column   string // field or computed.
+	toTerm   func(...sql.OrderTermOption) usertokenwallet.OrderOption
+	toCursor func(*UserTokenWallet) Cursor
+}
+
+// UserTokenWalletOrder defines the ordering of UserTokenWallet.
+type UserTokenWalletOrder struct {
+	Direction OrderDirection             `json:"direction"`
+	Field     *UserTokenWalletOrderField `json:"field"`
+}
+
+// DefaultUserTokenWalletOrder is the default ordering of UserTokenWallet.
+var DefaultUserTokenWalletOrder = &UserTokenWalletOrder{
+	Direction: entgql.OrderDirectionAsc,
+	Field: &UserTokenWalletOrderField{
+		Value: func(_m *UserTokenWallet) (ent.Value, error) {
+			return _m.ID, nil
+		},
+		column: usertokenwallet.FieldID,
+		toTerm: usertokenwallet.ByID,
+		toCursor: func(_m *UserTokenWallet) Cursor {
+			return Cursor{ID: _m.ID}
+		},
+	},
+}
+
+// ToEdge converts UserTokenWallet into UserTokenWalletEdge.
+func (_m *UserTokenWallet) ToEdge(order *UserTokenWalletOrder) *UserTokenWalletEdge {
+	if order == nil {
+		order = DefaultUserTokenWalletOrder
+	}
+	return &UserTokenWalletEdge{
 		Node:   _m,
 		Cursor: order.Field.toCursor(_m),
 	}

@@ -1380,6 +1380,10 @@ type CreateUsageLogInput struct {
 	PromptTokens                       *int64
 	CompletionTokens                   *int64
 	TotalTokens                        *int64
+	EffectiveTokens                    *int64
+	CacheReadTokensKnown               *bool
+	WalletConsumedTokens               *int64
+	DonorCreditTokens                  *int64
 	PromptAudioTokens                  *int64
 	PromptCachedTokens                 *int64
 	PromptWriteCachedTokens            *int64
@@ -1413,6 +1417,18 @@ func (i *CreateUsageLogInput) Mutate(m *UsageLogMutation) {
 	}
 	if v := i.TotalTokens; v != nil {
 		m.SetTotalTokens(*v)
+	}
+	if v := i.EffectiveTokens; v != nil {
+		m.SetEffectiveTokens(*v)
+	}
+	if v := i.CacheReadTokensKnown; v != nil {
+		m.SetCacheReadTokensKnown(*v)
+	}
+	if v := i.WalletConsumedTokens; v != nil {
+		m.SetWalletConsumedTokens(*v)
+	}
+	if v := i.DonorCreditTokens; v != nil {
+		m.SetDonorCreditTokens(*v)
 	}
 	if v := i.PromptAudioTokens; v != nil {
 		m.SetPromptAudioTokens(*v)
@@ -1603,19 +1619,18 @@ func (c *UsageLogUpdateOne) SetInput(i UpdateUsageLogInput) *UsageLogUpdateOne {
 
 // CreateUserInput represents a mutation input for creating users.
 type CreateUserInput struct {
-	Email           string
-	Status          *user.Status
-	PreferLanguage  *string
-	Password        string
-	Nickname        *string
-	FirstName       *string
-	LastName        *string
-	Avatar          *string
-	IsOwner         *bool
-	DailyTokenLimit *int64
-	Scopes          []string
-	ProjectIDs      []int
-	RoleIDs         []int
+	Email          string
+	Status         *user.Status
+	PreferLanguage *string
+	Password       string
+	Nickname       *string
+	FirstName      *string
+	LastName       *string
+	Avatar         *string
+	IsOwner        *bool
+	Scopes         []string
+	ProjectIDs     []int
+	RoleIDs        []int
 }
 
 // Mutate applies the CreateUserInput on the UserMutation builder.
@@ -1642,9 +1657,6 @@ func (i *CreateUserInput) Mutate(m *UserMutation) {
 	}
 	if v := i.IsOwner; v != nil {
 		m.SetIsOwner(*v)
-	}
-	if v := i.DailyTokenLimit; v != nil {
-		m.SetDailyTokenLimit(*v)
 	}
 	if v := i.Scopes; v != nil {
 		m.SetScopes(v)
@@ -1675,7 +1687,6 @@ type UpdateUserInput struct {
 	ClearAvatar      bool
 	Avatar           *string
 	IsOwner          *bool
-	DailyTokenLimit  *int64
 	ClearScopes      bool
 	Scopes           []string
 	AppendScopes     []string
@@ -1718,9 +1729,6 @@ func (i *UpdateUserInput) Mutate(m *UserMutation) {
 	}
 	if v := i.IsOwner; v != nil {
 		m.SetIsOwner(*v)
-	}
-	if v := i.DailyTokenLimit; v != nil {
-		m.SetDailyTokenLimit(*v)
 	}
 	if i.ClearScopes {
 		m.ClearScopes()

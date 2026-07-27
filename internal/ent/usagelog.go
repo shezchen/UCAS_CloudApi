@@ -42,6 +42,14 @@ type UsageLog struct {
 	CompletionTokens int64 `json:"completion_tokens,omitempty"`
 	// Total number of tokens used
 	TotalTokens int64 `json:"total_tokens,omitempty"`
+	// Quota-bearing tokens after excluding cache-read input tokens
+	EffectiveTokens int64 `json:"effective_tokens,omitempty"`
+	// Whether the upstream response explicitly exposed cache-read token details
+	CacheReadTokensKnown bool `json:"cache_read_tokens_known,omitempty"`
+	// Effective tokens paid from the caller's permanent donation wallet
+	WalletConsumedTokens int64 `json:"wallet_consumed_tokens,omitempty"`
+	// Permanent wallet tokens credited to the donor for this request
+	DonorCreditTokens int64 `json:"donor_credit_tokens,omitempty"`
 	// Number of audio tokens in the prompt
 	PromptAudioTokens int64 `json:"prompt_audio_tokens,omitempty"`
 	// Number of cached tokens in the prompt
@@ -131,9 +139,11 @@ func (*UsageLog) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case usagelog.FieldCostItems:
 			values[i] = new([]byte)
+		case usagelog.FieldCacheReadTokensKnown:
+			values[i] = new(sql.NullBool)
 		case usagelog.FieldTotalCost:
 			values[i] = new(sql.NullFloat64)
-		case usagelog.FieldID, usagelog.FieldRequestID, usagelog.FieldAPIKeyID, usagelog.FieldProjectID, usagelog.FieldChannelID, usagelog.FieldPromptTokens, usagelog.FieldCompletionTokens, usagelog.FieldTotalTokens, usagelog.FieldPromptAudioTokens, usagelog.FieldPromptCachedTokens, usagelog.FieldPromptWriteCachedTokens, usagelog.FieldPromptWriteCachedTokens5m, usagelog.FieldPromptWriteCachedTokens1h, usagelog.FieldCompletionAudioTokens, usagelog.FieldCompletionReasoningTokens, usagelog.FieldCompletionAcceptedPredictionTokens, usagelog.FieldCompletionRejectedPredictionTokens:
+		case usagelog.FieldID, usagelog.FieldRequestID, usagelog.FieldAPIKeyID, usagelog.FieldProjectID, usagelog.FieldChannelID, usagelog.FieldPromptTokens, usagelog.FieldCompletionTokens, usagelog.FieldTotalTokens, usagelog.FieldEffectiveTokens, usagelog.FieldWalletConsumedTokens, usagelog.FieldDonorCreditTokens, usagelog.FieldPromptAudioTokens, usagelog.FieldPromptCachedTokens, usagelog.FieldPromptWriteCachedTokens, usagelog.FieldPromptWriteCachedTokens5m, usagelog.FieldPromptWriteCachedTokens1h, usagelog.FieldCompletionAudioTokens, usagelog.FieldCompletionReasoningTokens, usagelog.FieldCompletionAcceptedPredictionTokens, usagelog.FieldCompletionRejectedPredictionTokens:
 			values[i] = new(sql.NullInt64)
 		case usagelog.FieldModelID, usagelog.FieldSource, usagelog.FieldFormat, usagelog.FieldCostPriceReferenceID:
 			values[i] = new(sql.NullString)
@@ -219,6 +229,30 @@ func (_m *UsageLog) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field total_tokens", values[i])
 			} else if value.Valid {
 				_m.TotalTokens = value.Int64
+			}
+		case usagelog.FieldEffectiveTokens:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field effective_tokens", values[i])
+			} else if value.Valid {
+				_m.EffectiveTokens = value.Int64
+			}
+		case usagelog.FieldCacheReadTokensKnown:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field cache_read_tokens_known", values[i])
+			} else if value.Valid {
+				_m.CacheReadTokensKnown = value.Bool
+			}
+		case usagelog.FieldWalletConsumedTokens:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field wallet_consumed_tokens", values[i])
+			} else if value.Valid {
+				_m.WalletConsumedTokens = value.Int64
+			}
+		case usagelog.FieldDonorCreditTokens:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field donor_credit_tokens", values[i])
+			} else if value.Valid {
+				_m.DonorCreditTokens = value.Int64
 			}
 		case usagelog.FieldPromptAudioTokens:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
@@ -387,6 +421,18 @@ func (_m *UsageLog) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("total_tokens=")
 	builder.WriteString(fmt.Sprintf("%v", _m.TotalTokens))
+	builder.WriteString(", ")
+	builder.WriteString("effective_tokens=")
+	builder.WriteString(fmt.Sprintf("%v", _m.EffectiveTokens))
+	builder.WriteString(", ")
+	builder.WriteString("cache_read_tokens_known=")
+	builder.WriteString(fmt.Sprintf("%v", _m.CacheReadTokensKnown))
+	builder.WriteString(", ")
+	builder.WriteString("wallet_consumed_tokens=")
+	builder.WriteString(fmt.Sprintf("%v", _m.WalletConsumedTokens))
+	builder.WriteString(", ")
+	builder.WriteString("donor_credit_tokens=")
+	builder.WriteString(fmt.Sprintf("%v", _m.DonorCreditTokens))
 	builder.WriteString(", ")
 	builder.WriteString("prompt_audio_tokens=")
 	builder.WriteString(fmt.Sprintf("%v", _m.PromptAudioTokens))

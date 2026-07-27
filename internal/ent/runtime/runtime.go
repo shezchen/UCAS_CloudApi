@@ -26,11 +26,13 @@ import (
 	"github.com/looplj/axonhub/internal/ent/schema"
 	"github.com/looplj/axonhub/internal/ent/system"
 	"github.com/looplj/axonhub/internal/ent/thread"
+	"github.com/looplj/axonhub/internal/ent/tokenwalletledger"
 	"github.com/looplj/axonhub/internal/ent/trace"
 	"github.com/looplj/axonhub/internal/ent/usagelog"
 	"github.com/looplj/axonhub/internal/ent/user"
 	"github.com/looplj/axonhub/internal/ent/userproject"
 	"github.com/looplj/axonhub/internal/ent/userrole"
+	"github.com/looplj/axonhub/internal/ent/usertokenwallet"
 	"github.com/looplj/axonhub/internal/objects"
 
 	"entgo.io/ent"
@@ -802,6 +804,60 @@ func init() {
 	thread.DefaultUpdatedAt = threadDescUpdatedAt.Default.(func() time.Time)
 	// thread.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
 	thread.UpdateDefaultUpdatedAt = threadDescUpdatedAt.UpdateDefault.(func() time.Time)
+	tokenwalletledgerMixin := schema.TokenWalletLedger{}.Mixin()
+	tokenwalletledger.Policy = privacy.NewPolicies(schema.TokenWalletLedger{})
+	tokenwalletledger.Hooks[0] = func(next ent.Mutator) ent.Mutator {
+		return ent.MutateFunc(func(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+			if err := tokenwalletledger.Policy.EvalMutation(ctx, m); err != nil {
+				return nil, err
+			}
+			return next.Mutate(ctx, m)
+		})
+	}
+	tokenwalletledgerMixinFields0 := tokenwalletledgerMixin[0].Fields()
+	_ = tokenwalletledgerMixinFields0
+	tokenwalletledgerFields := schema.TokenWalletLedger{}.Fields()
+	_ = tokenwalletledgerFields
+	// tokenwalletledgerDescCreatedAt is the schema descriptor for created_at field.
+	tokenwalletledgerDescCreatedAt := tokenwalletledgerMixinFields0[0].Descriptor()
+	// tokenwalletledger.DefaultCreatedAt holds the default value on creation for the created_at field.
+	tokenwalletledger.DefaultCreatedAt = tokenwalletledgerDescCreatedAt.Default.(func() time.Time)
+	// tokenwalletledgerDescUpdatedAt is the schema descriptor for updated_at field.
+	tokenwalletledgerDescUpdatedAt := tokenwalletledgerMixinFields0[1].Descriptor()
+	// tokenwalletledger.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	tokenwalletledger.DefaultUpdatedAt = tokenwalletledgerDescUpdatedAt.Default.(func() time.Time)
+	// tokenwalletledger.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	tokenwalletledger.UpdateDefaultUpdatedAt = tokenwalletledgerDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// tokenwalletledgerDescUserID is the schema descriptor for user_id field.
+	tokenwalletledgerDescUserID := tokenwalletledgerFields[0].Descriptor()
+	// tokenwalletledger.UserIDValidator is a validator for the "user_id" field. It is called by the builders before save.
+	tokenwalletledger.UserIDValidator = tokenwalletledgerDescUserID.Validators[0].(func(int) error)
+	// tokenwalletledgerDescRequestID is the schema descriptor for request_id field.
+	tokenwalletledgerDescRequestID := tokenwalletledgerFields[1].Descriptor()
+	// tokenwalletledger.RequestIDValidator is a validator for the "request_id" field. It is called by the builders before save.
+	tokenwalletledger.RequestIDValidator = tokenwalletledgerDescRequestID.Validators[0].(func(int) error)
+	// tokenwalletledgerDescUsageLogID is the schema descriptor for usage_log_id field.
+	tokenwalletledgerDescUsageLogID := tokenwalletledgerFields[2].Descriptor()
+	// tokenwalletledger.UsageLogIDValidator is a validator for the "usage_log_id" field. It is called by the builders before save.
+	tokenwalletledger.UsageLogIDValidator = tokenwalletledgerDescUsageLogID.Validators[0].(func(int) error)
+	// tokenwalletledgerDescChannelID is the schema descriptor for channel_id field.
+	tokenwalletledgerDescChannelID := tokenwalletledgerFields[3].Descriptor()
+	// tokenwalletledger.ChannelIDValidator is a validator for the "channel_id" field. It is called by the builders before save.
+	tokenwalletledger.ChannelIDValidator = tokenwalletledgerDescChannelID.Validators[0].(func(int) error)
+	// tokenwalletledgerDescChannelNameSnapshot is the schema descriptor for channel_name_snapshot field.
+	tokenwalletledgerDescChannelNameSnapshot := tokenwalletledgerFields[4].Descriptor()
+	// tokenwalletledger.DefaultChannelNameSnapshot holds the default value on creation for the channel_name_snapshot field.
+	tokenwalletledger.DefaultChannelNameSnapshot = tokenwalletledgerDescChannelNameSnapshot.Default.(string)
+	// tokenwalletledgerDescAmountTokens is the schema descriptor for amount_tokens field.
+	tokenwalletledgerDescAmountTokens := tokenwalletledgerFields[6].Descriptor()
+	// tokenwalletledger.AmountTokensValidator is a validator for the "amount_tokens" field. It is called by the builders before save.
+	tokenwalletledger.AmountTokensValidator = tokenwalletledgerDescAmountTokens.Validators[0].(func(int64) error)
+	// tokenwalletledgerDescEffectiveTokensSnapshot is the schema descriptor for effective_tokens_snapshot field.
+	tokenwalletledgerDescEffectiveTokensSnapshot := tokenwalletledgerFields[7].Descriptor()
+	// tokenwalletledger.DefaultEffectiveTokensSnapshot holds the default value on creation for the effective_tokens_snapshot field.
+	tokenwalletledger.DefaultEffectiveTokensSnapshot = tokenwalletledgerDescEffectiveTokensSnapshot.Default.(int64)
+	// tokenwalletledger.EffectiveTokensSnapshotValidator is a validator for the "effective_tokens_snapshot" field. It is called by the builders before save.
+	tokenwalletledger.EffectiveTokensSnapshotValidator = tokenwalletledgerDescEffectiveTokensSnapshot.Validators[0].(func(int64) error)
 	traceMixin := schema.Trace{}.Mixin()
 	trace.Policy = privacy.NewPolicies(schema.Trace{})
 	trace.Hooks[0] = func(next ent.Mutator) ent.Mutator {
@@ -866,48 +922,64 @@ func init() {
 	usagelogDescTotalTokens := usagelogFields[7].Descriptor()
 	// usagelog.DefaultTotalTokens holds the default value on creation for the total_tokens field.
 	usagelog.DefaultTotalTokens = usagelogDescTotalTokens.Default.(int64)
+	// usagelogDescEffectiveTokens is the schema descriptor for effective_tokens field.
+	usagelogDescEffectiveTokens := usagelogFields[8].Descriptor()
+	// usagelog.DefaultEffectiveTokens holds the default value on creation for the effective_tokens field.
+	usagelog.DefaultEffectiveTokens = usagelogDescEffectiveTokens.Default.(int64)
+	// usagelogDescCacheReadTokensKnown is the schema descriptor for cache_read_tokens_known field.
+	usagelogDescCacheReadTokensKnown := usagelogFields[9].Descriptor()
+	// usagelog.DefaultCacheReadTokensKnown holds the default value on creation for the cache_read_tokens_known field.
+	usagelog.DefaultCacheReadTokensKnown = usagelogDescCacheReadTokensKnown.Default.(bool)
+	// usagelogDescWalletConsumedTokens is the schema descriptor for wallet_consumed_tokens field.
+	usagelogDescWalletConsumedTokens := usagelogFields[10].Descriptor()
+	// usagelog.DefaultWalletConsumedTokens holds the default value on creation for the wallet_consumed_tokens field.
+	usagelog.DefaultWalletConsumedTokens = usagelogDescWalletConsumedTokens.Default.(int64)
+	// usagelogDescDonorCreditTokens is the schema descriptor for donor_credit_tokens field.
+	usagelogDescDonorCreditTokens := usagelogFields[11].Descriptor()
+	// usagelog.DefaultDonorCreditTokens holds the default value on creation for the donor_credit_tokens field.
+	usagelog.DefaultDonorCreditTokens = usagelogDescDonorCreditTokens.Default.(int64)
 	// usagelogDescPromptAudioTokens is the schema descriptor for prompt_audio_tokens field.
-	usagelogDescPromptAudioTokens := usagelogFields[8].Descriptor()
+	usagelogDescPromptAudioTokens := usagelogFields[12].Descriptor()
 	// usagelog.DefaultPromptAudioTokens holds the default value on creation for the prompt_audio_tokens field.
 	usagelog.DefaultPromptAudioTokens = usagelogDescPromptAudioTokens.Default.(int64)
 	// usagelogDescPromptCachedTokens is the schema descriptor for prompt_cached_tokens field.
-	usagelogDescPromptCachedTokens := usagelogFields[9].Descriptor()
+	usagelogDescPromptCachedTokens := usagelogFields[13].Descriptor()
 	// usagelog.DefaultPromptCachedTokens holds the default value on creation for the prompt_cached_tokens field.
 	usagelog.DefaultPromptCachedTokens = usagelogDescPromptCachedTokens.Default.(int64)
 	// usagelogDescPromptWriteCachedTokens is the schema descriptor for prompt_write_cached_tokens field.
-	usagelogDescPromptWriteCachedTokens := usagelogFields[10].Descriptor()
+	usagelogDescPromptWriteCachedTokens := usagelogFields[14].Descriptor()
 	// usagelog.DefaultPromptWriteCachedTokens holds the default value on creation for the prompt_write_cached_tokens field.
 	usagelog.DefaultPromptWriteCachedTokens = usagelogDescPromptWriteCachedTokens.Default.(int64)
 	// usagelogDescPromptWriteCachedTokens5m is the schema descriptor for prompt_write_cached_tokens_5m field.
-	usagelogDescPromptWriteCachedTokens5m := usagelogFields[11].Descriptor()
+	usagelogDescPromptWriteCachedTokens5m := usagelogFields[15].Descriptor()
 	// usagelog.DefaultPromptWriteCachedTokens5m holds the default value on creation for the prompt_write_cached_tokens_5m field.
 	usagelog.DefaultPromptWriteCachedTokens5m = usagelogDescPromptWriteCachedTokens5m.Default.(int64)
 	// usagelogDescPromptWriteCachedTokens1h is the schema descriptor for prompt_write_cached_tokens_1h field.
-	usagelogDescPromptWriteCachedTokens1h := usagelogFields[12].Descriptor()
+	usagelogDescPromptWriteCachedTokens1h := usagelogFields[16].Descriptor()
 	// usagelog.DefaultPromptWriteCachedTokens1h holds the default value on creation for the prompt_write_cached_tokens_1h field.
 	usagelog.DefaultPromptWriteCachedTokens1h = usagelogDescPromptWriteCachedTokens1h.Default.(int64)
 	// usagelogDescCompletionAudioTokens is the schema descriptor for completion_audio_tokens field.
-	usagelogDescCompletionAudioTokens := usagelogFields[13].Descriptor()
+	usagelogDescCompletionAudioTokens := usagelogFields[17].Descriptor()
 	// usagelog.DefaultCompletionAudioTokens holds the default value on creation for the completion_audio_tokens field.
 	usagelog.DefaultCompletionAudioTokens = usagelogDescCompletionAudioTokens.Default.(int64)
 	// usagelogDescCompletionReasoningTokens is the schema descriptor for completion_reasoning_tokens field.
-	usagelogDescCompletionReasoningTokens := usagelogFields[14].Descriptor()
+	usagelogDescCompletionReasoningTokens := usagelogFields[18].Descriptor()
 	// usagelog.DefaultCompletionReasoningTokens holds the default value on creation for the completion_reasoning_tokens field.
 	usagelog.DefaultCompletionReasoningTokens = usagelogDescCompletionReasoningTokens.Default.(int64)
 	// usagelogDescCompletionAcceptedPredictionTokens is the schema descriptor for completion_accepted_prediction_tokens field.
-	usagelogDescCompletionAcceptedPredictionTokens := usagelogFields[15].Descriptor()
+	usagelogDescCompletionAcceptedPredictionTokens := usagelogFields[19].Descriptor()
 	// usagelog.DefaultCompletionAcceptedPredictionTokens holds the default value on creation for the completion_accepted_prediction_tokens field.
 	usagelog.DefaultCompletionAcceptedPredictionTokens = usagelogDescCompletionAcceptedPredictionTokens.Default.(int64)
 	// usagelogDescCompletionRejectedPredictionTokens is the schema descriptor for completion_rejected_prediction_tokens field.
-	usagelogDescCompletionRejectedPredictionTokens := usagelogFields[16].Descriptor()
+	usagelogDescCompletionRejectedPredictionTokens := usagelogFields[20].Descriptor()
 	// usagelog.DefaultCompletionRejectedPredictionTokens holds the default value on creation for the completion_rejected_prediction_tokens field.
 	usagelog.DefaultCompletionRejectedPredictionTokens = usagelogDescCompletionRejectedPredictionTokens.Default.(int64)
 	// usagelogDescFormat is the schema descriptor for format field.
-	usagelogDescFormat := usagelogFields[18].Descriptor()
+	usagelogDescFormat := usagelogFields[22].Descriptor()
 	// usagelog.DefaultFormat holds the default value on creation for the format field.
 	usagelog.DefaultFormat = usagelogDescFormat.Default.(string)
 	// usagelogDescCostItems is the schema descriptor for cost_items field.
-	usagelogDescCostItems := usagelogFields[20].Descriptor()
+	usagelogDescCostItems := usagelogFields[24].Descriptor()
 	// usagelog.DefaultCostItems holds the default value on creation for the cost_items field.
 	usagelog.DefaultCostItems = usagelogDescCostItems.Default.([]objects.CostItem)
 	userMixin := schema.User{}.Mixin()
@@ -1021,6 +1093,58 @@ func init() {
 	userrole.DefaultUpdatedAt = userroleDescUpdatedAt.Default.(func() time.Time)
 	// userrole.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
 	userrole.UpdateDefaultUpdatedAt = userroleDescUpdatedAt.UpdateDefault.(func() time.Time)
+	usertokenwalletMixin := schema.UserTokenWallet{}.Mixin()
+	usertokenwallet.Policy = privacy.NewPolicies(schema.UserTokenWallet{})
+	usertokenwallet.Hooks[0] = func(next ent.Mutator) ent.Mutator {
+		return ent.MutateFunc(func(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+			if err := usertokenwallet.Policy.EvalMutation(ctx, m); err != nil {
+				return nil, err
+			}
+			return next.Mutate(ctx, m)
+		})
+	}
+	usertokenwalletMixinFields0 := usertokenwalletMixin[0].Fields()
+	_ = usertokenwalletMixinFields0
+	usertokenwalletFields := schema.UserTokenWallet{}.Fields()
+	_ = usertokenwalletFields
+	// usertokenwalletDescCreatedAt is the schema descriptor for created_at field.
+	usertokenwalletDescCreatedAt := usertokenwalletMixinFields0[0].Descriptor()
+	// usertokenwallet.DefaultCreatedAt holds the default value on creation for the created_at field.
+	usertokenwallet.DefaultCreatedAt = usertokenwalletDescCreatedAt.Default.(func() time.Time)
+	// usertokenwalletDescUpdatedAt is the schema descriptor for updated_at field.
+	usertokenwalletDescUpdatedAt := usertokenwalletMixinFields0[1].Descriptor()
+	// usertokenwallet.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	usertokenwallet.DefaultUpdatedAt = usertokenwalletDescUpdatedAt.Default.(func() time.Time)
+	// usertokenwallet.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	usertokenwallet.UpdateDefaultUpdatedAt = usertokenwalletDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// usertokenwalletDescUserID is the schema descriptor for user_id field.
+	usertokenwalletDescUserID := usertokenwalletFields[0].Descriptor()
+	// usertokenwallet.UserIDValidator is a validator for the "user_id" field. It is called by the builders before save.
+	usertokenwallet.UserIDValidator = usertokenwalletDescUserID.Validators[0].(func(int) error)
+	// usertokenwalletDescBalanceTokens is the schema descriptor for balance_tokens field.
+	usertokenwalletDescBalanceTokens := usertokenwalletFields[1].Descriptor()
+	// usertokenwallet.DefaultBalanceTokens holds the default value on creation for the balance_tokens field.
+	usertokenwallet.DefaultBalanceTokens = usertokenwalletDescBalanceTokens.Default.(int64)
+	// usertokenwallet.BalanceTokensValidator is a validator for the "balance_tokens" field. It is called by the builders before save.
+	usertokenwallet.BalanceTokensValidator = usertokenwalletDescBalanceTokens.Validators[0].(func(int64) error)
+	// usertokenwalletDescLifetimeCreditedTokens is the schema descriptor for lifetime_credited_tokens field.
+	usertokenwalletDescLifetimeCreditedTokens := usertokenwalletFields[2].Descriptor()
+	// usertokenwallet.DefaultLifetimeCreditedTokens holds the default value on creation for the lifetime_credited_tokens field.
+	usertokenwallet.DefaultLifetimeCreditedTokens = usertokenwalletDescLifetimeCreditedTokens.Default.(int64)
+	// usertokenwallet.LifetimeCreditedTokensValidator is a validator for the "lifetime_credited_tokens" field. It is called by the builders before save.
+	usertokenwallet.LifetimeCreditedTokensValidator = usertokenwalletDescLifetimeCreditedTokens.Validators[0].(func(int64) error)
+	// usertokenwalletDescLifetimeDebitedTokens is the schema descriptor for lifetime_debited_tokens field.
+	usertokenwalletDescLifetimeDebitedTokens := usertokenwalletFields[3].Descriptor()
+	// usertokenwallet.DefaultLifetimeDebitedTokens holds the default value on creation for the lifetime_debited_tokens field.
+	usertokenwallet.DefaultLifetimeDebitedTokens = usertokenwalletDescLifetimeDebitedTokens.Default.(int64)
+	// usertokenwallet.LifetimeDebitedTokensValidator is a validator for the "lifetime_debited_tokens" field. It is called by the builders before save.
+	usertokenwallet.LifetimeDebitedTokensValidator = usertokenwalletDescLifetimeDebitedTokens.Validators[0].(func(int64) error)
+	// usertokenwalletDescVersion is the schema descriptor for version field.
+	usertokenwalletDescVersion := usertokenwalletFields[4].Descriptor()
+	// usertokenwallet.DefaultVersion holds the default value on creation for the version field.
+	usertokenwallet.DefaultVersion = usertokenwalletDescVersion.Default.(int64)
+	// usertokenwallet.VersionValidator is a validator for the "version" field. It is called by the builders before save.
+	usertokenwallet.VersionValidator = usertokenwalletDescVersion.Validators[0].(func(int64) error)
 }
 
 const (

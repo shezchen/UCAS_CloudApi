@@ -24,11 +24,13 @@ import (
 	"github.com/looplj/axonhub/internal/ent/role"
 	"github.com/looplj/axonhub/internal/ent/system"
 	"github.com/looplj/axonhub/internal/ent/thread"
+	"github.com/looplj/axonhub/internal/ent/tokenwalletledger"
 	"github.com/looplj/axonhub/internal/ent/trace"
 	"github.com/looplj/axonhub/internal/ent/usagelog"
 	"github.com/looplj/axonhub/internal/ent/user"
 	"github.com/looplj/axonhub/internal/ent/userproject"
 	"github.com/looplj/axonhub/internal/ent/userrole"
+	"github.com/looplj/axonhub/internal/ent/usertokenwallet"
 
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
@@ -38,7 +40,7 @@ import (
 
 // schemaGraph holds a representation of ent/schema at runtime.
 var schemaGraph = func() *sqlgraph.Schema {
-	graph := &sqlgraph.Schema{Nodes: make([]*sqlgraph.Node, 25)}
+	graph := &sqlgraph.Schema{Nodes: make([]*sqlgraph.Node, 27)}
 	graph.Nodes[0] = &sqlgraph.Node{
 		NodeSpec: sqlgraph.NodeSpec{
 			Table:   apikey.Table,
@@ -514,6 +516,29 @@ var schemaGraph = func() *sqlgraph.Schema {
 	}
 	graph.Nodes[20] = &sqlgraph.Node{
 		NodeSpec: sqlgraph.NodeSpec{
+			Table:   tokenwalletledger.Table,
+			Columns: tokenwalletledger.Columns,
+			ID: &sqlgraph.FieldSpec{
+				Type:   field.TypeInt,
+				Column: tokenwalletledger.FieldID,
+			},
+		},
+		Type: "TokenWalletLedger",
+		Fields: map[string]*sqlgraph.FieldSpec{
+			tokenwalletledger.FieldCreatedAt:               {Type: field.TypeTime, Column: tokenwalletledger.FieldCreatedAt},
+			tokenwalletledger.FieldUpdatedAt:               {Type: field.TypeTime, Column: tokenwalletledger.FieldUpdatedAt},
+			tokenwalletledger.FieldUserID:                  {Type: field.TypeInt, Column: tokenwalletledger.FieldUserID},
+			tokenwalletledger.FieldRequestID:               {Type: field.TypeInt, Column: tokenwalletledger.FieldRequestID},
+			tokenwalletledger.FieldUsageLogID:              {Type: field.TypeInt, Column: tokenwalletledger.FieldUsageLogID},
+			tokenwalletledger.FieldChannelID:               {Type: field.TypeInt, Column: tokenwalletledger.FieldChannelID},
+			tokenwalletledger.FieldChannelNameSnapshot:     {Type: field.TypeString, Column: tokenwalletledger.FieldChannelNameSnapshot},
+			tokenwalletledger.FieldKind:                    {Type: field.TypeEnum, Column: tokenwalletledger.FieldKind},
+			tokenwalletledger.FieldAmountTokens:            {Type: field.TypeInt64, Column: tokenwalletledger.FieldAmountTokens},
+			tokenwalletledger.FieldEffectiveTokensSnapshot: {Type: field.TypeInt64, Column: tokenwalletledger.FieldEffectiveTokensSnapshot},
+		},
+	}
+	graph.Nodes[21] = &sqlgraph.Node{
+		NodeSpec: sqlgraph.NodeSpec{
 			Table:   trace.Table,
 			Columns: trace.Columns,
 			ID: &sqlgraph.FieldSpec{
@@ -530,7 +555,7 @@ var schemaGraph = func() *sqlgraph.Schema {
 			trace.FieldThreadID:  {Type: field.TypeInt, Column: trace.FieldThreadID},
 		},
 	}
-	graph.Nodes[21] = &sqlgraph.Node{
+	graph.Nodes[22] = &sqlgraph.Node{
 		NodeSpec: sqlgraph.NodeSpec{
 			Table:   usagelog.Table,
 			Columns: usagelog.Columns,
@@ -551,6 +576,10 @@ var schemaGraph = func() *sqlgraph.Schema {
 			usagelog.FieldPromptTokens:                       {Type: field.TypeInt64, Column: usagelog.FieldPromptTokens},
 			usagelog.FieldCompletionTokens:                   {Type: field.TypeInt64, Column: usagelog.FieldCompletionTokens},
 			usagelog.FieldTotalTokens:                        {Type: field.TypeInt64, Column: usagelog.FieldTotalTokens},
+			usagelog.FieldEffectiveTokens:                    {Type: field.TypeInt64, Column: usagelog.FieldEffectiveTokens},
+			usagelog.FieldCacheReadTokensKnown:               {Type: field.TypeBool, Column: usagelog.FieldCacheReadTokensKnown},
+			usagelog.FieldWalletConsumedTokens:               {Type: field.TypeInt64, Column: usagelog.FieldWalletConsumedTokens},
+			usagelog.FieldDonorCreditTokens:                  {Type: field.TypeInt64, Column: usagelog.FieldDonorCreditTokens},
 			usagelog.FieldPromptAudioTokens:                  {Type: field.TypeInt64, Column: usagelog.FieldPromptAudioTokens},
 			usagelog.FieldPromptCachedTokens:                 {Type: field.TypeInt64, Column: usagelog.FieldPromptCachedTokens},
 			usagelog.FieldPromptWriteCachedTokens:            {Type: field.TypeInt64, Column: usagelog.FieldPromptWriteCachedTokens},
@@ -567,7 +596,7 @@ var schemaGraph = func() *sqlgraph.Schema {
 			usagelog.FieldCostPriceReferenceID:               {Type: field.TypeString, Column: usagelog.FieldCostPriceReferenceID},
 		},
 	}
-	graph.Nodes[22] = &sqlgraph.Node{
+	graph.Nodes[23] = &sqlgraph.Node{
 		NodeSpec: sqlgraph.NodeSpec{
 			Table:   user.Table,
 			Columns: user.Columns,
@@ -594,7 +623,7 @@ var schemaGraph = func() *sqlgraph.Schema {
 			user.FieldScopes:          {Type: field.TypeJSON, Column: user.FieldScopes},
 		},
 	}
-	graph.Nodes[23] = &sqlgraph.Node{
+	graph.Nodes[24] = &sqlgraph.Node{
 		NodeSpec: sqlgraph.NodeSpec{
 			Table:   userproject.Table,
 			Columns: userproject.Columns,
@@ -613,7 +642,7 @@ var schemaGraph = func() *sqlgraph.Schema {
 			userproject.FieldScopes:    {Type: field.TypeJSON, Column: userproject.FieldScopes},
 		},
 	}
-	graph.Nodes[24] = &sqlgraph.Node{
+	graph.Nodes[25] = &sqlgraph.Node{
 		NodeSpec: sqlgraph.NodeSpec{
 			Table:   userrole.Table,
 			Columns: userrole.Columns,
@@ -628,6 +657,26 @@ var schemaGraph = func() *sqlgraph.Schema {
 			userrole.FieldRoleID:    {Type: field.TypeInt, Column: userrole.FieldRoleID},
 			userrole.FieldCreatedAt: {Type: field.TypeTime, Column: userrole.FieldCreatedAt},
 			userrole.FieldUpdatedAt: {Type: field.TypeTime, Column: userrole.FieldUpdatedAt},
+		},
+	}
+	graph.Nodes[26] = &sqlgraph.Node{
+		NodeSpec: sqlgraph.NodeSpec{
+			Table:   usertokenwallet.Table,
+			Columns: usertokenwallet.Columns,
+			ID: &sqlgraph.FieldSpec{
+				Type:   field.TypeInt,
+				Column: usertokenwallet.FieldID,
+			},
+		},
+		Type: "UserTokenWallet",
+		Fields: map[string]*sqlgraph.FieldSpec{
+			usertokenwallet.FieldCreatedAt:              {Type: field.TypeTime, Column: usertokenwallet.FieldCreatedAt},
+			usertokenwallet.FieldUpdatedAt:              {Type: field.TypeTime, Column: usertokenwallet.FieldUpdatedAt},
+			usertokenwallet.FieldUserID:                 {Type: field.TypeInt, Column: usertokenwallet.FieldUserID},
+			usertokenwallet.FieldBalanceTokens:          {Type: field.TypeInt64, Column: usertokenwallet.FieldBalanceTokens},
+			usertokenwallet.FieldLifetimeCreditedTokens: {Type: field.TypeInt64, Column: usertokenwallet.FieldLifetimeCreditedTokens},
+			usertokenwallet.FieldLifetimeDebitedTokens:  {Type: field.TypeInt64, Column: usertokenwallet.FieldLifetimeDebitedTokens},
+			usertokenwallet.FieldVersion:                {Type: field.TypeInt64, Column: usertokenwallet.FieldVersion},
 		},
 	}
 	graph.MustAddE(
@@ -3917,6 +3966,96 @@ func (f *ThreadFilter) WhereHasTracesWith(preds ...predicate.Trace) {
 }
 
 // addPredicate implements the predicateAdder interface.
+func (_q *TokenWalletLedgerQuery) addPredicate(pred func(s *sql.Selector)) {
+	_q.predicates = append(_q.predicates, pred)
+}
+
+// Filter returns a Filter implementation to apply filters on the TokenWalletLedgerQuery builder.
+func (_q *TokenWalletLedgerQuery) Filter() *TokenWalletLedgerFilter {
+	return &TokenWalletLedgerFilter{config: _q.config, predicateAdder: _q}
+}
+
+// addPredicate implements the predicateAdder interface.
+func (m *TokenWalletLedgerMutation) addPredicate(pred func(s *sql.Selector)) {
+	m.predicates = append(m.predicates, pred)
+}
+
+// Filter returns an entql.Where implementation to apply filters on the TokenWalletLedgerMutation builder.
+func (m *TokenWalletLedgerMutation) Filter() *TokenWalletLedgerFilter {
+	return &TokenWalletLedgerFilter{config: m.config, predicateAdder: m}
+}
+
+// TokenWalletLedgerFilter provides a generic filtering capability at runtime for TokenWalletLedgerQuery.
+type TokenWalletLedgerFilter struct {
+	predicateAdder
+	config
+}
+
+// Where applies the entql predicate on the query filter.
+func (f *TokenWalletLedgerFilter) Where(p entql.P) {
+	f.addPredicate(func(s *sql.Selector) {
+		if err := schemaGraph.EvalP(schemaGraph.Nodes[20].Type, p, s); err != nil {
+			s.AddError(err)
+		}
+	})
+}
+
+// WhereID applies the entql int predicate on the id field.
+func (f *TokenWalletLedgerFilter) WhereID(p entql.IntP) {
+	f.Where(p.Field(tokenwalletledger.FieldID))
+}
+
+// WhereCreatedAt applies the entql time.Time predicate on the created_at field.
+func (f *TokenWalletLedgerFilter) WhereCreatedAt(p entql.TimeP) {
+	f.Where(p.Field(tokenwalletledger.FieldCreatedAt))
+}
+
+// WhereUpdatedAt applies the entql time.Time predicate on the updated_at field.
+func (f *TokenWalletLedgerFilter) WhereUpdatedAt(p entql.TimeP) {
+	f.Where(p.Field(tokenwalletledger.FieldUpdatedAt))
+}
+
+// WhereUserID applies the entql int predicate on the user_id field.
+func (f *TokenWalletLedgerFilter) WhereUserID(p entql.IntP) {
+	f.Where(p.Field(tokenwalletledger.FieldUserID))
+}
+
+// WhereRequestID applies the entql int predicate on the request_id field.
+func (f *TokenWalletLedgerFilter) WhereRequestID(p entql.IntP) {
+	f.Where(p.Field(tokenwalletledger.FieldRequestID))
+}
+
+// WhereUsageLogID applies the entql int predicate on the usage_log_id field.
+func (f *TokenWalletLedgerFilter) WhereUsageLogID(p entql.IntP) {
+	f.Where(p.Field(tokenwalletledger.FieldUsageLogID))
+}
+
+// WhereChannelID applies the entql int predicate on the channel_id field.
+func (f *TokenWalletLedgerFilter) WhereChannelID(p entql.IntP) {
+	f.Where(p.Field(tokenwalletledger.FieldChannelID))
+}
+
+// WhereChannelNameSnapshot applies the entql string predicate on the channel_name_snapshot field.
+func (f *TokenWalletLedgerFilter) WhereChannelNameSnapshot(p entql.StringP) {
+	f.Where(p.Field(tokenwalletledger.FieldChannelNameSnapshot))
+}
+
+// WhereKind applies the entql string predicate on the kind field.
+func (f *TokenWalletLedgerFilter) WhereKind(p entql.StringP) {
+	f.Where(p.Field(tokenwalletledger.FieldKind))
+}
+
+// WhereAmountTokens applies the entql int64 predicate on the amount_tokens field.
+func (f *TokenWalletLedgerFilter) WhereAmountTokens(p entql.Int64P) {
+	f.Where(p.Field(tokenwalletledger.FieldAmountTokens))
+}
+
+// WhereEffectiveTokensSnapshot applies the entql int64 predicate on the effective_tokens_snapshot field.
+func (f *TokenWalletLedgerFilter) WhereEffectiveTokensSnapshot(p entql.Int64P) {
+	f.Where(p.Field(tokenwalletledger.FieldEffectiveTokensSnapshot))
+}
+
+// addPredicate implements the predicateAdder interface.
 func (_q *TraceQuery) addPredicate(pred func(s *sql.Selector)) {
 	_q.predicates = append(_q.predicates, pred)
 }
@@ -3945,7 +4084,7 @@ type TraceFilter struct {
 // Where applies the entql predicate on the query filter.
 func (f *TraceFilter) Where(p entql.P) {
 	f.addPredicate(func(s *sql.Selector) {
-		if err := schemaGraph.EvalP(schemaGraph.Nodes[20].Type, p, s); err != nil {
+		if err := schemaGraph.EvalP(schemaGraph.Nodes[21].Type, p, s); err != nil {
 			s.AddError(err)
 		}
 	})
@@ -4052,7 +4191,7 @@ type UsageLogFilter struct {
 // Where applies the entql predicate on the query filter.
 func (f *UsageLogFilter) Where(p entql.P) {
 	f.addPredicate(func(s *sql.Selector) {
-		if err := schemaGraph.EvalP(schemaGraph.Nodes[21].Type, p, s); err != nil {
+		if err := schemaGraph.EvalP(schemaGraph.Nodes[22].Type, p, s); err != nil {
 			s.AddError(err)
 		}
 	})
@@ -4111,6 +4250,26 @@ func (f *UsageLogFilter) WhereCompletionTokens(p entql.Int64P) {
 // WhereTotalTokens applies the entql int64 predicate on the total_tokens field.
 func (f *UsageLogFilter) WhereTotalTokens(p entql.Int64P) {
 	f.Where(p.Field(usagelog.FieldTotalTokens))
+}
+
+// WhereEffectiveTokens applies the entql int64 predicate on the effective_tokens field.
+func (f *UsageLogFilter) WhereEffectiveTokens(p entql.Int64P) {
+	f.Where(p.Field(usagelog.FieldEffectiveTokens))
+}
+
+// WhereCacheReadTokensKnown applies the entql bool predicate on the cache_read_tokens_known field.
+func (f *UsageLogFilter) WhereCacheReadTokensKnown(p entql.BoolP) {
+	f.Where(p.Field(usagelog.FieldCacheReadTokensKnown))
+}
+
+// WhereWalletConsumedTokens applies the entql int64 predicate on the wallet_consumed_tokens field.
+func (f *UsageLogFilter) WhereWalletConsumedTokens(p entql.Int64P) {
+	f.Where(p.Field(usagelog.FieldWalletConsumedTokens))
+}
+
+// WhereDonorCreditTokens applies the entql int64 predicate on the donor_credit_tokens field.
+func (f *UsageLogFilter) WhereDonorCreditTokens(p entql.Int64P) {
+	f.Where(p.Field(usagelog.FieldDonorCreditTokens))
 }
 
 // WherePromptAudioTokens applies the entql int64 predicate on the prompt_audio_tokens field.
@@ -4254,7 +4413,7 @@ type UserFilter struct {
 // Where applies the entql predicate on the query filter.
 func (f *UserFilter) Where(p entql.P) {
 	f.addPredicate(func(s *sql.Selector) {
-		if err := schemaGraph.EvalP(schemaGraph.Nodes[22].Type, p, s); err != nil {
+		if err := schemaGraph.EvalP(schemaGraph.Nodes[23].Type, p, s); err != nil {
 			s.AddError(err)
 		}
 	})
@@ -4476,7 +4635,7 @@ type UserProjectFilter struct {
 // Where applies the entql predicate on the query filter.
 func (f *UserProjectFilter) Where(p entql.P) {
 	f.addPredicate(func(s *sql.Selector) {
-		if err := schemaGraph.EvalP(schemaGraph.Nodes[23].Type, p, s); err != nil {
+		if err := schemaGraph.EvalP(schemaGraph.Nodes[24].Type, p, s); err != nil {
 			s.AddError(err)
 		}
 	})
@@ -4574,7 +4733,7 @@ type UserRoleFilter struct {
 // Where applies the entql predicate on the query filter.
 func (f *UserRoleFilter) Where(p entql.P) {
 	f.addPredicate(func(s *sql.Selector) {
-		if err := schemaGraph.EvalP(schemaGraph.Nodes[24].Type, p, s); err != nil {
+		if err := schemaGraph.EvalP(schemaGraph.Nodes[25].Type, p, s); err != nil {
 			s.AddError(err)
 		}
 	})
@@ -4631,4 +4790,79 @@ func (f *UserRoleFilter) WhereHasRoleWith(preds ...predicate.Role) {
 			p(s)
 		}
 	})))
+}
+
+// addPredicate implements the predicateAdder interface.
+func (_q *UserTokenWalletQuery) addPredicate(pred func(s *sql.Selector)) {
+	_q.predicates = append(_q.predicates, pred)
+}
+
+// Filter returns a Filter implementation to apply filters on the UserTokenWalletQuery builder.
+func (_q *UserTokenWalletQuery) Filter() *UserTokenWalletFilter {
+	return &UserTokenWalletFilter{config: _q.config, predicateAdder: _q}
+}
+
+// addPredicate implements the predicateAdder interface.
+func (m *UserTokenWalletMutation) addPredicate(pred func(s *sql.Selector)) {
+	m.predicates = append(m.predicates, pred)
+}
+
+// Filter returns an entql.Where implementation to apply filters on the UserTokenWalletMutation builder.
+func (m *UserTokenWalletMutation) Filter() *UserTokenWalletFilter {
+	return &UserTokenWalletFilter{config: m.config, predicateAdder: m}
+}
+
+// UserTokenWalletFilter provides a generic filtering capability at runtime for UserTokenWalletQuery.
+type UserTokenWalletFilter struct {
+	predicateAdder
+	config
+}
+
+// Where applies the entql predicate on the query filter.
+func (f *UserTokenWalletFilter) Where(p entql.P) {
+	f.addPredicate(func(s *sql.Selector) {
+		if err := schemaGraph.EvalP(schemaGraph.Nodes[26].Type, p, s); err != nil {
+			s.AddError(err)
+		}
+	})
+}
+
+// WhereID applies the entql int predicate on the id field.
+func (f *UserTokenWalletFilter) WhereID(p entql.IntP) {
+	f.Where(p.Field(usertokenwallet.FieldID))
+}
+
+// WhereCreatedAt applies the entql time.Time predicate on the created_at field.
+func (f *UserTokenWalletFilter) WhereCreatedAt(p entql.TimeP) {
+	f.Where(p.Field(usertokenwallet.FieldCreatedAt))
+}
+
+// WhereUpdatedAt applies the entql time.Time predicate on the updated_at field.
+func (f *UserTokenWalletFilter) WhereUpdatedAt(p entql.TimeP) {
+	f.Where(p.Field(usertokenwallet.FieldUpdatedAt))
+}
+
+// WhereUserID applies the entql int predicate on the user_id field.
+func (f *UserTokenWalletFilter) WhereUserID(p entql.IntP) {
+	f.Where(p.Field(usertokenwallet.FieldUserID))
+}
+
+// WhereBalanceTokens applies the entql int64 predicate on the balance_tokens field.
+func (f *UserTokenWalletFilter) WhereBalanceTokens(p entql.Int64P) {
+	f.Where(p.Field(usertokenwallet.FieldBalanceTokens))
+}
+
+// WhereLifetimeCreditedTokens applies the entql int64 predicate on the lifetime_credited_tokens field.
+func (f *UserTokenWalletFilter) WhereLifetimeCreditedTokens(p entql.Int64P) {
+	f.Where(p.Field(usertokenwallet.FieldLifetimeCreditedTokens))
+}
+
+// WhereLifetimeDebitedTokens applies the entql int64 predicate on the lifetime_debited_tokens field.
+func (f *UserTokenWalletFilter) WhereLifetimeDebitedTokens(p entql.Int64P) {
+	f.Where(p.Field(usertokenwallet.FieldLifetimeDebitedTokens))
+}
+
+// WhereVersion applies the entql int64 predicate on the version field.
+func (f *UserTokenWalletFilter) WhereVersion(p entql.Int64P) {
+	f.Where(p.Field(usertokenwallet.FieldVersion))
 }

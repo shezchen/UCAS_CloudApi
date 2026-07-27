@@ -97,6 +97,10 @@ func (svc *ChannelService) markChannelUnavailable(ctx context.Context, channelID
 
 // checkAndHandleChannelError checks if the channel should be disabled based on the error status code.
 func (svc *ChannelService) checkAndHandleChannelError(ctx context.Context, perf *PerformanceRecord, policy *RetryPolicy) bool {
+	if perf == nil || perf.Donated {
+		return false
+	}
+
 	for _, statusConfig := range policy.AutoDisableChannel.Statuses {
 		if statusConfig.Status != perf.ResponseStatusCode {
 			continue
@@ -128,6 +132,10 @@ func (svc *ChannelService) checkAndHandleChannelError(ctx context.Context, perf 
 // checkAndHandleAPIKeyError checks if the API key should be disabled based on the error status code.
 // Returns true if the API key was disabled.
 func (svc *ChannelService) checkAndHandleAPIKeyError(ctx context.Context, perf *PerformanceRecord, policy *RetryPolicy) bool {
+	if perf == nil || perf.Donated {
+		return false
+	}
+
 	for _, statusConfig := range policy.AutoDisableChannel.Statuses {
 		if statusConfig.Status != perf.ResponseStatusCode {
 			continue

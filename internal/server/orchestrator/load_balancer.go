@@ -9,6 +9,8 @@ import (
 	"github.com/samber/lo"
 	"github.com/viterin/partial"
 
+	"github.com/looplj/axonhub/internal/contexts"
+	"github.com/looplj/axonhub/internal/ent/request"
 	"github.com/looplj/axonhub/internal/log"
 	"github.com/looplj/axonhub/internal/server/biz"
 )
@@ -176,7 +178,11 @@ type candidateScore struct {
 // Returns a new slice with top k candidates sorted by descending priority.
 // The top k value is calculated internally based on the retry policy.
 func (lb *LoadBalancer) Sort(ctx context.Context, candidates []*ChannelModelsCandidate, model string, stream bool) []*ChannelModelsCandidate {
-	if len(candidates) <= 1 {
+	if len(candidates) == 0 {
+		return candidates
+	}
+	if len(candidates) == 1 {
+		lb.trackFairSessionSelection(ctx, candidates[0])
 		return candidates
 	}
 
@@ -263,8 +269,8 @@ func (lb *LoadBalancer) sortProduction(ctx context.Context, candidates []*Channe
 
 	// Increment selection count for the top candidate to ensure subsequent
 	// concurrent requests see the updated count and select different channels
-	if len(result) > 0 && result[0] != nil && result[0].Channel != nil && lb.selectionTracker != nil {
-		lb.selectionTracker.IncrementChannelSelection(result[0].Channel.ID)
+	if len(result) > 0 {
+		lb.trackFairSessionSelection(ctx, result[0])
 	}
 
 	return result
@@ -293,8 +299,16 @@ func (lb *LoadBalancer) prioritizeHealthyRoundRobinScores(ctx context.Context, s
 		healthy = append(healthy, score)
 	}
 
-	result := append(healthy, unhealthy...)
-	return append(result, hardUnavailable...)
+	if len(healthy) > 0 {
+		// Failing channels stay out of the production retry pool while a healthy
+		// choice exists. They re-enter after cooldown or through a half-open probe.
+		return healthy
+	}
+
+	// Preserve availability when every candidate is degraded. Hard quota/rate
+	// exclusions remain behind transiently unhealthy candidates.
+	result := append(unhealthy, hardUnavailable...)
+	return result
 }
 
 func isHardUnavailableScore(score float64) bool {
@@ -394,11 +408,25 @@ func (lb *LoadBalancer) sortWithDebug(ctx context.Context, candidates []*Channel
 
 	// Increment selection count for the top candidate to ensure subsequent
 	// concurrent requests see the updated count and select different channels
-	if len(result) > 0 && result[0] != nil && result[0].Channel != nil && lb.selectionTracker != nil {
-		lb.selectionTracker.IncrementChannelSelection(result[0].Channel.ID)
+	if len(result) > 0 {
+		lb.trackFairSessionSelection(ctx, result[0])
 	}
 
 	return result
+}
+
+func (lb *LoadBalancer) trackFairSessionSelection(ctx context.Context, candidate *ChannelModelsCandidate) {
+	if lb.selectionTracker == nil || candidate == nil || candidate.Channel == nil {
+		return
+	}
+	if source, ok := contexts.GetSource(ctx); ok && source == request.SourceTest {
+		return
+	}
+	if sessionAffinityChannelFromContext(ctx) == candidate.Channel.ID {
+		return
+	}
+
+	lb.selectionTracker.IncrementChannelSelection(candidate.Channel.ID)
 }
 
 func (lb *LoadBalancer) prioritizeHealthyRoundRobinDecisions(ctx context.Context, decisions []ChannelDecision) []ChannelDecision {
@@ -424,8 +452,12 @@ func (lb *LoadBalancer) prioritizeHealthyRoundRobinDecisions(ctx context.Context
 		healthy = append(healthy, decision)
 	}
 
-	result := append(healthy, unhealthy...)
-	return append(result, hardUnavailable...)
+	if len(healthy) > 0 {
+		return healthy
+	}
+
+	result := append(unhealthy, hardUnavailable...)
+	return result
 }
 
 // calculateTopK determines how many candidates to select based on retry policy.

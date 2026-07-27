@@ -150,6 +150,62 @@ func (_c *UsageLogCreate) SetNillableTotalTokens(v *int64) *UsageLogCreate {
 	return _c
 }
 
+// SetEffectiveTokens sets the "effective_tokens" field.
+func (_c *UsageLogCreate) SetEffectiveTokens(v int64) *UsageLogCreate {
+	_c.mutation.SetEffectiveTokens(v)
+	return _c
+}
+
+// SetNillableEffectiveTokens sets the "effective_tokens" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableEffectiveTokens(v *int64) *UsageLogCreate {
+	if v != nil {
+		_c.SetEffectiveTokens(*v)
+	}
+	return _c
+}
+
+// SetCacheReadTokensKnown sets the "cache_read_tokens_known" field.
+func (_c *UsageLogCreate) SetCacheReadTokensKnown(v bool) *UsageLogCreate {
+	_c.mutation.SetCacheReadTokensKnown(v)
+	return _c
+}
+
+// SetNillableCacheReadTokensKnown sets the "cache_read_tokens_known" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableCacheReadTokensKnown(v *bool) *UsageLogCreate {
+	if v != nil {
+		_c.SetCacheReadTokensKnown(*v)
+	}
+	return _c
+}
+
+// SetWalletConsumedTokens sets the "wallet_consumed_tokens" field.
+func (_c *UsageLogCreate) SetWalletConsumedTokens(v int64) *UsageLogCreate {
+	_c.mutation.SetWalletConsumedTokens(v)
+	return _c
+}
+
+// SetNillableWalletConsumedTokens sets the "wallet_consumed_tokens" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableWalletConsumedTokens(v *int64) *UsageLogCreate {
+	if v != nil {
+		_c.SetWalletConsumedTokens(*v)
+	}
+	return _c
+}
+
+// SetDonorCreditTokens sets the "donor_credit_tokens" field.
+func (_c *UsageLogCreate) SetDonorCreditTokens(v int64) *UsageLogCreate {
+	_c.mutation.SetDonorCreditTokens(v)
+	return _c
+}
+
+// SetNillableDonorCreditTokens sets the "donor_credit_tokens" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableDonorCreditTokens(v *int64) *UsageLogCreate {
+	if v != nil {
+		_c.SetDonorCreditTokens(*v)
+	}
+	return _c
+}
+
 // SetPromptAudioTokens sets the "prompt_audio_tokens" field.
 func (_c *UsageLogCreate) SetPromptAudioTokens(v int64) *UsageLogCreate {
 	_c.mutation.SetPromptAudioTokens(v)
@@ -420,6 +476,22 @@ func (_c *UsageLogCreate) defaults() error {
 		v := usagelog.DefaultTotalTokens
 		_c.mutation.SetTotalTokens(v)
 	}
+	if _, ok := _c.mutation.EffectiveTokens(); !ok {
+		v := usagelog.DefaultEffectiveTokens
+		_c.mutation.SetEffectiveTokens(v)
+	}
+	if _, ok := _c.mutation.CacheReadTokensKnown(); !ok {
+		v := usagelog.DefaultCacheReadTokensKnown
+		_c.mutation.SetCacheReadTokensKnown(v)
+	}
+	if _, ok := _c.mutation.WalletConsumedTokens(); !ok {
+		v := usagelog.DefaultWalletConsumedTokens
+		_c.mutation.SetWalletConsumedTokens(v)
+	}
+	if _, ok := _c.mutation.DonorCreditTokens(); !ok {
+		v := usagelog.DefaultDonorCreditTokens
+		_c.mutation.SetDonorCreditTokens(v)
+	}
 	if _, ok := _c.mutation.PromptAudioTokens(); !ok {
 		v := usagelog.DefaultPromptAudioTokens
 		_c.mutation.SetPromptAudioTokens(v)
@@ -490,6 +562,18 @@ func (_c *UsageLogCreate) check() error {
 	}
 	if _, ok := _c.mutation.TotalTokens(); !ok {
 		return &ValidationError{Name: "total_tokens", err: errors.New(`ent: missing required field "UsageLog.total_tokens"`)}
+	}
+	if _, ok := _c.mutation.EffectiveTokens(); !ok {
+		return &ValidationError{Name: "effective_tokens", err: errors.New(`ent: missing required field "UsageLog.effective_tokens"`)}
+	}
+	if _, ok := _c.mutation.CacheReadTokensKnown(); !ok {
+		return &ValidationError{Name: "cache_read_tokens_known", err: errors.New(`ent: missing required field "UsageLog.cache_read_tokens_known"`)}
+	}
+	if _, ok := _c.mutation.WalletConsumedTokens(); !ok {
+		return &ValidationError{Name: "wallet_consumed_tokens", err: errors.New(`ent: missing required field "UsageLog.wallet_consumed_tokens"`)}
+	}
+	if _, ok := _c.mutation.DonorCreditTokens(); !ok {
+		return &ValidationError{Name: "donor_credit_tokens", err: errors.New(`ent: missing required field "UsageLog.donor_credit_tokens"`)}
 	}
 	if _, ok := _c.mutation.Source(); !ok {
 		return &ValidationError{Name: "source", err: errors.New(`ent: missing required field "UsageLog.source"`)}
@@ -562,6 +646,22 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.TotalTokens(); ok {
 		_spec.SetField(usagelog.FieldTotalTokens, field.TypeInt64, value)
 		_node.TotalTokens = value
+	}
+	if value, ok := _c.mutation.EffectiveTokens(); ok {
+		_spec.SetField(usagelog.FieldEffectiveTokens, field.TypeInt64, value)
+		_node.EffectiveTokens = value
+	}
+	if value, ok := _c.mutation.CacheReadTokensKnown(); ok {
+		_spec.SetField(usagelog.FieldCacheReadTokensKnown, field.TypeBool, value)
+		_node.CacheReadTokensKnown = value
+	}
+	if value, ok := _c.mutation.WalletConsumedTokens(); ok {
+		_spec.SetField(usagelog.FieldWalletConsumedTokens, field.TypeInt64, value)
+		_node.WalletConsumedTokens = value
+	}
+	if value, ok := _c.mutation.DonorCreditTokens(); ok {
+		_spec.SetField(usagelog.FieldDonorCreditTokens, field.TypeInt64, value)
+		_node.DonorCreditTokens = value
 	}
 	if value, ok := _c.mutation.PromptAudioTokens(); ok {
 		_spec.SetField(usagelog.FieldPromptAudioTokens, field.TypeInt64, value)
@@ -1092,6 +1192,18 @@ func (u *UsageLogUpsertOne) UpdateNewValues() *UsageLogUpsertOne {
 		}
 		if _, exists := u.create.mutation.ModelID(); exists {
 			s.SetIgnore(usagelog.FieldModelID)
+		}
+		if _, exists := u.create.mutation.EffectiveTokens(); exists {
+			s.SetIgnore(usagelog.FieldEffectiveTokens)
+		}
+		if _, exists := u.create.mutation.CacheReadTokensKnown(); exists {
+			s.SetIgnore(usagelog.FieldCacheReadTokensKnown)
+		}
+		if _, exists := u.create.mutation.WalletConsumedTokens(); exists {
+			s.SetIgnore(usagelog.FieldWalletConsumedTokens)
+		}
+		if _, exists := u.create.mutation.DonorCreditTokens(); exists {
+			s.SetIgnore(usagelog.FieldDonorCreditTokens)
 		}
 		if _, exists := u.create.mutation.Source(); exists {
 			s.SetIgnore(usagelog.FieldSource)
@@ -1722,6 +1834,18 @@ func (u *UsageLogUpsertBulk) UpdateNewValues() *UsageLogUpsertBulk {
 			}
 			if _, exists := b.mutation.ModelID(); exists {
 				s.SetIgnore(usagelog.FieldModelID)
+			}
+			if _, exists := b.mutation.EffectiveTokens(); exists {
+				s.SetIgnore(usagelog.FieldEffectiveTokens)
+			}
+			if _, exists := b.mutation.CacheReadTokensKnown(); exists {
+				s.SetIgnore(usagelog.FieldCacheReadTokensKnown)
+			}
+			if _, exists := b.mutation.WalletConsumedTokens(); exists {
+				s.SetIgnore(usagelog.FieldWalletConsumedTokens)
+			}
+			if _, exists := b.mutation.DonorCreditTokens(); exists {
+				s.SetIgnore(usagelog.FieldDonorCreditTokens)
 			}
 			if _, exists := b.mutation.Source(); exists {
 				s.SetIgnore(usagelog.FieldSource)

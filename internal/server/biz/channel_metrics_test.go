@@ -2,6 +2,7 @@ package biz
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,11 +20,11 @@ func TestAggregatedMetrics_Clone(t *testing.T) {
 	now := time.Now()
 	metrics := &AggregatedMetrics{
 		metricsRecord: metricsRecord{
-			RequestCount:        100,
 			SuccessCount:        80,
 			FailureCount:        20,
 			ConsecutiveFailures: 0,
 		},
+		RequestCount:                   100,
 		LastSelectedAt:                 new(now),
 		LastFailureAt:                  new(now.Add(-1 * time.Hour)),
 		StreamingFirstTokenLatencyEWMA: 320,
@@ -508,4 +509,100 @@ func TestPerformanceRecord_Methods(t *testing.T) {
 		}
 		require.False(t, invalidPerf2.IsValid())
 	})
+}
+
+func TestChannelService_ChannelMetricsConcurrentSelectionRecordAndRead(t *testing.T) {
+	client := enttest.NewEntClient(t, "sqlite3", "file:ent?mode=memory&_fk=0")
+	defer client.Close()
+
+	ctx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+	svc := &ChannelService{
+		AbstractService: &AbstractService{db: client},
+		SystemService: &SystemService{
+			AbstractService: &AbstractService{db: client},
+			Cache:           xcache.NewFromConfig[ent.System](xcache.Config{Mode: xcache.ModeMemory}),
+		},
+		channelPerfMetrics: make(map[int]*channelMetrics),
+		channelErrorCounts: make(map[int]map[int]int),
+		apiKeyErrorCounts:  make(map[int]map[string]map[int]int),
+		perfWindowSeconds:  600,
+	}
+
+	const (
+		channelID  = 41
+		workers    = 16
+		iterations = 200
+	)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			for range iterations {
+				svc.IncrementChannelSelection(channelID)
+				now := time.Now()
+				svc.RecordPerformance(ctx, &PerformanceRecord{
+					ChannelID:        channelID,
+					StartTime:        now.Add(-time.Millisecond),
+					EndTime:          now,
+					Success:          true,
+					RequestCompleted: true,
+				})
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			for range iterations {
+				metrics, err := svc.GetChannelMetrics(ctx, channelID)
+				if err != nil {
+					t.Errorf("GetChannelMetrics() error = %v", err)
+					return
+				}
+				if metrics.RequestCount < 0 || metrics.SuccessCount < 0 {
+					t.Errorf("observed negative metrics snapshot: request=%d success=%d",
+						metrics.RequestCount, metrics.SuccessCount)
+					return
+				}
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	metrics, err := svc.GetChannelMetrics(ctx, channelID)
+	require.NoError(t, err)
+	require.Equal(t, int64(workers*iterations), metrics.RequestCount)
+	require.Equal(t, int64(workers*iterations), metrics.SuccessCount)
+	require.Zero(t, metrics.FailureCount)
+}
+
+func TestChannelService_AsyncRecordPerformanceQueuesOwnedSnapshot(t *testing.T) {
+	firstToken := time.Date(2026, 7, 27, 14, 0, 0, 0, time.UTC)
+	reasoningStart := firstToken.Add(time.Second)
+	reasoningEnd := reasoningStart.Add(time.Second)
+	perf := &PerformanceRecord{
+		ChannelID:          9,
+		FirstTokenTime:     &firstToken,
+		ReasoningStartTime: &reasoningStart,
+		ReasoningEndTime:   &reasoningEnd,
+		CompletionTokens:   12,
+		RequestCompleted:   true,
+	}
+	svc := &ChannelService{perfCh: make(chan *PerformanceRecord, 1)}
+
+	svc.AsyncRecordPerformance(context.Background(), perf)
+	perf.CompletionTokens = 99
+	firstToken = firstToken.Add(time.Hour)
+	reasoningStart = reasoningStart.Add(time.Hour)
+	reasoningEnd = reasoningEnd.Add(time.Hour)
+
+	snapshot := <-svc.perfCh
+	require.NotSame(t, perf, snapshot)
+	require.Equal(t, int64(12), snapshot.CompletionTokens)
+	require.Equal(t, time.Date(2026, 7, 27, 14, 0, 0, 0, time.UTC), *snapshot.FirstTokenTime)
+	require.Equal(t, time.Date(2026, 7, 27, 14, 0, 1, 0, time.UTC), *snapshot.ReasoningStartTime)
+	require.Equal(t, time.Date(2026, 7, 27, 14, 0, 2, 0, time.UTC), *snapshot.ReasoningEndTime)
 }

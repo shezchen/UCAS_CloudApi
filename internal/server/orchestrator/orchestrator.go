@@ -45,12 +45,16 @@ func NewChatCompletionOrchestrator(
 
 	// Initialize model circuit breaker
 	modelCircuitBreaker := biz.NewModelCircuitBreaker()
+	sessionAffinity := NewSessionAffinityTracker(systemService)
 
 	rateLimitStrategy := NewRateLimitAwareStrategy(rateLimitTracker, channelLimiterManager)
 	quotaStrategy := NewQuotaAwareStrategy(quotaProvider, systemService)
+	traceStrategy := NewTraceAwareStrategy(requestService)
+	sessionAffinityStrategy := NewSessionAffinityStrategy()
 
 	adaptiveLoadBalancer := NewLoadBalancer(systemService, channelService,
-		NewTraceAwareStrategy(requestService),
+		traceStrategy,
+		sessionAffinityStrategy,
 		NewErrorAwareStrategy(channelService),
 		NewWeightRoundRobinStrategy(channelService),
 		NewLatencyAwareStrategy(channelService),
@@ -59,13 +63,15 @@ func NewChatCompletionOrchestrator(
 	)
 
 	failoverLoadBalancer := NewLoadBalancer(systemService, channelService,
-		NewWeightStrategy(), NewRandomStrategy(), rateLimitStrategy, quotaStrategy)
+		traceStrategy, sessionAffinityStrategy, NewWeightStrategy(), NewRandomStrategy(), rateLimitStrategy, quotaStrategy)
 
 	circuitBreakerLoadBalancer := NewLoadBalancer(systemService, channelService,
-		NewWeightStrategy(), NewModelAwareCircuitBreakerStrategy(modelCircuitBreaker), rateLimitStrategy, quotaStrategy)
+		traceStrategy, sessionAffinityStrategy, NewWeightStrategy(), NewModelAwareCircuitBreakerStrategy(modelCircuitBreaker), rateLimitStrategy, quotaStrategy)
 
-	roundRobinHealthFilter := NewRoundRobinHealthStrategy(channelService)
+	roundRobinHealthFilter := NewRoundRobinHealthStrategy(channelService, modelCircuitBreaker)
 	roundRobinLoadBalancer := NewLoadBalancer(systemService, channelService,
+		traceStrategy,
+		sessionAffinityStrategy,
 		NewRoundRobinStrategy(channelService),
 		rateLimitStrategy,
 		quotaStrategy,
@@ -96,6 +102,7 @@ func NewChatCompletionOrchestrator(
 		circuitBreakerLoadBalancer: circuitBreakerLoadBalancer,
 		roundRobinLoadBalancer:     roundRobinLoadBalancer,
 		modelCircuitBreaker:        modelCircuitBreaker,
+		sessionAffinity:            sessionAffinity,
 		quotaProvider:              quotaProvider,
 		proxy:                      nil,
 	}
@@ -134,6 +141,8 @@ type ChatCompletionOrchestrator struct {
 	rateLimitTracker *ChannelRequestTracker
 	// The model circuit breaker for circuit-breaker load balancing.
 	modelCircuitBreaker *biz.ModelCircuitBreaker
+	// Fallback affinity for clients that do not provide an explicit trace/session ID.
+	sessionAffinity *SessionAffinityTracker
 	// The provider quota status provider for quota-aware load balancing and selection.
 	quotaProvider ProviderQuotaStatusProvider
 
@@ -180,9 +189,8 @@ func (processor *ChatCompletionOrchestrator) Process(ctx context.Context, reques
 	strategy := deriveLoadBalancerStrategy(retryPolicy, apiKey)
 	if log.DebugEnabled(ctx) {
 		log.Debug(ctx, "chat request received",
-			log.String("request_body", string(request.Body)),
-			log.Any("request_headers", request.Headers),
-			log.Any("retry_policy", retryPolicy),
+			log.Int("request_body_bytes", len(request.Body)),
+			log.Int("request_header_count", len(request.Headers)),
 			log.String("system_load_balance_strategy", retryPolicy.LoadBalancerStrategy),
 			log.String("load_balance_strategy", strategy),
 		)
@@ -213,6 +221,7 @@ func (processor *ChatCompletionOrchestrator) Process(ctx context.Context, reques
 		RetryPolicyProvider:   processor.SystemService,
 		CandidateSelector:     processor.channelSelector,
 		LoadBalancer:          loadBalancer,
+		SessionAffinity:       processor.sessionAffinity,
 		ModelMapper:           processor.ModelMapper,
 		Proxy:                 processor.proxy,
 		CurrentCandidateIndex: 0,
@@ -275,7 +284,8 @@ func (processor *ChatCompletionOrchestrator) Process(ctx context.Context, reques
 		// Unified performance tracking middleware.
 		withPerformanceRecording(outbound),
 
-		withModelCircuitBreaker(outbound, processor.modelCircuitBreaker, strategy),
+		withModelCircuitBreaker(outbound, processor.modelCircuitBreaker),
+		withSessionAffinity(outbound, processor.sessionAffinity),
 
 		// The request execution middleware must be the final middleware
 		// to ensure that the request execution is created with the correct request bodys.

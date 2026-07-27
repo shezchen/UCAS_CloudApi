@@ -86,10 +86,9 @@ func TestRoundRobinStrategy_Score_ModerateRequests(t *testing.T) {
 	}
 
 	score := strategy.Score(ctx, channel)
-	// With exponential decay (scaling factor 150), 100 requests scores ~77.0
-	// This provides good differentiation while keeping 500 requests from hitting minimum too early
-	assert.Greater(t, score, 70.0, "Moderate usage channels should get moderate-high scores")
-	assert.Less(t, score, 80.0, "Score should reflect moderate usage")
+	// Linear least-selected scoring preserves ordering indefinitely instead of
+	// collapsing busy channels onto a shared minimum.
+	assert.Equal(t, 50.0, score)
 }
 
 func TestRoundRobinStrategy_Score_HighRequests(t *testing.T) {
@@ -110,9 +109,7 @@ func TestRoundRobinStrategy_Score_HighRequests(t *testing.T) {
 	}
 
 	score := strategy.Score(ctx, channel)
-	// With 500 requests, calculated score is ~5.35 which clamps to minScore (10.0)
-	// This is expected behavior - heavily used channels get minimum priority
-	assert.Equal(t, 10.0, score, "High usage channels should get minimum score when they exceed the decay curve")
+	assert.Equal(t, -350.0, score, "High usage channels should retain a distinct lower priority")
 }
 
 func TestRoundRobinStrategy_Score_InactivityDecay(t *testing.T) {
@@ -155,10 +152,10 @@ func TestRoundRobinStrategy_Score_InactivityDecay(t *testing.T) {
 	assert.Greater(t, idleScore, activeScore, "Idle channel should outrank recently active channel")
 }
 
-func TestRoundRobinStrategy_Score_CappedRequests(t *testing.T) {
+func TestRoundRobinStrategy_Score_UnboundedRequests(t *testing.T) {
 	ctx := context.Background()
 
-	// Channel with requests exceeding the cap (2000 requests, cap is 1000)
+	// Large counters remain ordered instead of being capped onto one score.
 	metrics := &biz.AggregatedMetrics{}
 	metrics.RequestCount = 2000
 	mockProvider := &mockMetricsProvider{
@@ -173,9 +170,7 @@ func TestRoundRobinStrategy_Score_CappedRequests(t *testing.T) {
 	}
 
 	score := strategy.Score(ctx, channel)
-	// Should be at or near minimum score
-	assert.GreaterOrEqual(t, score, 10.0, "Score should not go below minScore")
-	assert.LessOrEqual(t, score, 20.0, "Very high usage should result in very low score")
+	assert.Equal(t, -1850.0, score)
 }
 
 func TestRoundRobinStrategy_Score_MetricsError(t *testing.T) {
@@ -193,8 +188,7 @@ func TestRoundRobinStrategy_Score_MetricsError(t *testing.T) {
 	}
 
 	score := strategy.Score(ctx, channel)
-	// Should return moderate score (max + min) / 2 = (150 + 10) / 2 = 80
-	assert.Equal(t, 80.0, score, "Should return moderate score when metrics unavailable")
+	assert.Equal(t, 0.0, score, "Metrics failures use a neutral score")
 }
 
 func TestRoundRobinStrategy_MultipleChannels(t *testing.T) {
@@ -246,7 +240,7 @@ func TestRoundRobinStrategy_MultipleChannels(t *testing.T) {
 
 	// Verify specific values
 	assert.Equal(t, 150.0, scores[0], "New channel should get max score")
-	assert.Equal(t, 10.0, scores[3], "Very high usage channels should get minimum score")
+	assert.Equal(t, -650.0, scores[3], "Very high usage channels should retain a distinct score")
 }
 
 func TestRoundRobinStrategy_ScoreWithDebug(t *testing.T) {

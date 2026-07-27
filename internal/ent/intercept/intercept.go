@@ -29,11 +29,13 @@ import (
 	"github.com/looplj/axonhub/internal/ent/role"
 	"github.com/looplj/axonhub/internal/ent/system"
 	"github.com/looplj/axonhub/internal/ent/thread"
+	"github.com/looplj/axonhub/internal/ent/tokenwalletledger"
 	"github.com/looplj/axonhub/internal/ent/trace"
 	"github.com/looplj/axonhub/internal/ent/usagelog"
 	"github.com/looplj/axonhub/internal/ent/user"
 	"github.com/looplj/axonhub/internal/ent/userproject"
 	"github.com/looplj/axonhub/internal/ent/userrole"
+	"github.com/looplj/axonhub/internal/ent/usertokenwallet"
 )
 
 // The Query interface represents an operation that queries a graph.
@@ -632,6 +634,33 @@ func (f TraverseThread) Traverse(ctx context.Context, q ent.Query) error {
 	return fmt.Errorf("unexpected query type %T. expect *ent.ThreadQuery", q)
 }
 
+// The TokenWalletLedgerFunc type is an adapter to allow the use of ordinary function as a Querier.
+type TokenWalletLedgerFunc func(context.Context, *ent.TokenWalletLedgerQuery) (ent.Value, error)
+
+// Query calls f(ctx, q).
+func (f TokenWalletLedgerFunc) Query(ctx context.Context, q ent.Query) (ent.Value, error) {
+	if q, ok := q.(*ent.TokenWalletLedgerQuery); ok {
+		return f(ctx, q)
+	}
+	return nil, fmt.Errorf("unexpected query type %T. expect *ent.TokenWalletLedgerQuery", q)
+}
+
+// The TraverseTokenWalletLedger type is an adapter to allow the use of ordinary function as Traverser.
+type TraverseTokenWalletLedger func(context.Context, *ent.TokenWalletLedgerQuery) error
+
+// Intercept is a dummy implementation of Intercept that returns the next Querier in the pipeline.
+func (f TraverseTokenWalletLedger) Intercept(next ent.Querier) ent.Querier {
+	return next
+}
+
+// Traverse calls f(ctx, q).
+func (f TraverseTokenWalletLedger) Traverse(ctx context.Context, q ent.Query) error {
+	if q, ok := q.(*ent.TokenWalletLedgerQuery); ok {
+		return f(ctx, q)
+	}
+	return fmt.Errorf("unexpected query type %T. expect *ent.TokenWalletLedgerQuery", q)
+}
+
 // The TraceFunc type is an adapter to allow the use of ordinary function as a Querier.
 type TraceFunc func(context.Context, *ent.TraceQuery) (ent.Value, error)
 
@@ -767,6 +796,33 @@ func (f TraverseUserRole) Traverse(ctx context.Context, q ent.Query) error {
 	return fmt.Errorf("unexpected query type %T. expect *ent.UserRoleQuery", q)
 }
 
+// The UserTokenWalletFunc type is an adapter to allow the use of ordinary function as a Querier.
+type UserTokenWalletFunc func(context.Context, *ent.UserTokenWalletQuery) (ent.Value, error)
+
+// Query calls f(ctx, q).
+func (f UserTokenWalletFunc) Query(ctx context.Context, q ent.Query) (ent.Value, error) {
+	if q, ok := q.(*ent.UserTokenWalletQuery); ok {
+		return f(ctx, q)
+	}
+	return nil, fmt.Errorf("unexpected query type %T. expect *ent.UserTokenWalletQuery", q)
+}
+
+// The TraverseUserTokenWallet type is an adapter to allow the use of ordinary function as Traverser.
+type TraverseUserTokenWallet func(context.Context, *ent.UserTokenWalletQuery) error
+
+// Intercept is a dummy implementation of Intercept that returns the next Querier in the pipeline.
+func (f TraverseUserTokenWallet) Intercept(next ent.Querier) ent.Querier {
+	return next
+}
+
+// Traverse calls f(ctx, q).
+func (f TraverseUserTokenWallet) Traverse(ctx context.Context, q ent.Query) error {
+	if q, ok := q.(*ent.UserTokenWalletQuery); ok {
+		return f(ctx, q)
+	}
+	return fmt.Errorf("unexpected query type %T. expect *ent.UserTokenWalletQuery", q)
+}
+
 // NewQuery returns the generic Query interface for the given typed query.
 func NewQuery(q ent.Query) (Query, error) {
 	switch q := q.(type) {
@@ -810,6 +866,8 @@ func NewQuery(q ent.Query) (Query, error) {
 		return &query[*ent.SystemQuery, predicate.System, system.OrderOption]{typ: ent.TypeSystem, tq: q}, nil
 	case *ent.ThreadQuery:
 		return &query[*ent.ThreadQuery, predicate.Thread, thread.OrderOption]{typ: ent.TypeThread, tq: q}, nil
+	case *ent.TokenWalletLedgerQuery:
+		return &query[*ent.TokenWalletLedgerQuery, predicate.TokenWalletLedger, tokenwalletledger.OrderOption]{typ: ent.TypeTokenWalletLedger, tq: q}, nil
 	case *ent.TraceQuery:
 		return &query[*ent.TraceQuery, predicate.Trace, trace.OrderOption]{typ: ent.TypeTrace, tq: q}, nil
 	case *ent.UsageLogQuery:
@@ -820,6 +878,8 @@ func NewQuery(q ent.Query) (Query, error) {
 		return &query[*ent.UserProjectQuery, predicate.UserProject, userproject.OrderOption]{typ: ent.TypeUserProject, tq: q}, nil
 	case *ent.UserRoleQuery:
 		return &query[*ent.UserRoleQuery, predicate.UserRole, userrole.OrderOption]{typ: ent.TypeUserRole, tq: q}, nil
+	case *ent.UserTokenWalletQuery:
+		return &query[*ent.UserTokenWalletQuery, predicate.UserTokenWallet, usertokenwallet.OrderOption]{typ: ent.TypeUserTokenWallet, tq: q}, nil
 	default:
 		return nil, fmt.Errorf("unknown query type %T", q)
 	}

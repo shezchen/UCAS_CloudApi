@@ -70,6 +70,113 @@ func createTestChannelWithAPIKeys(t *testing.T, client *ent.Client, ctx context.
 	return ch
 }
 
+func TestChannelService_AutoDisableSkipsDonatedChannelAndAPIKey(t *testing.T) {
+	client := enttest.NewEntClient(t, "sqlite3", "file:ent?mode=memory&_fk=0")
+	defer client.Close()
+
+	ctx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+	svc := newTestChannelService(client)
+
+	ch, err := client.Channel.Create().
+		SetName("donated-channel").
+		SetType(channel.TypeOpenai).
+		SetBaseURL("https://api.openai.com").
+		SetCredentials(objects.ChannelCredentials{APIKeys: []string{"donated-key"}}).
+		SetSupportedModels([]string{"gpt-4"}).
+		SetDefaultTestModel("gpt-4").
+		SetStatus(channel.StatusEnabled).
+		SetUserID(42).
+		Save(ctx)
+	require.NoError(t, err)
+
+	policy := &RetryPolicy{
+		AutoDisableChannel: AutoDisableChannel{
+			Enabled: true,
+			Statuses: []AutoDisableChannelStatus{
+				{Status: 401, Times: 1},
+			},
+		},
+	}
+	perf := &PerformanceRecord{
+		ChannelID:          ch.ID,
+		APIKey:             "donated-key",
+		Donated:            true,
+		ResponseStatusCode: 401,
+	}
+
+	require.False(t, svc.checkAndHandleAPIKeyError(ctx, perf, policy))
+	perf.APIKey = ""
+	require.False(t, svc.checkAndHandleChannelError(ctx, perf, policy))
+
+	updated, err := client.Channel.Get(ctx, ch.ID)
+	require.NoError(t, err)
+	require.Equal(t, channel.StatusEnabled, updated.Status)
+	require.Empty(t, updated.DisabledAPIKeys)
+}
+
+func TestChannelService_DonatedFailureAffectsTransientHealthButNeverPersistentDisable(t *testing.T) {
+	client := enttest.NewEntClient(t, "sqlite3", "file:ent?mode=memory&_fk=0")
+	defer client.Close()
+
+	ctx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+	svc := newTestChannelService(client)
+	ch, err := client.Channel.Create().
+		SetName("donated-transient-health").
+		SetType(channel.TypeOpenai).
+		SetBaseURL("https://api.openai.com").
+		SetCredentials(objects.ChannelCredentials{APIKeys: []string{"donated-key"}}).
+		SetSupportedModels([]string{"gpt-4"}).
+		SetDefaultTestModel("gpt-4").
+		SetStatus(channel.StatusEnabled).
+		SetUserID(42).
+		Save(ctx)
+	require.NoError(t, err)
+	require.NoError(t, svc.SystemService.SetRetryPolicy(ctx, &RetryPolicy{
+		AutoDisableChannel: AutoDisableChannel{
+			Enabled:  true,
+			Statuses: []AutoDisableChannelStatus{{Status: 401, Times: 1}},
+		},
+	}))
+
+	now := time.Now()
+	svc.RecordPerformance(ctx, &PerformanceRecord{
+		ChannelID:          ch.ID,
+		APIKey:             "donated-key",
+		Donated:            true,
+		StartTime:          now.Add(-time.Second),
+		EndTime:            now,
+		Success:            false,
+		RequestCompleted:   true,
+		ResponseStatusCode: 401,
+	})
+
+	metrics, err := svc.GetChannelMetrics(ctx, ch.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), metrics.FailureCount)
+	require.Equal(t, int64(1), metrics.ConsecutiveFailures,
+		"donated-channel failures must still influence transient production health")
+	updated, err := client.Channel.Get(ctx, ch.ID)
+	require.NoError(t, err)
+	require.Equal(t, channel.StatusEnabled, updated.Status)
+	require.Empty(t, updated.DisabledAPIKeys,
+		"a donated channel and its key stay configured until donor deletion or expiry")
+
+	later := now.Add(time.Second)
+	svc.RecordPerformance(ctx, &PerformanceRecord{
+		ChannelID:        ch.ID,
+		APIKey:           "donated-key",
+		Donated:          true,
+		StartTime:        later.Add(-time.Second),
+		EndTime:          later,
+		Success:          true,
+		RequestCompleted: true,
+	})
+	metrics, err = svc.GetChannelMetrics(ctx, ch.ID)
+	require.NoError(t, err)
+	require.Zero(t, metrics.ConsecutiveFailures,
+		"a later semantic success must restore the donated channel to healthy rotation")
+}
+
 func TestChannelService_checkAndHandleAPIKeyError(t *testing.T) {
 	client := enttest.NewEntClient(t, "sqlite3", "file:ent?mode=memory&_fk=0")
 	defer client.Close()

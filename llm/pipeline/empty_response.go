@@ -62,8 +62,10 @@ func hasMessageContent(msg *llm.Message) bool {
 	return false
 }
 
-// hasResponseContent checks if an llm.Response contains meaningful content.
-func hasResponseContent(resp *llm.Response) bool {
+// HasResponseContent checks if an llm.Response contains meaningful output.
+// It intentionally does not depend on usage metadata: providers may omit usage
+// for otherwise valid text and tool-call responses.
+func HasResponseContent(resp *llm.Response) bool {
 	if resp == nil || resp == llm.DoneResponse || resp.Object == "[DONE]" {
 		return false
 	}
@@ -127,4 +129,10 @@ func hasResponseContent(resp *llm.Response) bool {
 	}
 
 	return false
+}
+
+// hasResponseContent keeps the internal call sites concise while exposing the
+// exact same semantic classifier to orchestrator health tracking.
+func hasResponseContent(resp *llm.Response) bool {
+	return HasResponseContent(resp)
 }

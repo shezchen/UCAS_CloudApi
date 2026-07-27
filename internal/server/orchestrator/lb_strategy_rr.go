@@ -69,11 +69,6 @@ type RoundRobinStrategy struct {
 	metricsProvider ChannelMetricsProvider
 	// maxScore is the maximum score for a channel with zero requests (default: 150)
 	maxScore float64
-	// minScore is the minimum score for heavily used channels (default: 10)
-	minScore float64
-	// requestCountCap caps the maximum request count considered (default: 1000)
-	// This prevents channels with extremely high request counts from dominating the calculation
-	requestCountCap int64
 	// inactivityDecay defines how quickly historical requests lose influence when the channel stays idle
 	inactivityDecay time.Duration
 }
@@ -84,8 +79,6 @@ func NewRoundRobinStrategy(metricsProvider ChannelMetricsProvider) *RoundRobinSt
 	return &RoundRobinStrategy{
 		metricsProvider: metricsProvider,
 		maxScore:        150.0,
-		minScore:        10.0,
-		requestCountCap: 1000,
 		inactivityDecay: defaultRoundRobinInactivityDecay,
 	}
 }
@@ -97,7 +90,7 @@ func (s *RoundRobinStrategy) Score(ctx context.Context, channel *biz.Channel) fl
 	metrics, err := s.metricsProvider.GetChannelMetrics(ctx, channel.ID)
 	if err != nil {
 		// If we can't get metrics, return a moderate score to be safe
-		return (s.maxScore + s.minScore) / 2
+		return 0
 	}
 
 	score, _, _, _, _ := s.calculateScoreComponents(metrics)
@@ -116,7 +109,7 @@ func (s *RoundRobinStrategy) ScoreWithDebug(ctx context.Context, channel *biz.Ch
 	metrics, err := s.metricsProvider.GetChannelMetrics(ctx, channel.ID)
 	if err != nil {
 		// If we can't get metrics, return a moderate score to be safe
-		moderateScore := (s.maxScore + s.minScore) / 2
+		moderateScore := 0.0
 		log.Warn(ctx, "RoundRobinStrategy: failed to get metrics, using moderate score",
 			log.Int("channel_id", channel.ID),
 			log.String("channel_name", channel.Name),
@@ -137,17 +130,13 @@ func (s *RoundRobinStrategy) ScoreWithDebug(ctx context.Context, channel *biz.Ch
 	requestCount := metrics.RequestCount
 
 	details := map[string]any{
-		"request_count":                 requestCount,
-		"capped_request_count":          cappedCount,
-		"effective_request_count":       effectiveCount,
-		"original_cap":                  s.requestCountCap,
-		"max_score":                     s.maxScore,
-		"min_score":                     s.minScore,
-		"last_activity_at":              lastActivity,
-		"inactivity_seconds":            inactivitySeconds,
-		"scaling_factor":                roundRobinScalingFactor,
-		"calculated_score_before_clamp": s.maxScore * math.Exp(-effectiveCount/roundRobinScalingFactor),
-		"calculated_score":              score,
+		"request_count":           requestCount,
+		"capped_request_count":    cappedCount,
+		"effective_request_count": effectiveCount,
+		"max_score":               s.maxScore,
+		"last_activity_at":        lastActivity,
+		"inactivity_seconds":      inactivitySeconds,
+		"calculated_score":        score,
 	}
 
 	if requestCount == 0 {
@@ -167,18 +156,6 @@ func (s *RoundRobinStrategy) ScoreWithDebug(ctx context.Context, channel *biz.Ch
 			log.Float64("inactivity_seconds", inactivitySeconds),
 			log.Float64("effective_request_count", effectiveCount),
 		)
-	}
-
-	//nolint:forcetypeassert // Checked.
-	if details["calculated_score_before_clamp"].(float64) != score {
-		log.Info(ctx, "RoundRobinStrategy: score clamped to minimum",
-			log.Int("channel_id", channel.ID),
-			log.String("channel_name", channel.Name),
-			log.Float64("final_score", score),
-			log.Float64("min_score", s.minScore),
-		)
-
-		details["clamped"] = true
 	}
 
 	log.Info(ctx, "RoundRobinStrategy: calculated final score",
@@ -206,19 +183,12 @@ func (s *RoundRobinStrategy) calculateScoreComponents(metrics *biz.AggregatedMet
 	}
 
 	lastActivity := latestActivityAt(metrics)
-	cappedCount, effectiveCount, inactivitySeconds := computeRequestLoad(metrics.RequestCount, s.requestCountCap, lastActivity, s.inactivityDecay)
+	cappedCount, effectiveCount, inactivitySeconds := computeRequestLoad(metrics.RequestCount, 0, lastActivity, s.inactivityDecay)
 
-	rawScore := s.maxScore
-	if effectiveCount > 0 {
-		rawScore = s.maxScore * math.Exp(-effectiveCount/roundRobinScalingFactor)
-	}
-
-	finalScore := rawScore
-	if finalScore < s.minScore {
-		finalScore = s.minScore
-	}
-
-	return finalScore, cappedCount, effectiveCount, lastActivity, inactivitySeconds
+	// A linear least-selected score preserves ordering for arbitrarily long
+	// runtimes. The former exponential score collapsed all busy channels to the
+	// same minimum, after which input order defeated fair rotation.
+	return s.maxScore - effectiveCount, cappedCount, effectiveCount, lastActivity, inactivitySeconds
 }
 
 // RoundRobinHealthStrategy pushes repeatedly failing channels behind healthy
@@ -226,23 +196,33 @@ func (s *RoundRobinStrategy) calculateScoreComponents(metrics *biz.AggregatedMet
 // top-level strategy so adaptive balancing can keep its softer ErrorAware scoring.
 type RoundRobinHealthStrategy struct {
 	metricsProvider     ChannelMetricsProvider
+	modelCircuitBreaker *biz.ModelCircuitBreaker
 	failureThreshold    int64
 	failureCooldown     time.Duration
 	unhealthyPenalty    float64
 	metricsErrorPenalty float64
 }
 
-func NewRoundRobinHealthStrategy(metricsProvider ChannelMetricsProvider) *RoundRobinHealthStrategy {
-	return &RoundRobinHealthStrategy{
+func NewRoundRobinHealthStrategy(metricsProvider ChannelMetricsProvider, breakers ...*biz.ModelCircuitBreaker) *RoundRobinHealthStrategy {
+	strategy := &RoundRobinHealthStrategy{
 		metricsProvider:     metricsProvider,
 		failureThreshold:    roundRobinFailureThreshold,
 		failureCooldown:     roundRobinHealthCooldown,
 		unhealthyPenalty:    rateLimitExhaustedScore,
 		metricsErrorPenalty: 0,
 	}
+	if len(breakers) > 0 {
+		strategy.modelCircuitBreaker = breakers[0]
+	}
+
+	return strategy
 }
 
 func (s *RoundRobinHealthStrategy) Score(ctx context.Context, channel *biz.Channel) float64 {
+	if s.isCircuitOpen(ctx, channel) {
+		return s.unhealthyPenalty
+	}
+
 	metrics, err := s.metricsProvider.GetChannelMetrics(ctx, channel.ID)
 	if err != nil {
 		return s.metricsErrorPenalty
@@ -268,7 +248,8 @@ func (s *RoundRobinHealthStrategy) ScoreWithDebug(ctx context.Context, channel *
 	}
 
 	score := 0.0
-	unhealthy := s.isUnhealthy(metrics)
+	circuitOpen := s.isCircuitOpen(ctx, channel)
+	unhealthy := circuitOpen || s.isUnhealthy(metrics)
 	if unhealthy {
 		score = s.unhealthyPenalty
 	}
@@ -278,6 +259,7 @@ func (s *RoundRobinHealthStrategy) ScoreWithDebug(ctx context.Context, channel *
 		"failure_threshold":    s.failureThreshold,
 		"failure_cooldown":     s.failureCooldown.String(),
 		"unhealthy":            unhealthy,
+		"circuit_open":         circuitOpen,
 	}
 
 	if metrics.LastFailureAt != nil {
@@ -297,12 +279,37 @@ func (s *RoundRobinHealthStrategy) Name() string {
 }
 
 func (s *RoundRobinHealthStrategy) IsUnhealthy(ctx context.Context, channel *biz.Channel) bool {
+	if s.isCircuitOpen(ctx, channel) {
+		return true
+	}
+
 	metrics, err := s.metricsProvider.GetChannelMetrics(ctx, channel.ID)
 	if err != nil {
 		return false
 	}
 
 	return s.isUnhealthy(metrics)
+}
+
+func (s *RoundRobinHealthStrategy) isCircuitOpen(ctx context.Context, channel *biz.Channel) bool {
+	if s.modelCircuitBreaker == nil || channel == nil {
+		return false
+	}
+
+	modelID := requestedModelFromContext(ctx)
+	if modelID == "" {
+		return false
+	}
+
+	stats := s.modelCircuitBreaker.GetModelCircuitBreakerStats(ctx, channel.ID, modelID)
+	if stats.State != biz.StateOpen {
+		return false
+	}
+
+	// GetEffectiveWeight exposes exactly one recoverable Open candidate after
+	// its probe interval. The outbound tracker then acquires the single probe
+	// lease; concurrent requests skip it and continue to another candidate.
+	return s.modelCircuitBreaker.GetEffectiveWeight(ctx, channel.ID, modelID, 1) <= 0
 }
 
 func (s *RoundRobinHealthStrategy) isUnhealthy(metrics *biz.AggregatedMetrics) bool {

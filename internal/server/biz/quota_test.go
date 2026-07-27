@@ -424,6 +424,48 @@ func TestQuotaService_CalendarDuration_ExcludesUsageAtWindowEnd(t *testing.T) {
 	require.True(t, usage.TotalCost.Equal(decimal.Zero))
 }
 
+func TestQuotaService_EffectiveTokenSQLPreservesExplicitCachedOnlyZero(t *testing.T) {
+	client := enttest.NewEntClient(t, "sqlite3", "file:effective-zero?mode=memory&_fk=0")
+	defer client.Close()
+
+	ctx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+	projectRow, err := client.Project.Create().
+		SetName("effective-zero").
+		SetStatus(project.StatusActive).
+		Save(ctx)
+	require.NoError(t, err)
+
+	requestRow, err := client.Request.Create().
+		SetProjectID(projectRow.ID).
+		SetAPIKeyID(44).
+		SetModelID("cached-model").
+		SetFormat("openai/chat_completions").
+		SetStatus(request.StatusCompleted).
+		SetRequestBody(objects.JSONRawMessage([]byte(`{}`))).
+		Save(ctx)
+	require.NoError(t, err)
+
+	_, err = client.UsageLog.Create().
+		SetRequestID(requestRow.ID).
+		SetAPIKeyID(44).
+		SetProjectID(projectRow.ID).
+		SetChannelID(1).
+		SetModelID("cached-model").
+		SetPromptTokens(100).
+		SetPromptCachedTokens(100).
+		SetTotalTokens(100).
+		SetEffectiveTokens(0).
+		SetCacheReadTokensKnown(true).
+		SetSource(usagelog.SourceAPI).
+		Save(ctx)
+	require.NoError(t, err)
+
+	service := NewQuotaService(client, NewSystemService(SystemServiceParams{Ent: client}))
+	usage, err := service.usageAgg(ctx, 44, QuotaWindow{}, true, false)
+	require.NoError(t, err)
+	require.Zero(t, usage.TotalTokens, "an explicitly cached-only row must not fall back to legacy total_tokens")
+}
+
 func TestQuotaService_CalendarDay_CostExceeded(t *testing.T) {
 	client := enttest.NewEntClient(t, "sqlite3", "file:ent?mode=memory&_fk=0")
 	defer client.Close()
@@ -565,7 +607,8 @@ func TestQuotaService_UserDailyTokenQuotaUsesGlobalLimitForEveryAccount(t *testi
 	// A smaller configured global cap makes this regression test inexpensive;
 	// the setting service separately covers its 200M initial default.
 	require.NoError(t, systemService.SetUserDailyQuotaSettings(ctx, UserDailyQuotaSettings{
-		DailyTokenLimit: 200,
+		DailyTokenLimit:  200,
+		WeeklyTokenLimit: 1_000,
 	}))
 	result, err := svc.CheckUserDailyTokenQuota(ctx, member.ID)
 	require.NoError(t, err)
@@ -575,7 +618,8 @@ func TestQuotaService_UserDailyTokenQuotaUsesGlobalLimitForEveryAccount(t *testi
 	// Raising the global cap immediately frees an account that still has a
 	// legacy per-user value of 10.
 	require.NoError(t, systemService.SetUserDailyQuotaSettings(ctx, UserDailyQuotaSettings{
-		DailyTokenLimit: 300,
+		DailyTokenLimit:  300,
+		WeeklyTokenLimit: 1_000,
 	}))
 
 	result, err = svc.CheckUserDailyTokenQuota(ctx, member.ID)
@@ -584,10 +628,43 @@ func TestQuotaService_UserDailyTokenQuotaUsesGlobalLimitForEveryAccount(t *testi
 
 	// Lowering it applies just as immediately, without touching user rows.
 	require.NoError(t, systemService.SetUserDailyQuotaSettings(ctx, UserDailyQuotaSettings{
-		DailyTokenLimit: 100,
+		DailyTokenLimit:  100,
+		WeeklyTokenLimit: 1_000,
 	}))
 	result, err = svc.CheckUserDailyTokenQuota(ctx, member.ID)
 	require.NoError(t, err)
 	require.False(t, result.Allowed)
 	require.Contains(t, result.Message, "200/100")
+
+	// Daily can remain available while the Beijing-calendar weekly cap blocks.
+	require.NoError(t, systemService.SetUserDailyQuotaSettings(ctx, UserDailyQuotaSettings{
+		DailyTokenLimit:  1_000,
+		WeeklyTokenLimit: 200,
+	}))
+	result, err = svc.CheckUserDailyTokenQuota(ctx, member.ID)
+	require.NoError(t, err)
+	require.False(t, result.Allowed)
+	require.Equal(t, "user_weekly", result.Scope)
+
+	// Permanent donation credit is consumed before either base allowance.
+	_, err = client.UserTokenWallet.Create().
+		SetUserID(member.ID).
+		SetBalanceTokens(1).
+		SetLifetimeCreditedTokens(1).
+		Save(ctx)
+	require.NoError(t, err)
+	result, err = svc.CheckUserDailyTokenQuota(ctx, member.ID)
+	require.NoError(t, err)
+	require.True(t, result.Allowed)
+}
+
+func TestAccountQuotaWindowsUseBeijingCalendarBoundaries(t *testing.T) {
+	now := time.Date(2026, time.July, 29, 3, 15, 0, 0, time.UTC) // Wednesday 11:15 in Beijing.
+
+	daily, weekly := accountQuotaWindows(now)
+
+	require.Equal(t, time.Date(2026, time.July, 28, 16, 0, 0, 0, time.UTC), *daily.Start)
+	require.Equal(t, time.Date(2026, time.July, 29, 16, 0, 0, 0, time.UTC), *daily.End)
+	require.Equal(t, time.Date(2026, time.July, 26, 16, 0, 0, 0, time.UTC), *weekly.Start)
+	require.Equal(t, time.Date(2026, time.August, 2, 16, 0, 0, 0, time.UTC), *weekly.End)
 }

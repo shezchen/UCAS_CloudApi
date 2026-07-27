@@ -128,6 +128,11 @@ const (
 	// shown to campus project members in the sidebar. The value is a
 	// JSON-encoded []CampusFriendLink.
 	SystemKeyCampusFriendLinks = "campus_friend_links"
+
+	// SystemKeyCampusSharingPolicyV1 records the one-time migration from the
+	// upstream defaults to the campus sharing contract. Once present, later
+	// Owner changes are never overwritten on restart or upgrade.
+	SystemKeyCampusSharingPolicyV1 = "campus_sharing_policy_v1"
 )
 
 // SystemGeneralSettings represents general system configuration settings.
@@ -1044,6 +1049,42 @@ func (s *SystemService) SetRetryPolicy(ctx context.Context, policy *RetryPolicy)
 	}
 
 	return s.setSystemValue(ctx, SystemKeyRetryPolicy, string(jsonBytes))
+}
+
+// EnsureCampusSharingPolicyV1 applies the first campus-wide runtime defaults
+// exactly once. Existing installations already persist retry/quota JSON, so
+// changing Go defaults alone would not activate fair routing or the new
+// 16M/64M limits. The marker prevents future restarts from overriding explicit
+// Owner changes.
+func (s *SystemService) EnsureCampusSharingPolicyV1(ctx context.Context) error {
+	ctx = authz.WithSystemBypass(ctx, "campus-sharing-policy-v1")
+
+	if _, err := s.getSystemValue(ctx, SystemKeyCampusSharingPolicyV1); err == nil {
+		return nil
+	} else if !ent.IsNotFound(err) {
+		return fmt.Errorf("read campus sharing policy marker: %w", err)
+	}
+
+	policy, err := s.RetryPolicy(ctx)
+	if err != nil {
+		return fmt.Errorf("read retry policy for campus migration: %w", err)
+	}
+	policy.LoadBalancerStrategy = LoadBalancerStrategyRoundRobin
+	policy.MaxSingleChannelRetries = 1
+	policy.EmptyResponseDetection = true
+	if err := s.SetRetryPolicy(ctx, policy); err != nil {
+		return fmt.Errorf("write campus routing policy: %w", err)
+	}
+
+	if err := s.SetUserDailyQuotaSettings(ctx, defaultUserDailyQuotaSettings()); err != nil {
+		return fmt.Errorf("write campus account quota defaults: %w", err)
+	}
+
+	if err := s.setSystemValue(ctx, SystemKeyCampusSharingPolicyV1, "true"); err != nil {
+		return fmt.Errorf("write campus sharing policy marker: %w", err)
+	}
+
+	return nil
 }
 
 func normalizeRetryPolicy(policy *RetryPolicy) {

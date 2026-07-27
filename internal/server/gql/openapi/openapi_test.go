@@ -204,17 +204,17 @@ func TestOpenAPIResolver_CreateLLMAPIKey_HappyPath(t *testing.T) {
 	)
 }
 
-// Names are identifiers on the OpenAPI surface (apiKey/updateAPIKeyProfiles by
-// name), so creating a second key with an existing name in the same project
-// must be rejected — mirroring the admin-path CreateAPIKey behavior.
-func TestOpenAPIResolver_CreateLLMAPIKey_DuplicateNameRejected(t *testing.T) {
+func TestOpenAPIResolver_CreateLLMAPIKey_DuplicateDisplayNameAllowed(t *testing.T) {
 	mr, fx, ctx, _ := setupOpenAPI(t, []string{
 		string(scopes.ScopeWriteAPIKeys),
 	})
 
-	_, err := mr.CreateLLMAPIKey(ctx, fx.targetKey.Name)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), fx.targetKey.Name)
+	got, err := mr.CreateLLMAPIKey(ctx, fx.targetKey.Name)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.Equal(t, fx.targetKey.Name, got.Name)
+	require.NotEmpty(t, got.Key)
+	require.NotEqual(t, fx.targetKey.Key, got.Key)
 }
 
 func TestOpenAPIResolver_CreateLLMAPIKey_MissingScopeDenied(t *testing.T) {

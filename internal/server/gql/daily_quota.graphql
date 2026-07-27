@@ -1,13 +1,17 @@
 """
-Owner-managed account-wide daily token cap. The value is checked in real time
-for every user-owned API key and applies to all existing and future accounts.
+Owner-managed account-wide effective-token caps. Both values are checked in
+real time for every user-owned API key and apply to all existing and future
+accounts. Effective tokens exclude cache-read input. Daily periods reset at
+00:00 and weekly periods reset Monday at 00:00, both in Beijing time.
 """
 type UserDailyQuotaSettings {
   dailyTokenLimit: Int!
+  weeklyTokenLimit: Int!
 }
 
 input UpdateUserDailyQuotaSettingsInput {
   dailyTokenLimit: Int!
+  weeklyTokenLimit: Int!
 }
 
 extend type Query {

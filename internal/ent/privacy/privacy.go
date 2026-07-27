@@ -591,6 +591,30 @@ func (f ThreadMutationRuleFunc) EvalMutation(ctx context.Context, m ent.Mutation
 	return Denyf("ent/privacy: unexpected mutation type %T, expect *ent.ThreadMutation", m)
 }
 
+// The TokenWalletLedgerQueryRuleFunc type is an adapter to allow the use of ordinary
+// functions as a query rule.
+type TokenWalletLedgerQueryRuleFunc func(context.Context, *ent.TokenWalletLedgerQuery) error
+
+// EvalQuery return f(ctx, q).
+func (f TokenWalletLedgerQueryRuleFunc) EvalQuery(ctx context.Context, q ent.Query) error {
+	if q, ok := q.(*ent.TokenWalletLedgerQuery); ok {
+		return f(ctx, q)
+	}
+	return Denyf("ent/privacy: unexpected query type %T, expect *ent.TokenWalletLedgerQuery", q)
+}
+
+// The TokenWalletLedgerMutationRuleFunc type is an adapter to allow the use of ordinary
+// functions as a mutation rule.
+type TokenWalletLedgerMutationRuleFunc func(context.Context, *ent.TokenWalletLedgerMutation) error
+
+// EvalMutation calls f(ctx, m).
+func (f TokenWalletLedgerMutationRuleFunc) EvalMutation(ctx context.Context, m ent.Mutation) error {
+	if m, ok := m.(*ent.TokenWalletLedgerMutation); ok {
+		return f(ctx, m)
+	}
+	return Denyf("ent/privacy: unexpected mutation type %T, expect *ent.TokenWalletLedgerMutation", m)
+}
+
 // The TraceQueryRuleFunc type is an adapter to allow the use of ordinary
 // functions as a query rule.
 type TraceQueryRuleFunc func(context.Context, *ent.TraceQuery) error
@@ -711,6 +735,30 @@ func (f UserRoleMutationRuleFunc) EvalMutation(ctx context.Context, m ent.Mutati
 	return Denyf("ent/privacy: unexpected mutation type %T, expect *ent.UserRoleMutation", m)
 }
 
+// The UserTokenWalletQueryRuleFunc type is an adapter to allow the use of ordinary
+// functions as a query rule.
+type UserTokenWalletQueryRuleFunc func(context.Context, *ent.UserTokenWalletQuery) error
+
+// EvalQuery return f(ctx, q).
+func (f UserTokenWalletQueryRuleFunc) EvalQuery(ctx context.Context, q ent.Query) error {
+	if q, ok := q.(*ent.UserTokenWalletQuery); ok {
+		return f(ctx, q)
+	}
+	return Denyf("ent/privacy: unexpected query type %T, expect *ent.UserTokenWalletQuery", q)
+}
+
+// The UserTokenWalletMutationRuleFunc type is an adapter to allow the use of ordinary
+// functions as a mutation rule.
+type UserTokenWalletMutationRuleFunc func(context.Context, *ent.UserTokenWalletMutation) error
+
+// EvalMutation calls f(ctx, m).
+func (f UserTokenWalletMutationRuleFunc) EvalMutation(ctx context.Context, m ent.Mutation) error {
+	if m, ok := m.(*ent.UserTokenWalletMutation); ok {
+		return f(ctx, m)
+	}
+	return Denyf("ent/privacy: unexpected mutation type %T, expect *ent.UserTokenWalletMutation", m)
+}
+
 type (
 	// Filter is the interface that wraps the Where function
 	// for filtering nodes in queries and mutations.
@@ -786,6 +834,8 @@ func queryFilter(q ent.Query) (Filter, error) {
 		return q.Filter(), nil
 	case *ent.ThreadQuery:
 		return q.Filter(), nil
+	case *ent.TokenWalletLedgerQuery:
+		return q.Filter(), nil
 	case *ent.TraceQuery:
 		return q.Filter(), nil
 	case *ent.UsageLogQuery:
@@ -795,6 +845,8 @@ func queryFilter(q ent.Query) (Filter, error) {
 	case *ent.UserProjectQuery:
 		return q.Filter(), nil
 	case *ent.UserRoleQuery:
+		return q.Filter(), nil
+	case *ent.UserTokenWalletQuery:
 		return q.Filter(), nil
 	default:
 		return nil, Denyf("ent/privacy: unexpected query type %T for query filter", q)
@@ -843,6 +895,8 @@ func mutationFilter(m ent.Mutation) (Filter, error) {
 		return m.Filter(), nil
 	case *ent.ThreadMutation:
 		return m.Filter(), nil
+	case *ent.TokenWalletLedgerMutation:
+		return m.Filter(), nil
 	case *ent.TraceMutation:
 		return m.Filter(), nil
 	case *ent.UsageLogMutation:
@@ -852,6 +906,8 @@ func mutationFilter(m ent.Mutation) (Filter, error) {
 	case *ent.UserProjectMutation:
 		return m.Filter(), nil
 	case *ent.UserRoleMutation:
+		return m.Filter(), nil
+	case *ent.UserTokenWalletMutation:
 		return m.Filter(), nil
 	default:
 		return nil, Denyf("ent/privacy: unexpected mutation type %T for mutation filter", m)

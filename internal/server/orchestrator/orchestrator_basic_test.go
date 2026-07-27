@@ -953,3 +953,78 @@ func TestChatCompletionOrchestrator_Process_SameChannelRetryNextModel(t *testing
 	require.NoError(t, err)
 	require.Len(t, executions, 2)
 }
+
+func TestChatCompletionOrchestrator_Process_StatuslessFailureRetriesSameChannelOnceThenFailsOver(t *testing.T) {
+	ctx := authz.WithTestBypass(context.Background())
+	client := enttest.NewEntClient(t, "sqlite3", "file:ent?mode=memory&_fk=0")
+	defer client.Close()
+	ctx = ent.NewContext(ctx, client)
+
+	project := createTestProject(t, ctx, client)
+	primary := createTestChannel(t, ctx, client)
+	backup, err := client.Channel.Create().
+		SetType(channel.TypeOpenai).
+		SetName("Backup OpenAI Channel").
+		SetBaseURL("https://backup.example.com/v1").
+		SetCredentials(objects.ChannelCredentials{APIKey: "backup-test-key"}).
+		SetSupportedModels([]string{"gpt-4"}).
+		SetDefaultTestModel("gpt-4").
+		Save(ctx)
+	require.NoError(t, err)
+	channelService, requestService, systemService, usageLogService := setupTestServices(t, client)
+	require.NoError(t, systemService.SetRetryPolicy(ctx, &biz.RetryPolicy{
+		Enabled:                 true,
+		MaxChannelRetries:       1,
+		MaxSingleChannelRetries: 1,
+		RetryDelayMs:            0,
+		LoadBalancerStrategy:    biz.LoadBalancerStrategyRoundRobin,
+	}))
+
+	primaryOutbound, err := openai.NewOutboundTransformer(primary.BaseURL, primary.Credentials.APIKey)
+	require.NoError(t, err)
+	backupOutbound, err := openai.NewOutboundTransformer(backup.BaseURL, backup.Credentials.APIKey)
+	require.NoError(t, err)
+	selector := &staticChannelSelector{candidates: []*ChannelModelsCandidate{
+		{
+			Channel: &biz.Channel{Channel: primary, Outbound: primaryOutbound},
+			Models:  []biz.ChannelModelEntry{{RequestModel: "gpt-4", ActualModel: "gpt-4"}},
+		},
+		{
+			Channel: &biz.Channel{Channel: backup, Outbound: backupOutbound},
+			Models:  []biz.ChannelModelEntry{{RequestModel: "gpt-4", ActualModel: "gpt-4"}},
+		},
+	}}
+	executor := &sequenceExecutor{steps: []executorStep{
+		{err: errors.New("tls: failed to verify certificate")},
+		{err: errors.New("connection reset before provider response")},
+		{resp: &httpclient.Response{
+			StatusCode: http.StatusOK,
+			Body:       buildMockOpenAIResponse("chatcmpl-failover", "gpt-4", "Recovered", 10, 20),
+			Headers:    http.Header{"Content-Type": []string{"application/json"}},
+		}},
+	}}
+	orchestrator := &ChatCompletionOrchestrator{
+		channelSelector:       selector,
+		Inbound:               openai.NewInboundTransformer(),
+		RequestService:        requestService,
+		ChannelService:        channelService,
+		PromptProvider:        &stubPromptProvider{},
+		SystemService:         systemService,
+		UsageLogService:       usageLogService,
+		PipelineFactory:       pipeline.NewFactory(executor),
+		ModelMapper:           NewModelMapper(),
+		channelLimiterManager: NewChannelLimiterManager(),
+		Middlewares:           []pipeline.Middleware{stream.EnsureUsage()},
+	}
+
+	ctx = contexts.WithProjectID(ctx, project.ID)
+	result, err := orchestrator.Process(ctx, buildTestRequest("gpt-4", "Hello!", false))
+	require.NoError(t, err)
+	require.NotNil(t, result.ChatCompletion)
+	require.Len(t, executor.requests, 3)
+	require.Equal(t, executor.requests[0].URL, executor.requests[1].URL,
+		"a status-less upstream failure must receive exactly one retry on the same channel")
+	require.NotEqual(t, executor.requests[1].URL, executor.requests[2].URL,
+		"after that one retry, the session must fail over to the next available channel")
+	require.Contains(t, executor.requests[2].URL, "backup.example.com")
+}

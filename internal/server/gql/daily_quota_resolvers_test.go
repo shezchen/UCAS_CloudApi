@@ -54,19 +54,27 @@ func TestUserDailyQuotaSettingsOwnerOnly(t *testing.T) {
 	memberCtx := userDailyQuotaSettingsContext(baseCtx, member)
 	_, err = queryResolver.UserDailyQuotaSettings(memberCtx)
 	require.ErrorIs(t, err, ErrNotOwner)
-	_, err = mutationResolver.UpdateUserDailyQuotaSettings(memberCtx, UpdateUserDailyQuotaSettingsInput{DailyTokenLimit: 123})
+	_, err = mutationResolver.UpdateUserDailyQuotaSettings(memberCtx, UpdateUserDailyQuotaSettingsInput{
+		DailyTokenLimit:  123,
+		WeeklyTokenLimit: 456,
+	})
 	require.ErrorIs(t, err, ErrNotOwner)
 
 	ownerCtx := userDailyQuotaSettingsContext(baseCtx, owner)
 	settings, err := queryResolver.UserDailyQuotaSettings(ownerCtx)
 	require.NoError(t, err)
 	require.Equal(t, biz.DefaultUserDailyTokenLimit, settings.DailyTokenLimit)
+	require.Equal(t, biz.DefaultUserWeeklyTokenLimit, settings.WeeklyTokenLimit)
 
-	ok, err := mutationResolver.UpdateUserDailyQuotaSettings(ownerCtx, UpdateUserDailyQuotaSettingsInput{DailyTokenLimit: 123})
+	ok, err := mutationResolver.UpdateUserDailyQuotaSettings(ownerCtx, UpdateUserDailyQuotaSettingsInput{
+		DailyTokenLimit:  123,
+		WeeklyTokenLimit: 456,
+	})
 	require.NoError(t, err)
 	require.True(t, ok)
 
 	settings, err = queryResolver.UserDailyQuotaSettings(ownerCtx)
 	require.NoError(t, err)
 	require.Equal(t, int64(123), settings.DailyTokenLimit)
+	require.Equal(t, int64(456), settings.WeeklyTokenLimit)
 }

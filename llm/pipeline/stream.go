@@ -151,7 +151,10 @@ func hasFinishReason(resp *llm.Response) bool {
 	return false
 }
 
-func isTerminalLlmStreamEvent(resp *llm.Response) bool {
+// IsTerminalLlmStreamEvent reports whether an event normally completes a
+// unified LLM stream. Health tracking uses the same terminal definition as the
+// retry/empty-response path so the two cannot drift.
+func IsTerminalLlmStreamEvent(resp *llm.Response) bool {
 	return resp == llm.DoneResponse || (resp != nil && resp.Object == "[DONE]") || hasFinishReason(resp)
 }
 
@@ -211,7 +214,7 @@ func (p *pipeline) preReadLlmStream(
 		// freshly-constructed "[DONE]" terminator: outbound transformers that emit
 		// terminal events as new *llm.Response (e.g. OpenAI TTS binary streams) must
 		// still trigger empty-response handling when no audio chunks were produced.
-		if isTerminalLlmStreamEvent(event) {
+		if IsTerminalLlmStreamEvent(event) {
 			if !p.emptyResponseDetection {
 				return streams.PrependStream(llmStream, buffered...), nil
 			}
@@ -338,22 +341,13 @@ func (p *pipeline) stream(
 		return nil, fmt.Errorf("failed to apply raw stream middlewares: %w", err)
 	}
 
-	if slog.Default().Enabled(ctx, slog.LevelDebug) {
-		outboundStream = streams.Map(outboundStream,
-			func(event *httpclient.StreamEvent) *httpclient.StreamEvent {
-				slog.DebugContext(ctx, "Outbound stream event", slog.Any("event", event))
-				return event
-			},
-		)
-	}
-
 	llmStream, err := p.Outbound.TransformStream(ctx, request, outboundStream)
 	if err != nil {
 		outboundStream.Close()
 		err = firstEventGuard.finishBeforeFirstEvent(err)
 		p.applyRawErrorResponseMiddlewares(ctx, err)
 
-		slog.ErrorContext(ctx, "Failed to transform streaming request", slog.Any("error", err))
+		slog.ErrorContext(ctx, "Failed to transform streaming request", slog.String("error_type", fmt.Sprintf("%T", err)))
 
 		if errors.Is(err, ErrStreamFirstEventTimeout) {
 			return nil, err
@@ -376,13 +370,6 @@ func (p *pipeline) stream(
 		}
 
 		return nil, fmt.Errorf("failed to apply llm stream middlewares: %w", err)
-	}
-
-	if slog.Default().Enabled(ctx, slog.LevelDebug) {
-		llmStream = streams.Map(llmStream, func(event *llm.Response) *llm.Response {
-			slog.DebugContext(ctx, "LLM stream event", slog.Any("event", event))
-			return event
-		})
 	}
 
 	// Check stream start before the handler commits the response. This enforces
@@ -412,7 +399,7 @@ func (p *pipeline) stream(
 		firstEventGuard.cancelStream()
 		p.applyRawErrorResponseMiddlewares(ctx, err)
 
-		slog.ErrorContext(ctx, "Failed to transform streaming request", slog.Any("error", err))
+		slog.ErrorContext(ctx, "Failed to transform streaming request", slog.String("error_type", fmt.Sprintf("%T", err)))
 
 		return nil, err
 	}
@@ -426,16 +413,6 @@ func (p *pipeline) stream(
 		p.applyRawErrorResponseMiddlewares(ctx, err)
 
 		return nil, fmt.Errorf("failed to apply inbound raw stream middlewares: %w", err)
-	}
-
-	if slog.Default().Enabled(ctx, slog.LevelDebug) {
-		inboundStream = streams.Map(
-			inboundStream,
-			func(event *httpclient.StreamEvent) *httpclient.StreamEvent {
-				slog.DebugContext(ctx, "Inbound stream event", slog.Any("event", event))
-				return event
-			},
-		)
 	}
 
 	if firstEventGuard != nil {

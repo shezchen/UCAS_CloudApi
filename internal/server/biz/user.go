@@ -140,19 +140,6 @@ func NewUserService(params UserServiceParams) *UserService {
 	}
 }
 
-func requireSystemOwnerForDailyTokenLimit(ctx context.Context, dailyTokenLimit *int64) error {
-	if dailyTokenLimit == nil {
-		return nil
-	}
-
-	currentUser, ok := contexts.GetUser(ctx)
-	if !ok || currentUser == nil || !currentUser.IsOwner {
-		return fmt.Errorf("daily token limit can only be changed by the system owner")
-	}
-
-	return nil
-}
-
 func requireSystemOwnerForOwnershipChange(ctx context.Context, isOwner *bool) error {
 	if isOwner == nil {
 		return nil
@@ -177,9 +164,6 @@ func requireSystemOwnerForOwnershipChange(ctx context.Context, isOwner *bool) er
 
 // CreateUser creates a new user with hashed password.
 func (s *UserService) CreateUser(ctx context.Context, input ent.CreateUserInput) (*ent.User, error) {
-	if err := requireSystemOwnerForDailyTokenLimit(ctx, input.DailyTokenLimit); err != nil {
-		return nil, err
-	}
 	if err := requireSystemOwnerForOwnershipChange(ctx, input.IsOwner); err != nil {
 		return nil, err
 	}
@@ -218,7 +202,6 @@ func (s *UserService) CreateUser(ctx context.Context, input ent.CreateUserInput)
 			SetEmail(input.Email).
 			SetPassword(hashedPassword).
 			SetNillableIsOwner(input.IsOwner).
-			SetNillableDailyTokenLimit(input.DailyTokenLimit).
 			SetScopes(input.Scopes)
 
 		if input.RoleIDs != nil {
@@ -251,9 +234,6 @@ func (s *UserService) CreateUser(ctx context.Context, input ent.CreateUserInput)
 
 // UpdateUser updates an existing user.
 func (s *UserService) UpdateUser(ctx context.Context, id int, input ent.UpdateUserInput) (*ent.User, error) {
-	if err := requireSystemOwnerForDailyTokenLimit(ctx, input.DailyTokenLimit); err != nil {
-		return nil, err
-	}
 	if err := requireSystemOwnerForOwnershipChange(ctx, input.IsOwner); err != nil {
 		return nil, err
 	}
@@ -319,7 +299,6 @@ func (s *UserService) UpdateUser(ctx context.Context, id int, input ent.UpdateUs
 		SetNillableFirstName(input.FirstName).
 		SetNillableLastName(input.LastName).
 		SetNillableIsOwner(input.IsOwner).
-		SetNillableDailyTokenLimit(input.DailyTokenLimit).
 		SetNillablePreferLanguage(input.PreferLanguage)
 
 	if input.ClearAvatar {

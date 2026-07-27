@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -769,7 +770,7 @@ func (s *RequestService) UpdateRequestExecutionStatus(
 	upd := client.RequestExecution.UpdateOneID(executionID).
 		SetStatus(status)
 	if errorMsg != "" {
-		upd = upd.SetErrorMessage(errorMsg)
+		upd = upd.SetErrorMessage(sanitizeRequestExecutionErrorMessage(errorMsg))
 	}
 
 	if errorInfo != nil && errorInfo.StatusCode != nil {
@@ -783,6 +784,106 @@ func (s *RequestService) UpdateRequestExecutionStatus(
 	}
 
 	return nil
+}
+
+const (
+	campusExecutionErrorRetention = 6 * time.Hour
+	campusExecutionErrorMaxRunes  = 600
+)
+
+var (
+	executionBearerPattern = regexp.MustCompile(`(?i)\b(bearer\s+)[^\s,;]+`)
+	executionAPIKeyPattern = regexp.MustCompile(`(?i)\b(api[-_ ]?key|authorization|cookie|set-cookie)\s*[:=]\s*[^\s,;]+`)
+	executionSecretPattern = regexp.MustCompile(`\b(?:sk|sess|eyJ)[-_A-Za-z0-9.]{12,}\b`)
+	executionEmailPattern  = regexp.MustCompile(`\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b`)
+	executionQueryPattern  = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://[^\s?#]+)\?[^\s#]*`)
+)
+
+// sanitizeRequestExecutionErrorMessage keeps enough provider context for the
+// request owner to diagnose a failed call while ensuring credentials and
+// personal contact details are never persisted in the six-hour error window.
+func sanitizeRequestExecutionErrorMessage(message string) string {
+	message = strings.Map(func(r rune) rune {
+		switch {
+		case r == '\n' || r == '\r' || r == '\t':
+			return ' '
+		case r < 0x20 || r == 0x7f:
+			return -1
+		default:
+			return r
+		}
+	}, strings.TrimSpace(message))
+	message = strings.Join(strings.Fields(message), " ")
+	message = executionBearerPattern.ReplaceAllString(message, "${1}[REDACTED]")
+	message = executionAPIKeyPattern.ReplaceAllString(message, "${1}=[REDACTED]")
+	message = executionSecretPattern.ReplaceAllString(message, "[REDACTED]")
+	message = executionEmailPattern.ReplaceAllString(message, "[EMAIL]")
+	message = executionQueryPattern.ReplaceAllString(message, "$1?[REDACTED]")
+
+	runes := []rune(message)
+	if len(runes) > campusExecutionErrorMaxRunes {
+		message = string(runes[:campusExecutionErrorMaxRunes]) + "…"
+	}
+
+	return message
+}
+
+// ScrubExpiredCampusExecutionErrors removes the only short-lived diagnostic
+// text once its rolling six-hour retention window closes. Status, timing,
+// model, token aggregates and HTTP status remain available for statistics.
+func (s *RequestService) ScrubExpiredCampusExecutionErrors(ctx context.Context) (int, error) {
+	cutoff := time.Now().Add(-campusExecutionErrorRetention)
+	client := s.entFromContext(ctx)
+
+	updated, err := client.RequestExecution.Update().
+		Where(
+			requestexecution.CreatedAtLT(cutoff),
+			requestexecution.ErrorMessageNotNil(),
+		).
+		ClearErrorMessage().
+		Save(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("scrub expired campus execution errors: %w", err)
+	}
+
+	return updated, nil
+}
+
+// SanitizeRetainedCampusExecutionErrors rewrites the still-visible rolling
+// window once at startup. This closes the upgrade boundary: failures recorded
+// by an older binary cannot leave raw provider text in storage or become
+// visible through the campus diagnostics projection after the new version
+// starts.
+func (s *RequestService) SanitizeRetainedCampusExecutionErrors(ctx context.Context) (int, error) {
+	cutoff := time.Now().Add(-campusExecutionErrorRetention)
+	client := s.entFromContext(ctx)
+
+	executions, err := client.RequestExecution.Query().
+		Where(
+			requestexecution.CreatedAtGTE(cutoff),
+			requestexecution.ErrorMessageNotNil(),
+		).
+		Select(requestexecution.FieldID, requestexecution.FieldErrorMessage).
+		All(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("load retained campus execution errors: %w", err)
+	}
+
+	updated := 0
+	for _, execution := range executions {
+		sanitized := sanitizeRequestExecutionErrorMessage(execution.ErrorMessage)
+		if sanitized == execution.ErrorMessage {
+			continue
+		}
+		if _, err := client.RequestExecution.UpdateOneID(execution.ID).
+			SetErrorMessage(sanitized).
+			Save(ctx); err != nil {
+			return updated, fmt.Errorf("sanitize retained campus execution error %d: %w", execution.ID, err)
+		}
+		updated++
+	}
+
+	return updated, nil
 }
 
 // UpdateRequestExecutionStatusFromError updates request execution status based on error type and sets error message.

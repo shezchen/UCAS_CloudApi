@@ -25,8 +25,12 @@ func TestUserDailyQuotaSettings(t *testing.T) {
 	settings, err := settingsService.UserDailyQuotaSettings(ctx)
 	require.NoError(t, err)
 	require.Equal(t, DefaultUserDailyTokenLimit, settings.DailyTokenLimit)
+	require.Equal(t, DefaultUserWeeklyTokenLimit, settings.WeeklyTokenLimit)
 
-	updated := UserDailyQuotaSettings{DailyTokenLimit: 345_000_000}
+	updated := UserDailyQuotaSettings{
+		DailyTokenLimit:  345_000_000,
+		WeeklyTokenLimit: 1_234_000_000,
+	}
 	require.NoError(t, settingsService.SetUserDailyQuotaSettings(ctx, updated))
 
 	settings, err = settingsService.UserDailyQuotaSettings(ctx)
@@ -34,4 +38,5 @@ func TestUserDailyQuotaSettings(t *testing.T) {
 	require.Equal(t, updated, *settings)
 
 	require.ErrorContains(t, settingsService.SetUserDailyQuotaSettings(ctx, UserDailyQuotaSettings{DailyTokenLimit: -1}), "cannot be negative")
+	require.ErrorContains(t, settingsService.SetUserDailyQuotaSettings(ctx, UserDailyQuotaSettings{WeeklyTokenLimit: -1}), "cannot be negative")
 }

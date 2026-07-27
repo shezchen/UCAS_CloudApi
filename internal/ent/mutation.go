@@ -32,11 +32,13 @@ import (
 	"github.com/looplj/axonhub/internal/ent/role"
 	"github.com/looplj/axonhub/internal/ent/system"
 	"github.com/looplj/axonhub/internal/ent/thread"
+	"github.com/looplj/axonhub/internal/ent/tokenwalletledger"
 	"github.com/looplj/axonhub/internal/ent/trace"
 	"github.com/looplj/axonhub/internal/ent/usagelog"
 	"github.com/looplj/axonhub/internal/ent/user"
 	"github.com/looplj/axonhub/internal/ent/userproject"
 	"github.com/looplj/axonhub/internal/ent/userrole"
+	"github.com/looplj/axonhub/internal/ent/usertokenwallet"
 	"github.com/looplj/axonhub/internal/objects"
 )
 
@@ -69,11 +71,13 @@ const (
 	TypeRole                       = "Role"
 	TypeSystem                     = "System"
 	TypeThread                     = "Thread"
+	TypeTokenWalletLedger          = "TokenWalletLedger"
 	TypeTrace                      = "Trace"
 	TypeUsageLog                   = "UsageLog"
 	TypeUser                       = "User"
 	TypeUserProject                = "UserProject"
 	TypeUserRole                   = "UserRole"
+	TypeUserTokenWallet            = "UserTokenWallet"
 )
 
 // APIKeyMutation represents an operation that mutates the APIKey nodes in the graph.
@@ -22842,6 +22846,1062 @@ func (m *ThreadMutation) ResetEdge(name string) error {
 	return fmt.Errorf("unknown Thread edge %s", name)
 }
 
+// TokenWalletLedgerMutation represents an operation that mutates the TokenWalletLedger nodes in the graph.
+type TokenWalletLedgerMutation struct {
+	config
+	op                           Op
+	typ                          string
+	id                           *int
+	created_at                   *time.Time
+	updated_at                   *time.Time
+	user_id                      *int
+	adduser_id                   *int
+	request_id                   *int
+	addrequest_id                *int
+	usage_log_id                 *int
+	addusage_log_id              *int
+	channel_id                   *int
+	addchannel_id                *int
+	channel_name_snapshot        *string
+	kind                         *tokenwalletledger.Kind
+	amount_tokens                *int64
+	addamount_tokens             *int64
+	effective_tokens_snapshot    *int64
+	addeffective_tokens_snapshot *int64
+	clearedFields                map[string]struct{}
+	done                         bool
+	oldValue                     func(context.Context) (*TokenWalletLedger, error)
+	predicates                   []predicate.TokenWalletLedger
+}
+
+var _ ent.Mutation = (*TokenWalletLedgerMutation)(nil)
+
+// tokenwalletledgerOption allows management of the mutation configuration using functional options.
+type tokenwalletledgerOption func(*TokenWalletLedgerMutation)
+
+// newTokenWalletLedgerMutation creates new mutation for the TokenWalletLedger entity.
+func newTokenWalletLedgerMutation(c config, op Op, opts ...tokenwalletledgerOption) *TokenWalletLedgerMutation {
+	m := &TokenWalletLedgerMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeTokenWalletLedger,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withTokenWalletLedgerID sets the ID field of the mutation.
+func withTokenWalletLedgerID(id int) tokenwalletledgerOption {
+	return func(m *TokenWalletLedgerMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *TokenWalletLedger
+		)
+		m.oldValue = func(ctx context.Context) (*TokenWalletLedger, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().TokenWalletLedger.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withTokenWalletLedger sets the old TokenWalletLedger of the mutation.
+func withTokenWalletLedger(node *TokenWalletLedger) tokenwalletledgerOption {
+	return func(m *TokenWalletLedgerMutation) {
+		m.oldValue = func(context.Context) (*TokenWalletLedger, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m TokenWalletLedgerMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m TokenWalletLedgerMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *TokenWalletLedgerMutation) ID() (id int, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *TokenWalletLedgerMutation) IDs(ctx context.Context) ([]int, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().TokenWalletLedger.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *TokenWalletLedgerMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *TokenWalletLedgerMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the TokenWalletLedger entity.
+// If the TokenWalletLedger object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TokenWalletLedgerMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *TokenWalletLedgerMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *TokenWalletLedgerMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *TokenWalletLedgerMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the TokenWalletLedger entity.
+// If the TokenWalletLedger object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TokenWalletLedgerMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *TokenWalletLedgerMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// SetUserID sets the "user_id" field.
+func (m *TokenWalletLedgerMutation) SetUserID(i int) {
+	m.user_id = &i
+	m.adduser_id = nil
+}
+
+// UserID returns the value of the "user_id" field in the mutation.
+func (m *TokenWalletLedgerMutation) UserID() (r int, exists bool) {
+	v := m.user_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUserID returns the old "user_id" field's value of the TokenWalletLedger entity.
+// If the TokenWalletLedger object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TokenWalletLedgerMutation) OldUserID(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUserID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUserID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUserID: %w", err)
+	}
+	return oldValue.UserID, nil
+}
+
+// AddUserID adds i to the "user_id" field.
+func (m *TokenWalletLedgerMutation) AddUserID(i int) {
+	if m.adduser_id != nil {
+		*m.adduser_id += i
+	} else {
+		m.adduser_id = &i
+	}
+}
+
+// AddedUserID returns the value that was added to the "user_id" field in this mutation.
+func (m *TokenWalletLedgerMutation) AddedUserID() (r int, exists bool) {
+	v := m.adduser_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetUserID resets all changes to the "user_id" field.
+func (m *TokenWalletLedgerMutation) ResetUserID() {
+	m.user_id = nil
+	m.adduser_id = nil
+}
+
+// SetRequestID sets the "request_id" field.
+func (m *TokenWalletLedgerMutation) SetRequestID(i int) {
+	m.request_id = &i
+	m.addrequest_id = nil
+}
+
+// RequestID returns the value of the "request_id" field in the mutation.
+func (m *TokenWalletLedgerMutation) RequestID() (r int, exists bool) {
+	v := m.request_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRequestID returns the old "request_id" field's value of the TokenWalletLedger entity.
+// If the TokenWalletLedger object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TokenWalletLedgerMutation) OldRequestID(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRequestID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRequestID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRequestID: %w", err)
+	}
+	return oldValue.RequestID, nil
+}
+
+// AddRequestID adds i to the "request_id" field.
+func (m *TokenWalletLedgerMutation) AddRequestID(i int) {
+	if m.addrequest_id != nil {
+		*m.addrequest_id += i
+	} else {
+		m.addrequest_id = &i
+	}
+}
+
+// AddedRequestID returns the value that was added to the "request_id" field in this mutation.
+func (m *TokenWalletLedgerMutation) AddedRequestID() (r int, exists bool) {
+	v := m.addrequest_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetRequestID resets all changes to the "request_id" field.
+func (m *TokenWalletLedgerMutation) ResetRequestID() {
+	m.request_id = nil
+	m.addrequest_id = nil
+}
+
+// SetUsageLogID sets the "usage_log_id" field.
+func (m *TokenWalletLedgerMutation) SetUsageLogID(i int) {
+	m.usage_log_id = &i
+	m.addusage_log_id = nil
+}
+
+// UsageLogID returns the value of the "usage_log_id" field in the mutation.
+func (m *TokenWalletLedgerMutation) UsageLogID() (r int, exists bool) {
+	v := m.usage_log_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUsageLogID returns the old "usage_log_id" field's value of the TokenWalletLedger entity.
+// If the TokenWalletLedger object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TokenWalletLedgerMutation) OldUsageLogID(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUsageLogID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUsageLogID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUsageLogID: %w", err)
+	}
+	return oldValue.UsageLogID, nil
+}
+
+// AddUsageLogID adds i to the "usage_log_id" field.
+func (m *TokenWalletLedgerMutation) AddUsageLogID(i int) {
+	if m.addusage_log_id != nil {
+		*m.addusage_log_id += i
+	} else {
+		m.addusage_log_id = &i
+	}
+}
+
+// AddedUsageLogID returns the value that was added to the "usage_log_id" field in this mutation.
+func (m *TokenWalletLedgerMutation) AddedUsageLogID() (r int, exists bool) {
+	v := m.addusage_log_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearUsageLogID clears the value of the "usage_log_id" field.
+func (m *TokenWalletLedgerMutation) ClearUsageLogID() {
+	m.usage_log_id = nil
+	m.addusage_log_id = nil
+	m.clearedFields[tokenwalletledger.FieldUsageLogID] = struct{}{}
+}
+
+// UsageLogIDCleared returns if the "usage_log_id" field was cleared in this mutation.
+func (m *TokenWalletLedgerMutation) UsageLogIDCleared() bool {
+	_, ok := m.clearedFields[tokenwalletledger.FieldUsageLogID]
+	return ok
+}
+
+// ResetUsageLogID resets all changes to the "usage_log_id" field.
+func (m *TokenWalletLedgerMutation) ResetUsageLogID() {
+	m.usage_log_id = nil
+	m.addusage_log_id = nil
+	delete(m.clearedFields, tokenwalletledger.FieldUsageLogID)
+}
+
+// SetChannelID sets the "channel_id" field.
+func (m *TokenWalletLedgerMutation) SetChannelID(i int) {
+	m.channel_id = &i
+	m.addchannel_id = nil
+}
+
+// ChannelID returns the value of the "channel_id" field in the mutation.
+func (m *TokenWalletLedgerMutation) ChannelID() (r int, exists bool) {
+	v := m.channel_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldChannelID returns the old "channel_id" field's value of the TokenWalletLedger entity.
+// If the TokenWalletLedger object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TokenWalletLedgerMutation) OldChannelID(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldChannelID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldChannelID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldChannelID: %w", err)
+	}
+	return oldValue.ChannelID, nil
+}
+
+// AddChannelID adds i to the "channel_id" field.
+func (m *TokenWalletLedgerMutation) AddChannelID(i int) {
+	if m.addchannel_id != nil {
+		*m.addchannel_id += i
+	} else {
+		m.addchannel_id = &i
+	}
+}
+
+// AddedChannelID returns the value that was added to the "channel_id" field in this mutation.
+func (m *TokenWalletLedgerMutation) AddedChannelID() (r int, exists bool) {
+	v := m.addchannel_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearChannelID clears the value of the "channel_id" field.
+func (m *TokenWalletLedgerMutation) ClearChannelID() {
+	m.channel_id = nil
+	m.addchannel_id = nil
+	m.clearedFields[tokenwalletledger.FieldChannelID] = struct{}{}
+}
+
+// ChannelIDCleared returns if the "channel_id" field was cleared in this mutation.
+func (m *TokenWalletLedgerMutation) ChannelIDCleared() bool {
+	_, ok := m.clearedFields[tokenwalletledger.FieldChannelID]
+	return ok
+}
+
+// ResetChannelID resets all changes to the "channel_id" field.
+func (m *TokenWalletLedgerMutation) ResetChannelID() {
+	m.channel_id = nil
+	m.addchannel_id = nil
+	delete(m.clearedFields, tokenwalletledger.FieldChannelID)
+}
+
+// SetChannelNameSnapshot sets the "channel_name_snapshot" field.
+func (m *TokenWalletLedgerMutation) SetChannelNameSnapshot(s string) {
+	m.channel_name_snapshot = &s
+}
+
+// ChannelNameSnapshot returns the value of the "channel_name_snapshot" field in the mutation.
+func (m *TokenWalletLedgerMutation) ChannelNameSnapshot() (r string, exists bool) {
+	v := m.channel_name_snapshot
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldChannelNameSnapshot returns the old "channel_name_snapshot" field's value of the TokenWalletLedger entity.
+// If the TokenWalletLedger object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TokenWalletLedgerMutation) OldChannelNameSnapshot(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldChannelNameSnapshot is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldChannelNameSnapshot requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldChannelNameSnapshot: %w", err)
+	}
+	return oldValue.ChannelNameSnapshot, nil
+}
+
+// ResetChannelNameSnapshot resets all changes to the "channel_name_snapshot" field.
+func (m *TokenWalletLedgerMutation) ResetChannelNameSnapshot() {
+	m.channel_name_snapshot = nil
+}
+
+// SetKind sets the "kind" field.
+func (m *TokenWalletLedgerMutation) SetKind(t tokenwalletledger.Kind) {
+	m.kind = &t
+}
+
+// Kind returns the value of the "kind" field in the mutation.
+func (m *TokenWalletLedgerMutation) Kind() (r tokenwalletledger.Kind, exists bool) {
+	v := m.kind
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldKind returns the old "kind" field's value of the TokenWalletLedger entity.
+// If the TokenWalletLedger object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TokenWalletLedgerMutation) OldKind(ctx context.Context) (v tokenwalletledger.Kind, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldKind is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldKind requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldKind: %w", err)
+	}
+	return oldValue.Kind, nil
+}
+
+// ResetKind resets all changes to the "kind" field.
+func (m *TokenWalletLedgerMutation) ResetKind() {
+	m.kind = nil
+}
+
+// SetAmountTokens sets the "amount_tokens" field.
+func (m *TokenWalletLedgerMutation) SetAmountTokens(i int64) {
+	m.amount_tokens = &i
+	m.addamount_tokens = nil
+}
+
+// AmountTokens returns the value of the "amount_tokens" field in the mutation.
+func (m *TokenWalletLedgerMutation) AmountTokens() (r int64, exists bool) {
+	v := m.amount_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAmountTokens returns the old "amount_tokens" field's value of the TokenWalletLedger entity.
+// If the TokenWalletLedger object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TokenWalletLedgerMutation) OldAmountTokens(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAmountTokens is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAmountTokens requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAmountTokens: %w", err)
+	}
+	return oldValue.AmountTokens, nil
+}
+
+// AddAmountTokens adds i to the "amount_tokens" field.
+func (m *TokenWalletLedgerMutation) AddAmountTokens(i int64) {
+	if m.addamount_tokens != nil {
+		*m.addamount_tokens += i
+	} else {
+		m.addamount_tokens = &i
+	}
+}
+
+// AddedAmountTokens returns the value that was added to the "amount_tokens" field in this mutation.
+func (m *TokenWalletLedgerMutation) AddedAmountTokens() (r int64, exists bool) {
+	v := m.addamount_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetAmountTokens resets all changes to the "amount_tokens" field.
+func (m *TokenWalletLedgerMutation) ResetAmountTokens() {
+	m.amount_tokens = nil
+	m.addamount_tokens = nil
+}
+
+// SetEffectiveTokensSnapshot sets the "effective_tokens_snapshot" field.
+func (m *TokenWalletLedgerMutation) SetEffectiveTokensSnapshot(i int64) {
+	m.effective_tokens_snapshot = &i
+	m.addeffective_tokens_snapshot = nil
+}
+
+// EffectiveTokensSnapshot returns the value of the "effective_tokens_snapshot" field in the mutation.
+func (m *TokenWalletLedgerMutation) EffectiveTokensSnapshot() (r int64, exists bool) {
+	v := m.effective_tokens_snapshot
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldEffectiveTokensSnapshot returns the old "effective_tokens_snapshot" field's value of the TokenWalletLedger entity.
+// If the TokenWalletLedger object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TokenWalletLedgerMutation) OldEffectiveTokensSnapshot(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldEffectiveTokensSnapshot is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldEffectiveTokensSnapshot requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldEffectiveTokensSnapshot: %w", err)
+	}
+	return oldValue.EffectiveTokensSnapshot, nil
+}
+
+// AddEffectiveTokensSnapshot adds i to the "effective_tokens_snapshot" field.
+func (m *TokenWalletLedgerMutation) AddEffectiveTokensSnapshot(i int64) {
+	if m.addeffective_tokens_snapshot != nil {
+		*m.addeffective_tokens_snapshot += i
+	} else {
+		m.addeffective_tokens_snapshot = &i
+	}
+}
+
+// AddedEffectiveTokensSnapshot returns the value that was added to the "effective_tokens_snapshot" field in this mutation.
+func (m *TokenWalletLedgerMutation) AddedEffectiveTokensSnapshot() (r int64, exists bool) {
+	v := m.addeffective_tokens_snapshot
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetEffectiveTokensSnapshot resets all changes to the "effective_tokens_snapshot" field.
+func (m *TokenWalletLedgerMutation) ResetEffectiveTokensSnapshot() {
+	m.effective_tokens_snapshot = nil
+	m.addeffective_tokens_snapshot = nil
+}
+
+// Where appends a list predicates to the TokenWalletLedgerMutation builder.
+func (m *TokenWalletLedgerMutation) Where(ps ...predicate.TokenWalletLedger) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the TokenWalletLedgerMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *TokenWalletLedgerMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.TokenWalletLedger, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *TokenWalletLedgerMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *TokenWalletLedgerMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (TokenWalletLedger).
+func (m *TokenWalletLedgerMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *TokenWalletLedgerMutation) Fields() []string {
+	fields := make([]string, 0, 10)
+	if m.created_at != nil {
+		fields = append(fields, tokenwalletledger.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, tokenwalletledger.FieldUpdatedAt)
+	}
+	if m.user_id != nil {
+		fields = append(fields, tokenwalletledger.FieldUserID)
+	}
+	if m.request_id != nil {
+		fields = append(fields, tokenwalletledger.FieldRequestID)
+	}
+	if m.usage_log_id != nil {
+		fields = append(fields, tokenwalletledger.FieldUsageLogID)
+	}
+	if m.channel_id != nil {
+		fields = append(fields, tokenwalletledger.FieldChannelID)
+	}
+	if m.channel_name_snapshot != nil {
+		fields = append(fields, tokenwalletledger.FieldChannelNameSnapshot)
+	}
+	if m.kind != nil {
+		fields = append(fields, tokenwalletledger.FieldKind)
+	}
+	if m.amount_tokens != nil {
+		fields = append(fields, tokenwalletledger.FieldAmountTokens)
+	}
+	if m.effective_tokens_snapshot != nil {
+		fields = append(fields, tokenwalletledger.FieldEffectiveTokensSnapshot)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *TokenWalletLedgerMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case tokenwalletledger.FieldCreatedAt:
+		return m.CreatedAt()
+	case tokenwalletledger.FieldUpdatedAt:
+		return m.UpdatedAt()
+	case tokenwalletledger.FieldUserID:
+		return m.UserID()
+	case tokenwalletledger.FieldRequestID:
+		return m.RequestID()
+	case tokenwalletledger.FieldUsageLogID:
+		return m.UsageLogID()
+	case tokenwalletledger.FieldChannelID:
+		return m.ChannelID()
+	case tokenwalletledger.FieldChannelNameSnapshot:
+		return m.ChannelNameSnapshot()
+	case tokenwalletledger.FieldKind:
+		return m.Kind()
+	case tokenwalletledger.FieldAmountTokens:
+		return m.AmountTokens()
+	case tokenwalletledger.FieldEffectiveTokensSnapshot:
+		return m.EffectiveTokensSnapshot()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *TokenWalletLedgerMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case tokenwalletledger.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case tokenwalletledger.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	case tokenwalletledger.FieldUserID:
+		return m.OldUserID(ctx)
+	case tokenwalletledger.FieldRequestID:
+		return m.OldRequestID(ctx)
+	case tokenwalletledger.FieldUsageLogID:
+		return m.OldUsageLogID(ctx)
+	case tokenwalletledger.FieldChannelID:
+		return m.OldChannelID(ctx)
+	case tokenwalletledger.FieldChannelNameSnapshot:
+		return m.OldChannelNameSnapshot(ctx)
+	case tokenwalletledger.FieldKind:
+		return m.OldKind(ctx)
+	case tokenwalletledger.FieldAmountTokens:
+		return m.OldAmountTokens(ctx)
+	case tokenwalletledger.FieldEffectiveTokensSnapshot:
+		return m.OldEffectiveTokensSnapshot(ctx)
+	}
+	return nil, fmt.Errorf("unknown TokenWalletLedger field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *TokenWalletLedgerMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case tokenwalletledger.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case tokenwalletledger.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	case tokenwalletledger.FieldUserID:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUserID(v)
+		return nil
+	case tokenwalletledger.FieldRequestID:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRequestID(v)
+		return nil
+	case tokenwalletledger.FieldUsageLogID:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUsageLogID(v)
+		return nil
+	case tokenwalletledger.FieldChannelID:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetChannelID(v)
+		return nil
+	case tokenwalletledger.FieldChannelNameSnapshot:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetChannelNameSnapshot(v)
+		return nil
+	case tokenwalletledger.FieldKind:
+		v, ok := value.(tokenwalletledger.Kind)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetKind(v)
+		return nil
+	case tokenwalletledger.FieldAmountTokens:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAmountTokens(v)
+		return nil
+	case tokenwalletledger.FieldEffectiveTokensSnapshot:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetEffectiveTokensSnapshot(v)
+		return nil
+	}
+	return fmt.Errorf("unknown TokenWalletLedger field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *TokenWalletLedgerMutation) AddedFields() []string {
+	var fields []string
+	if m.adduser_id != nil {
+		fields = append(fields, tokenwalletledger.FieldUserID)
+	}
+	if m.addrequest_id != nil {
+		fields = append(fields, tokenwalletledger.FieldRequestID)
+	}
+	if m.addusage_log_id != nil {
+		fields = append(fields, tokenwalletledger.FieldUsageLogID)
+	}
+	if m.addchannel_id != nil {
+		fields = append(fields, tokenwalletledger.FieldChannelID)
+	}
+	if m.addamount_tokens != nil {
+		fields = append(fields, tokenwalletledger.FieldAmountTokens)
+	}
+	if m.addeffective_tokens_snapshot != nil {
+		fields = append(fields, tokenwalletledger.FieldEffectiveTokensSnapshot)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *TokenWalletLedgerMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case tokenwalletledger.FieldUserID:
+		return m.AddedUserID()
+	case tokenwalletledger.FieldRequestID:
+		return m.AddedRequestID()
+	case tokenwalletledger.FieldUsageLogID:
+		return m.AddedUsageLogID()
+	case tokenwalletledger.FieldChannelID:
+		return m.AddedChannelID()
+	case tokenwalletledger.FieldAmountTokens:
+		return m.AddedAmountTokens()
+	case tokenwalletledger.FieldEffectiveTokensSnapshot:
+		return m.AddedEffectiveTokensSnapshot()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *TokenWalletLedgerMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case tokenwalletledger.FieldUserID:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddUserID(v)
+		return nil
+	case tokenwalletledger.FieldRequestID:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddRequestID(v)
+		return nil
+	case tokenwalletledger.FieldUsageLogID:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddUsageLogID(v)
+		return nil
+	case tokenwalletledger.FieldChannelID:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddChannelID(v)
+		return nil
+	case tokenwalletledger.FieldAmountTokens:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddAmountTokens(v)
+		return nil
+	case tokenwalletledger.FieldEffectiveTokensSnapshot:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddEffectiveTokensSnapshot(v)
+		return nil
+	}
+	return fmt.Errorf("unknown TokenWalletLedger numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *TokenWalletLedgerMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(tokenwalletledger.FieldUsageLogID) {
+		fields = append(fields, tokenwalletledger.FieldUsageLogID)
+	}
+	if m.FieldCleared(tokenwalletledger.FieldChannelID) {
+		fields = append(fields, tokenwalletledger.FieldChannelID)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *TokenWalletLedgerMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *TokenWalletLedgerMutation) ClearField(name string) error {
+	switch name {
+	case tokenwalletledger.FieldUsageLogID:
+		m.ClearUsageLogID()
+		return nil
+	case tokenwalletledger.FieldChannelID:
+		m.ClearChannelID()
+		return nil
+	}
+	return fmt.Errorf("unknown TokenWalletLedger nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *TokenWalletLedgerMutation) ResetField(name string) error {
+	switch name {
+	case tokenwalletledger.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case tokenwalletledger.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	case tokenwalletledger.FieldUserID:
+		m.ResetUserID()
+		return nil
+	case tokenwalletledger.FieldRequestID:
+		m.ResetRequestID()
+		return nil
+	case tokenwalletledger.FieldUsageLogID:
+		m.ResetUsageLogID()
+		return nil
+	case tokenwalletledger.FieldChannelID:
+		m.ResetChannelID()
+		return nil
+	case tokenwalletledger.FieldChannelNameSnapshot:
+		m.ResetChannelNameSnapshot()
+		return nil
+	case tokenwalletledger.FieldKind:
+		m.ResetKind()
+		return nil
+	case tokenwalletledger.FieldAmountTokens:
+		m.ResetAmountTokens()
+		return nil
+	case tokenwalletledger.FieldEffectiveTokensSnapshot:
+		m.ResetEffectiveTokensSnapshot()
+		return nil
+	}
+	return fmt.Errorf("unknown TokenWalletLedger field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *TokenWalletLedgerMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *TokenWalletLedgerMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *TokenWalletLedgerMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *TokenWalletLedgerMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *TokenWalletLedgerMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *TokenWalletLedgerMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *TokenWalletLedgerMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown TokenWalletLedger unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *TokenWalletLedgerMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown TokenWalletLedger edge %s", name)
+}
+
 // TraceMutation represents an operation that mutates the Trace nodes in the graph.
 type TraceMutation struct {
 	config
@@ -23611,6 +24671,13 @@ type UsageLogMutation struct {
 	addcompletion_tokens                     *int64
 	total_tokens                             *int64
 	addtotal_tokens                          *int64
+	effective_tokens                         *int64
+	addeffective_tokens                      *int64
+	cache_read_tokens_known                  *bool
+	wallet_consumed_tokens                   *int64
+	addwallet_consumed_tokens                *int64
+	donor_credit_tokens                      *int64
+	adddonor_credit_tokens                   *int64
 	prompt_audio_tokens                      *int64
 	addprompt_audio_tokens                   *int64
 	prompt_cached_tokens                     *int64
@@ -24211,6 +25278,210 @@ func (m *UsageLogMutation) AddedTotalTokens() (r int64, exists bool) {
 func (m *UsageLogMutation) ResetTotalTokens() {
 	m.total_tokens = nil
 	m.addtotal_tokens = nil
+}
+
+// SetEffectiveTokens sets the "effective_tokens" field.
+func (m *UsageLogMutation) SetEffectiveTokens(i int64) {
+	m.effective_tokens = &i
+	m.addeffective_tokens = nil
+}
+
+// EffectiveTokens returns the value of the "effective_tokens" field in the mutation.
+func (m *UsageLogMutation) EffectiveTokens() (r int64, exists bool) {
+	v := m.effective_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldEffectiveTokens returns the old "effective_tokens" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldEffectiveTokens(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldEffectiveTokens is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldEffectiveTokens requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldEffectiveTokens: %w", err)
+	}
+	return oldValue.EffectiveTokens, nil
+}
+
+// AddEffectiveTokens adds i to the "effective_tokens" field.
+func (m *UsageLogMutation) AddEffectiveTokens(i int64) {
+	if m.addeffective_tokens != nil {
+		*m.addeffective_tokens += i
+	} else {
+		m.addeffective_tokens = &i
+	}
+}
+
+// AddedEffectiveTokens returns the value that was added to the "effective_tokens" field in this mutation.
+func (m *UsageLogMutation) AddedEffectiveTokens() (r int64, exists bool) {
+	v := m.addeffective_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetEffectiveTokens resets all changes to the "effective_tokens" field.
+func (m *UsageLogMutation) ResetEffectiveTokens() {
+	m.effective_tokens = nil
+	m.addeffective_tokens = nil
+}
+
+// SetCacheReadTokensKnown sets the "cache_read_tokens_known" field.
+func (m *UsageLogMutation) SetCacheReadTokensKnown(b bool) {
+	m.cache_read_tokens_known = &b
+}
+
+// CacheReadTokensKnown returns the value of the "cache_read_tokens_known" field in the mutation.
+func (m *UsageLogMutation) CacheReadTokensKnown() (r bool, exists bool) {
+	v := m.cache_read_tokens_known
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCacheReadTokensKnown returns the old "cache_read_tokens_known" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldCacheReadTokensKnown(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCacheReadTokensKnown is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCacheReadTokensKnown requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCacheReadTokensKnown: %w", err)
+	}
+	return oldValue.CacheReadTokensKnown, nil
+}
+
+// ResetCacheReadTokensKnown resets all changes to the "cache_read_tokens_known" field.
+func (m *UsageLogMutation) ResetCacheReadTokensKnown() {
+	m.cache_read_tokens_known = nil
+}
+
+// SetWalletConsumedTokens sets the "wallet_consumed_tokens" field.
+func (m *UsageLogMutation) SetWalletConsumedTokens(i int64) {
+	m.wallet_consumed_tokens = &i
+	m.addwallet_consumed_tokens = nil
+}
+
+// WalletConsumedTokens returns the value of the "wallet_consumed_tokens" field in the mutation.
+func (m *UsageLogMutation) WalletConsumedTokens() (r int64, exists bool) {
+	v := m.wallet_consumed_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldWalletConsumedTokens returns the old "wallet_consumed_tokens" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldWalletConsumedTokens(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldWalletConsumedTokens is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldWalletConsumedTokens requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldWalletConsumedTokens: %w", err)
+	}
+	return oldValue.WalletConsumedTokens, nil
+}
+
+// AddWalletConsumedTokens adds i to the "wallet_consumed_tokens" field.
+func (m *UsageLogMutation) AddWalletConsumedTokens(i int64) {
+	if m.addwallet_consumed_tokens != nil {
+		*m.addwallet_consumed_tokens += i
+	} else {
+		m.addwallet_consumed_tokens = &i
+	}
+}
+
+// AddedWalletConsumedTokens returns the value that was added to the "wallet_consumed_tokens" field in this mutation.
+func (m *UsageLogMutation) AddedWalletConsumedTokens() (r int64, exists bool) {
+	v := m.addwallet_consumed_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetWalletConsumedTokens resets all changes to the "wallet_consumed_tokens" field.
+func (m *UsageLogMutation) ResetWalletConsumedTokens() {
+	m.wallet_consumed_tokens = nil
+	m.addwallet_consumed_tokens = nil
+}
+
+// SetDonorCreditTokens sets the "donor_credit_tokens" field.
+func (m *UsageLogMutation) SetDonorCreditTokens(i int64) {
+	m.donor_credit_tokens = &i
+	m.adddonor_credit_tokens = nil
+}
+
+// DonorCreditTokens returns the value of the "donor_credit_tokens" field in the mutation.
+func (m *UsageLogMutation) DonorCreditTokens() (r int64, exists bool) {
+	v := m.donor_credit_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDonorCreditTokens returns the old "donor_credit_tokens" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldDonorCreditTokens(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDonorCreditTokens is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDonorCreditTokens requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDonorCreditTokens: %w", err)
+	}
+	return oldValue.DonorCreditTokens, nil
+}
+
+// AddDonorCreditTokens adds i to the "donor_credit_tokens" field.
+func (m *UsageLogMutation) AddDonorCreditTokens(i int64) {
+	if m.adddonor_credit_tokens != nil {
+		*m.adddonor_credit_tokens += i
+	} else {
+		m.adddonor_credit_tokens = &i
+	}
+}
+
+// AddedDonorCreditTokens returns the value that was added to the "donor_credit_tokens" field in this mutation.
+func (m *UsageLogMutation) AddedDonorCreditTokens() (r int64, exists bool) {
+	v := m.adddonor_credit_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetDonorCreditTokens resets all changes to the "donor_credit_tokens" field.
+func (m *UsageLogMutation) ResetDonorCreditTokens() {
+	m.donor_credit_tokens = nil
+	m.adddonor_credit_tokens = nil
 }
 
 // SetPromptAudioTokens sets the "prompt_audio_tokens" field.
@@ -25214,7 +26485,7 @@ func (m *UsageLogMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UsageLogMutation) Fields() []string {
-	fields := make([]string, 0, 24)
+	fields := make([]string, 0, 28)
 	if m.created_at != nil {
 		fields = append(fields, usagelog.FieldCreatedAt)
 	}
@@ -25244,6 +26515,18 @@ func (m *UsageLogMutation) Fields() []string {
 	}
 	if m.total_tokens != nil {
 		fields = append(fields, usagelog.FieldTotalTokens)
+	}
+	if m.effective_tokens != nil {
+		fields = append(fields, usagelog.FieldEffectiveTokens)
+	}
+	if m.cache_read_tokens_known != nil {
+		fields = append(fields, usagelog.FieldCacheReadTokensKnown)
+	}
+	if m.wallet_consumed_tokens != nil {
+		fields = append(fields, usagelog.FieldWalletConsumedTokens)
+	}
+	if m.donor_credit_tokens != nil {
+		fields = append(fields, usagelog.FieldDonorCreditTokens)
 	}
 	if m.prompt_audio_tokens != nil {
 		fields = append(fields, usagelog.FieldPromptAudioTokens)
@@ -25315,6 +26598,14 @@ func (m *UsageLogMutation) Field(name string) (ent.Value, bool) {
 		return m.CompletionTokens()
 	case usagelog.FieldTotalTokens:
 		return m.TotalTokens()
+	case usagelog.FieldEffectiveTokens:
+		return m.EffectiveTokens()
+	case usagelog.FieldCacheReadTokensKnown:
+		return m.CacheReadTokensKnown()
+	case usagelog.FieldWalletConsumedTokens:
+		return m.WalletConsumedTokens()
+	case usagelog.FieldDonorCreditTokens:
+		return m.DonorCreditTokens()
 	case usagelog.FieldPromptAudioTokens:
 		return m.PromptAudioTokens()
 	case usagelog.FieldPromptCachedTokens:
@@ -25372,6 +26663,14 @@ func (m *UsageLogMutation) OldField(ctx context.Context, name string) (ent.Value
 		return m.OldCompletionTokens(ctx)
 	case usagelog.FieldTotalTokens:
 		return m.OldTotalTokens(ctx)
+	case usagelog.FieldEffectiveTokens:
+		return m.OldEffectiveTokens(ctx)
+	case usagelog.FieldCacheReadTokensKnown:
+		return m.OldCacheReadTokensKnown(ctx)
+	case usagelog.FieldWalletConsumedTokens:
+		return m.OldWalletConsumedTokens(ctx)
+	case usagelog.FieldDonorCreditTokens:
+		return m.OldDonorCreditTokens(ctx)
 	case usagelog.FieldPromptAudioTokens:
 		return m.OldPromptAudioTokens(ctx)
 	case usagelog.FieldPromptCachedTokens:
@@ -25478,6 +26777,34 @@ func (m *UsageLogMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetTotalTokens(v)
+		return nil
+	case usagelog.FieldEffectiveTokens:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetEffectiveTokens(v)
+		return nil
+	case usagelog.FieldCacheReadTokensKnown:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCacheReadTokensKnown(v)
+		return nil
+	case usagelog.FieldWalletConsumedTokens:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetWalletConsumedTokens(v)
+		return nil
+	case usagelog.FieldDonorCreditTokens:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDonorCreditTokens(v)
 		return nil
 	case usagelog.FieldPromptAudioTokens:
 		v, ok := value.(int64)
@@ -25597,6 +26924,15 @@ func (m *UsageLogMutation) AddedFields() []string {
 	if m.addtotal_tokens != nil {
 		fields = append(fields, usagelog.FieldTotalTokens)
 	}
+	if m.addeffective_tokens != nil {
+		fields = append(fields, usagelog.FieldEffectiveTokens)
+	}
+	if m.addwallet_consumed_tokens != nil {
+		fields = append(fields, usagelog.FieldWalletConsumedTokens)
+	}
+	if m.adddonor_credit_tokens != nil {
+		fields = append(fields, usagelog.FieldDonorCreditTokens)
+	}
 	if m.addprompt_audio_tokens != nil {
 		fields = append(fields, usagelog.FieldPromptAudioTokens)
 	}
@@ -25643,6 +26979,12 @@ func (m *UsageLogMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedCompletionTokens()
 	case usagelog.FieldTotalTokens:
 		return m.AddedTotalTokens()
+	case usagelog.FieldEffectiveTokens:
+		return m.AddedEffectiveTokens()
+	case usagelog.FieldWalletConsumedTokens:
+		return m.AddedWalletConsumedTokens()
+	case usagelog.FieldDonorCreditTokens:
+		return m.AddedDonorCreditTokens()
 	case usagelog.FieldPromptAudioTokens:
 		return m.AddedPromptAudioTokens()
 	case usagelog.FieldPromptCachedTokens:
@@ -25699,6 +27041,27 @@ func (m *UsageLogMutation) AddField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddTotalTokens(v)
+		return nil
+	case usagelog.FieldEffectiveTokens:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddEffectiveTokens(v)
+		return nil
+	case usagelog.FieldWalletConsumedTokens:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddWalletConsumedTokens(v)
+		return nil
+	case usagelog.FieldDonorCreditTokens:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddDonorCreditTokens(v)
 		return nil
 	case usagelog.FieldPromptAudioTokens:
 		v, ok := value.(int64)
@@ -25913,6 +27276,18 @@ func (m *UsageLogMutation) ResetField(name string) error {
 		return nil
 	case usagelog.FieldTotalTokens:
 		m.ResetTotalTokens()
+		return nil
+	case usagelog.FieldEffectiveTokens:
+		m.ResetEffectiveTokens()
+		return nil
+	case usagelog.FieldCacheReadTokensKnown:
+		m.ResetCacheReadTokensKnown()
+		return nil
+	case usagelog.FieldWalletConsumedTokens:
+		m.ResetWalletConsumedTokens()
+		return nil
+	case usagelog.FieldDonorCreditTokens:
+		m.ResetDonorCreditTokens()
 		return nil
 	case usagelog.FieldPromptAudioTokens:
 		m.ResetPromptAudioTokens()
@@ -29267,4 +30642,822 @@ func (m *UserRoleMutation) ResetEdge(name string) error {
 		return nil
 	}
 	return fmt.Errorf("unknown UserRole edge %s", name)
+}
+
+// UserTokenWalletMutation represents an operation that mutates the UserTokenWallet nodes in the graph.
+type UserTokenWalletMutation struct {
+	config
+	op                          Op
+	typ                         string
+	id                          *int
+	created_at                  *time.Time
+	updated_at                  *time.Time
+	user_id                     *int
+	adduser_id                  *int
+	balance_tokens              *int64
+	addbalance_tokens           *int64
+	lifetime_credited_tokens    *int64
+	addlifetime_credited_tokens *int64
+	lifetime_debited_tokens     *int64
+	addlifetime_debited_tokens  *int64
+	version                     *int64
+	addversion                  *int64
+	clearedFields               map[string]struct{}
+	done                        bool
+	oldValue                    func(context.Context) (*UserTokenWallet, error)
+	predicates                  []predicate.UserTokenWallet
+}
+
+var _ ent.Mutation = (*UserTokenWalletMutation)(nil)
+
+// usertokenwalletOption allows management of the mutation configuration using functional options.
+type usertokenwalletOption func(*UserTokenWalletMutation)
+
+// newUserTokenWalletMutation creates new mutation for the UserTokenWallet entity.
+func newUserTokenWalletMutation(c config, op Op, opts ...usertokenwalletOption) *UserTokenWalletMutation {
+	m := &UserTokenWalletMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeUserTokenWallet,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withUserTokenWalletID sets the ID field of the mutation.
+func withUserTokenWalletID(id int) usertokenwalletOption {
+	return func(m *UserTokenWalletMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *UserTokenWallet
+		)
+		m.oldValue = func(ctx context.Context) (*UserTokenWallet, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().UserTokenWallet.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withUserTokenWallet sets the old UserTokenWallet of the mutation.
+func withUserTokenWallet(node *UserTokenWallet) usertokenwalletOption {
+	return func(m *UserTokenWalletMutation) {
+		m.oldValue = func(context.Context) (*UserTokenWallet, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m UserTokenWalletMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m UserTokenWalletMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *UserTokenWalletMutation) ID() (id int, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *UserTokenWalletMutation) IDs(ctx context.Context) ([]int, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().UserTokenWallet.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *UserTokenWalletMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *UserTokenWalletMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the UserTokenWallet entity.
+// If the UserTokenWallet object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserTokenWalletMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *UserTokenWalletMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *UserTokenWalletMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *UserTokenWalletMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the UserTokenWallet entity.
+// If the UserTokenWallet object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserTokenWalletMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *UserTokenWalletMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// SetUserID sets the "user_id" field.
+func (m *UserTokenWalletMutation) SetUserID(i int) {
+	m.user_id = &i
+	m.adduser_id = nil
+}
+
+// UserID returns the value of the "user_id" field in the mutation.
+func (m *UserTokenWalletMutation) UserID() (r int, exists bool) {
+	v := m.user_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUserID returns the old "user_id" field's value of the UserTokenWallet entity.
+// If the UserTokenWallet object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserTokenWalletMutation) OldUserID(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUserID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUserID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUserID: %w", err)
+	}
+	return oldValue.UserID, nil
+}
+
+// AddUserID adds i to the "user_id" field.
+func (m *UserTokenWalletMutation) AddUserID(i int) {
+	if m.adduser_id != nil {
+		*m.adduser_id += i
+	} else {
+		m.adduser_id = &i
+	}
+}
+
+// AddedUserID returns the value that was added to the "user_id" field in this mutation.
+func (m *UserTokenWalletMutation) AddedUserID() (r int, exists bool) {
+	v := m.adduser_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetUserID resets all changes to the "user_id" field.
+func (m *UserTokenWalletMutation) ResetUserID() {
+	m.user_id = nil
+	m.adduser_id = nil
+}
+
+// SetBalanceTokens sets the "balance_tokens" field.
+func (m *UserTokenWalletMutation) SetBalanceTokens(i int64) {
+	m.balance_tokens = &i
+	m.addbalance_tokens = nil
+}
+
+// BalanceTokens returns the value of the "balance_tokens" field in the mutation.
+func (m *UserTokenWalletMutation) BalanceTokens() (r int64, exists bool) {
+	v := m.balance_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldBalanceTokens returns the old "balance_tokens" field's value of the UserTokenWallet entity.
+// If the UserTokenWallet object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserTokenWalletMutation) OldBalanceTokens(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldBalanceTokens is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldBalanceTokens requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldBalanceTokens: %w", err)
+	}
+	return oldValue.BalanceTokens, nil
+}
+
+// AddBalanceTokens adds i to the "balance_tokens" field.
+func (m *UserTokenWalletMutation) AddBalanceTokens(i int64) {
+	if m.addbalance_tokens != nil {
+		*m.addbalance_tokens += i
+	} else {
+		m.addbalance_tokens = &i
+	}
+}
+
+// AddedBalanceTokens returns the value that was added to the "balance_tokens" field in this mutation.
+func (m *UserTokenWalletMutation) AddedBalanceTokens() (r int64, exists bool) {
+	v := m.addbalance_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetBalanceTokens resets all changes to the "balance_tokens" field.
+func (m *UserTokenWalletMutation) ResetBalanceTokens() {
+	m.balance_tokens = nil
+	m.addbalance_tokens = nil
+}
+
+// SetLifetimeCreditedTokens sets the "lifetime_credited_tokens" field.
+func (m *UserTokenWalletMutation) SetLifetimeCreditedTokens(i int64) {
+	m.lifetime_credited_tokens = &i
+	m.addlifetime_credited_tokens = nil
+}
+
+// LifetimeCreditedTokens returns the value of the "lifetime_credited_tokens" field in the mutation.
+func (m *UserTokenWalletMutation) LifetimeCreditedTokens() (r int64, exists bool) {
+	v := m.lifetime_credited_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLifetimeCreditedTokens returns the old "lifetime_credited_tokens" field's value of the UserTokenWallet entity.
+// If the UserTokenWallet object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserTokenWalletMutation) OldLifetimeCreditedTokens(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLifetimeCreditedTokens is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLifetimeCreditedTokens requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLifetimeCreditedTokens: %w", err)
+	}
+	return oldValue.LifetimeCreditedTokens, nil
+}
+
+// AddLifetimeCreditedTokens adds i to the "lifetime_credited_tokens" field.
+func (m *UserTokenWalletMutation) AddLifetimeCreditedTokens(i int64) {
+	if m.addlifetime_credited_tokens != nil {
+		*m.addlifetime_credited_tokens += i
+	} else {
+		m.addlifetime_credited_tokens = &i
+	}
+}
+
+// AddedLifetimeCreditedTokens returns the value that was added to the "lifetime_credited_tokens" field in this mutation.
+func (m *UserTokenWalletMutation) AddedLifetimeCreditedTokens() (r int64, exists bool) {
+	v := m.addlifetime_credited_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetLifetimeCreditedTokens resets all changes to the "lifetime_credited_tokens" field.
+func (m *UserTokenWalletMutation) ResetLifetimeCreditedTokens() {
+	m.lifetime_credited_tokens = nil
+	m.addlifetime_credited_tokens = nil
+}
+
+// SetLifetimeDebitedTokens sets the "lifetime_debited_tokens" field.
+func (m *UserTokenWalletMutation) SetLifetimeDebitedTokens(i int64) {
+	m.lifetime_debited_tokens = &i
+	m.addlifetime_debited_tokens = nil
+}
+
+// LifetimeDebitedTokens returns the value of the "lifetime_debited_tokens" field in the mutation.
+func (m *UserTokenWalletMutation) LifetimeDebitedTokens() (r int64, exists bool) {
+	v := m.lifetime_debited_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLifetimeDebitedTokens returns the old "lifetime_debited_tokens" field's value of the UserTokenWallet entity.
+// If the UserTokenWallet object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserTokenWalletMutation) OldLifetimeDebitedTokens(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLifetimeDebitedTokens is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLifetimeDebitedTokens requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLifetimeDebitedTokens: %w", err)
+	}
+	return oldValue.LifetimeDebitedTokens, nil
+}
+
+// AddLifetimeDebitedTokens adds i to the "lifetime_debited_tokens" field.
+func (m *UserTokenWalletMutation) AddLifetimeDebitedTokens(i int64) {
+	if m.addlifetime_debited_tokens != nil {
+		*m.addlifetime_debited_tokens += i
+	} else {
+		m.addlifetime_debited_tokens = &i
+	}
+}
+
+// AddedLifetimeDebitedTokens returns the value that was added to the "lifetime_debited_tokens" field in this mutation.
+func (m *UserTokenWalletMutation) AddedLifetimeDebitedTokens() (r int64, exists bool) {
+	v := m.addlifetime_debited_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetLifetimeDebitedTokens resets all changes to the "lifetime_debited_tokens" field.
+func (m *UserTokenWalletMutation) ResetLifetimeDebitedTokens() {
+	m.lifetime_debited_tokens = nil
+	m.addlifetime_debited_tokens = nil
+}
+
+// SetVersion sets the "version" field.
+func (m *UserTokenWalletMutation) SetVersion(i int64) {
+	m.version = &i
+	m.addversion = nil
+}
+
+// Version returns the value of the "version" field in the mutation.
+func (m *UserTokenWalletMutation) Version() (r int64, exists bool) {
+	v := m.version
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldVersion returns the old "version" field's value of the UserTokenWallet entity.
+// If the UserTokenWallet object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserTokenWalletMutation) OldVersion(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldVersion is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldVersion requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldVersion: %w", err)
+	}
+	return oldValue.Version, nil
+}
+
+// AddVersion adds i to the "version" field.
+func (m *UserTokenWalletMutation) AddVersion(i int64) {
+	if m.addversion != nil {
+		*m.addversion += i
+	} else {
+		m.addversion = &i
+	}
+}
+
+// AddedVersion returns the value that was added to the "version" field in this mutation.
+func (m *UserTokenWalletMutation) AddedVersion() (r int64, exists bool) {
+	v := m.addversion
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetVersion resets all changes to the "version" field.
+func (m *UserTokenWalletMutation) ResetVersion() {
+	m.version = nil
+	m.addversion = nil
+}
+
+// Where appends a list predicates to the UserTokenWalletMutation builder.
+func (m *UserTokenWalletMutation) Where(ps ...predicate.UserTokenWallet) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the UserTokenWalletMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *UserTokenWalletMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.UserTokenWallet, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *UserTokenWalletMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *UserTokenWalletMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (UserTokenWallet).
+func (m *UserTokenWalletMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *UserTokenWalletMutation) Fields() []string {
+	fields := make([]string, 0, 7)
+	if m.created_at != nil {
+		fields = append(fields, usertokenwallet.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, usertokenwallet.FieldUpdatedAt)
+	}
+	if m.user_id != nil {
+		fields = append(fields, usertokenwallet.FieldUserID)
+	}
+	if m.balance_tokens != nil {
+		fields = append(fields, usertokenwallet.FieldBalanceTokens)
+	}
+	if m.lifetime_credited_tokens != nil {
+		fields = append(fields, usertokenwallet.FieldLifetimeCreditedTokens)
+	}
+	if m.lifetime_debited_tokens != nil {
+		fields = append(fields, usertokenwallet.FieldLifetimeDebitedTokens)
+	}
+	if m.version != nil {
+		fields = append(fields, usertokenwallet.FieldVersion)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *UserTokenWalletMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case usertokenwallet.FieldCreatedAt:
+		return m.CreatedAt()
+	case usertokenwallet.FieldUpdatedAt:
+		return m.UpdatedAt()
+	case usertokenwallet.FieldUserID:
+		return m.UserID()
+	case usertokenwallet.FieldBalanceTokens:
+		return m.BalanceTokens()
+	case usertokenwallet.FieldLifetimeCreditedTokens:
+		return m.LifetimeCreditedTokens()
+	case usertokenwallet.FieldLifetimeDebitedTokens:
+		return m.LifetimeDebitedTokens()
+	case usertokenwallet.FieldVersion:
+		return m.Version()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *UserTokenWalletMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case usertokenwallet.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case usertokenwallet.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	case usertokenwallet.FieldUserID:
+		return m.OldUserID(ctx)
+	case usertokenwallet.FieldBalanceTokens:
+		return m.OldBalanceTokens(ctx)
+	case usertokenwallet.FieldLifetimeCreditedTokens:
+		return m.OldLifetimeCreditedTokens(ctx)
+	case usertokenwallet.FieldLifetimeDebitedTokens:
+		return m.OldLifetimeDebitedTokens(ctx)
+	case usertokenwallet.FieldVersion:
+		return m.OldVersion(ctx)
+	}
+	return nil, fmt.Errorf("unknown UserTokenWallet field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *UserTokenWalletMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case usertokenwallet.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case usertokenwallet.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	case usertokenwallet.FieldUserID:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUserID(v)
+		return nil
+	case usertokenwallet.FieldBalanceTokens:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetBalanceTokens(v)
+		return nil
+	case usertokenwallet.FieldLifetimeCreditedTokens:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLifetimeCreditedTokens(v)
+		return nil
+	case usertokenwallet.FieldLifetimeDebitedTokens:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLifetimeDebitedTokens(v)
+		return nil
+	case usertokenwallet.FieldVersion:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetVersion(v)
+		return nil
+	}
+	return fmt.Errorf("unknown UserTokenWallet field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *UserTokenWalletMutation) AddedFields() []string {
+	var fields []string
+	if m.adduser_id != nil {
+		fields = append(fields, usertokenwallet.FieldUserID)
+	}
+	if m.addbalance_tokens != nil {
+		fields = append(fields, usertokenwallet.FieldBalanceTokens)
+	}
+	if m.addlifetime_credited_tokens != nil {
+		fields = append(fields, usertokenwallet.FieldLifetimeCreditedTokens)
+	}
+	if m.addlifetime_debited_tokens != nil {
+		fields = append(fields, usertokenwallet.FieldLifetimeDebitedTokens)
+	}
+	if m.addversion != nil {
+		fields = append(fields, usertokenwallet.FieldVersion)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *UserTokenWalletMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case usertokenwallet.FieldUserID:
+		return m.AddedUserID()
+	case usertokenwallet.FieldBalanceTokens:
+		return m.AddedBalanceTokens()
+	case usertokenwallet.FieldLifetimeCreditedTokens:
+		return m.AddedLifetimeCreditedTokens()
+	case usertokenwallet.FieldLifetimeDebitedTokens:
+		return m.AddedLifetimeDebitedTokens()
+	case usertokenwallet.FieldVersion:
+		return m.AddedVersion()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *UserTokenWalletMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case usertokenwallet.FieldUserID:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddUserID(v)
+		return nil
+	case usertokenwallet.FieldBalanceTokens:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddBalanceTokens(v)
+		return nil
+	case usertokenwallet.FieldLifetimeCreditedTokens:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddLifetimeCreditedTokens(v)
+		return nil
+	case usertokenwallet.FieldLifetimeDebitedTokens:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddLifetimeDebitedTokens(v)
+		return nil
+	case usertokenwallet.FieldVersion:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddVersion(v)
+		return nil
+	}
+	return fmt.Errorf("unknown UserTokenWallet numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *UserTokenWalletMutation) ClearedFields() []string {
+	return nil
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *UserTokenWalletMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *UserTokenWalletMutation) ClearField(name string) error {
+	return fmt.Errorf("unknown UserTokenWallet nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *UserTokenWalletMutation) ResetField(name string) error {
+	switch name {
+	case usertokenwallet.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case usertokenwallet.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	case usertokenwallet.FieldUserID:
+		m.ResetUserID()
+		return nil
+	case usertokenwallet.FieldBalanceTokens:
+		m.ResetBalanceTokens()
+		return nil
+	case usertokenwallet.FieldLifetimeCreditedTokens:
+		m.ResetLifetimeCreditedTokens()
+		return nil
+	case usertokenwallet.FieldLifetimeDebitedTokens:
+		m.ResetLifetimeDebitedTokens()
+		return nil
+	case usertokenwallet.FieldVersion:
+		m.ResetVersion()
+		return nil
+	}
+	return fmt.Errorf("unknown UserTokenWallet field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *UserTokenWalletMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *UserTokenWalletMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *UserTokenWalletMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *UserTokenWalletMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *UserTokenWalletMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *UserTokenWalletMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *UserTokenWalletMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown UserTokenWallet unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *UserTokenWalletMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown UserTokenWallet edge %s", name)
 }

@@ -2,6 +2,8 @@ package biz
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -45,6 +47,55 @@ func TestModelCircuitBreakerProbeLock_SingleBeginAndExplicitEnd(t *testing.T) {
 
 	if got := cb.GetEffectiveWeight(ctx, channelID, modelID, 1.0); got <= 0 {
 		t.Fatalf("expected positive probe weight after end, got %v", got)
+	}
+}
+
+func TestModelCircuitBreakerProbeLock_HalfOpenIsConcurrentSingleFlight(t *testing.T) {
+	ctx := context.Background()
+	cb := NewModelCircuitBreaker()
+	const (
+		channelID = 17
+		modelID   = "gpt-half-open"
+		workers   = 64
+	)
+
+	for range DefaultModelCircuitBreakerPolicy().HalfOpenThreshold {
+		cb.RecordError(ctx, channelID, modelID, false)
+	}
+	if got := cb.GetModelCircuitBreakerStats(ctx, channelID, modelID).State; got != StateHalfOpen {
+		t.Fatalf("expected HalfOpen state, got %s", got)
+	}
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	var admitted atomic.Int64
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			if cb.TryBeginProbe(ctx, channelID, modelID) {
+				admitted.Add(1)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	if got := admitted.Load(); got != 1 {
+		t.Fatalf("half-open circuit admitted %d concurrent probes, want exactly 1", got)
+	}
+	if got := cb.GetEffectiveWeight(ctx, channelID, modelID, 1); got != 0 {
+		t.Fatalf("expected zero selection weight while the single probe is active, got %v", got)
+	}
+
+	cb.EndProbe(channelID, modelID)
+	if !cb.TryBeginProbe(ctx, channelID, modelID) {
+		t.Fatal("expected a new probe to be admitted after the previous lease ended")
+	}
+	cb.RecordSuccess(ctx, channelID, modelID)
+	if cb.TryBeginProbe(ctx, channelID, modelID) {
+		t.Fatal("closed circuit must not admit recovery probes")
 	}
 }
 

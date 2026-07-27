@@ -66,6 +66,9 @@ type System func(*sql.Selector)
 // Thread is the predicate function for thread builders.
 type Thread func(*sql.Selector)
 
+// TokenWalletLedger is the predicate function for tokenwalletledger builders.
+type TokenWalletLedger func(*sql.Selector)
+
 // Trace is the predicate function for trace builders.
 type Trace func(*sql.Selector)
 
@@ -80,3 +83,6 @@ type UserProject func(*sql.Selector)
 
 // UserRole is the predicate function for userrole builders.
 type UserRole func(*sql.Selector)
+
+// UserTokenWallet is the predicate function for usertokenwallet builders.
+type UserTokenWallet func(*sql.Selector)

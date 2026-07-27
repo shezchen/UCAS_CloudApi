@@ -1212,7 +1212,7 @@ func TestUpdateUser_PreservesUnchangedLegacyOwnerEmail(t *testing.T) {
 	require.ErrorIs(t, err, ErrCampusEmailRequired)
 }
 
-func TestUserService_CreateAndUpdateDailyTokenLimit(t *testing.T) {
+func TestUserService_CampusUserPermissions(t *testing.T) {
 	userService, client := setupTestUserService(t)
 	defer client.Close()
 
@@ -1228,20 +1228,16 @@ func TestUserService_CreateAndUpdateDailyTokenLimit(t *testing.T) {
 		Password: "password",
 	})
 	require.NoError(t, err)
-	require.Equal(t, int64(200_000_000), defaulted.DailyTokenLimit)
 	membership, err := client.UserProject.Query().Where(userproject.UserID(defaulted.ID)).Only(ctx)
 	require.NoError(t, err)
 	require.Equal(t, defaultProject.ID, membership.ProjectID)
 	require.ElementsMatch(t, []string{"read_api_keys", "write_api_keys"}, membership.Scopes)
 
-	createdLimit := int64(123_000_000)
 	created, err := userService.CreateUser(ctx, ent.CreateUserInput{
-		Email:           "daily-limit@ucas.ac.cn",
-		Password:        "password",
-		DailyTokenLimit: &createdLimit,
+		Email:    "campus-member@ucas.ac.cn",
+		Password: "password",
 	})
 	require.NoError(t, err)
-	require.Equal(t, createdLimit, created.DailyTokenLimit)
 
 	externalEmail := "outside@example.com"
 	_, err = userService.UpdateUser(ctx, created.ID, ent.UpdateUserInput{Email: &externalEmail})
@@ -1252,36 +1248,12 @@ func TestUserService_CreateAndUpdateDailyTokenLimit(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "updated@mails.ucas.ac.cn", created.Email)
 
-	updatedLimit := int64(456_000_000)
-	updated, err := userService.UpdateUser(ctx, created.ID, ent.UpdateUserInput{
-		DailyTokenLimit: &updatedLimit,
-	})
-	require.NoError(t, err)
-	require.Equal(t, updatedLimit, updated.DailyTokenLimit)
-
-	persisted, err := client.User.Get(ctx, created.ID)
-	require.NoError(t, err)
-	require.Equal(t, updatedLimit, persisted.DailyTokenLimit)
-
 	member, err := client.User.Create().
 		SetEmail("member-daily-limit@example.com").
 		SetPassword("password").
 		Save(ctx)
 	require.NoError(t, err)
 	memberCtx := contexts.WithUser(ctx, member)
-
-	unauthorizedLimit := int64(999_000_000)
-	_, err = userService.CreateUser(memberCtx, ent.CreateUserInput{
-		Email:           "member-created@mails.ucas.edu.cn",
-		Password:        "password",
-		DailyTokenLimit: &unauthorizedLimit,
-	})
-	require.ErrorContains(t, err, "only be changed by the system owner")
-
-	_, err = userService.UpdateUser(memberCtx, created.ID, ent.UpdateUserInput{
-		DailyTokenLimit: &unauthorizedLimit,
-	})
-	require.ErrorContains(t, err, "only be changed by the system owner")
 
 	promoteSelf := true
 	_, err = userService.UpdateUser(memberCtx, member.ID, ent.UpdateUserInput{IsOwner: &promoteSelf})
@@ -1292,10 +1264,6 @@ func TestUserService_CreateAndUpdateDailyTokenLimit(t *testing.T) {
 
 	_, err = userService.UpdateUser(memberCtx, member.ID, ent.UpdateUserInput{AppendScopes: []string{"*"}})
 	require.ErrorContains(t, err, "cannot grant scope")
-
-	persisted, err = client.User.Get(ctx, created.ID)
-	require.NoError(t, err)
-	require.Equal(t, updatedLimit, persisted.DailyTokenLimit)
 }
 
 func TestNormalizeCampusRegistrationEmail(t *testing.T) {

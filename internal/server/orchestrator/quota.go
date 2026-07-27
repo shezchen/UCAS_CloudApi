@@ -41,7 +41,12 @@ func enforceQuota(inbound *PersistentInboundTransformer, quotaService *biz.Quota
 			}
 
 			if !result.Allowed {
-				return nil, quotaExceededResponse(ctx, apiKey.ID, "", "user_daily", result)
+				scope := result.Scope
+				if scope == "" {
+					scope = "user_daily"
+				}
+
+				return nil, quotaExceededResponse(ctx, apiKey.ID, "", scope, result)
 			}
 		}
 

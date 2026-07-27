@@ -33,11 +33,13 @@ import (
 	"github.com/looplj/axonhub/internal/ent/role"
 	"github.com/looplj/axonhub/internal/ent/system"
 	"github.com/looplj/axonhub/internal/ent/thread"
+	"github.com/looplj/axonhub/internal/ent/tokenwalletledger"
 	"github.com/looplj/axonhub/internal/ent/trace"
 	"github.com/looplj/axonhub/internal/ent/usagelog"
 	"github.com/looplj/axonhub/internal/ent/user"
 	"github.com/looplj/axonhub/internal/ent/userproject"
 	"github.com/looplj/axonhub/internal/ent/userrole"
+	"github.com/looplj/axonhub/internal/ent/usertokenwallet"
 	"golang.org/x/sync/semaphore"
 )
 
@@ -142,6 +144,11 @@ var threadImplementors = []string{"Thread", "Node"}
 // IsNode implements the Node interface check for GQLGen.
 func (*Thread) IsNode() {}
 
+var tokenwalletledgerImplementors = []string{"TokenWalletLedger", "Node"}
+
+// IsNode implements the Node interface check for GQLGen.
+func (*TokenWalletLedger) IsNode() {}
+
 var traceImplementors = []string{"Trace", "Node"}
 
 // IsNode implements the Node interface check for GQLGen.
@@ -166,6 +173,11 @@ var userroleImplementors = []string{"UserRole", "Node"}
 
 // IsNode implements the Node interface check for GQLGen.
 func (*UserRole) IsNode() {}
+
+var usertokenwalletImplementors = []string{"UserTokenWallet", "Node"}
+
+// IsNode implements the Node interface check for GQLGen.
+func (*UserTokenWallet) IsNode() {}
 
 var errNodeInvalidID = &NotFoundError{"node"}
 
@@ -396,6 +408,15 @@ func (c *Client) noder(ctx context.Context, table string, id int) (Noder, error)
 			}
 		}
 		return query.Only(ctx)
+	case tokenwalletledger.Table:
+		query := c.TokenWalletLedger.Query().
+			Where(tokenwalletledger.ID(id))
+		if fc := graphql.GetFieldContext(ctx); fc != nil {
+			if err := query.collectField(ctx, true, graphql.GetOperationContext(ctx), fc.Field, nil, tokenwalletledgerImplementors...); err != nil {
+				return nil, err
+			}
+		}
+		return query.Only(ctx)
 	case trace.Table:
 		query := c.Trace.Query().
 			Where(trace.ID(id))
@@ -437,6 +458,15 @@ func (c *Client) noder(ctx context.Context, table string, id int) (Noder, error)
 			Where(userrole.ID(id))
 		if fc := graphql.GetFieldContext(ctx); fc != nil {
 			if err := query.collectField(ctx, true, graphql.GetOperationContext(ctx), fc.Field, nil, userroleImplementors...); err != nil {
+				return nil, err
+			}
+		}
+		return query.Only(ctx)
+	case usertokenwallet.Table:
+		query := c.UserTokenWallet.Query().
+			Where(usertokenwallet.ID(id))
+		if fc := graphql.GetFieldContext(ctx); fc != nil {
+			if err := query.collectField(ctx, true, graphql.GetOperationContext(ctx), fc.Field, nil, usertokenwalletImplementors...); err != nil {
 				return nil, err
 			}
 		}
@@ -818,6 +848,22 @@ func (c *Client) noders(ctx context.Context, table string, ids []int) ([]Noder, 
 				*noder = node
 			}
 		}
+	case tokenwalletledger.Table:
+		query := c.TokenWalletLedger.Query().
+			Where(tokenwalletledger.IDIn(ids...))
+		query, err := query.CollectFields(ctx, tokenwalletledgerImplementors...)
+		if err != nil {
+			return nil, err
+		}
+		nodes, err := query.All(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, node := range nodes {
+			for _, noder := range idmap[node.ID] {
+				*noder = node
+			}
+		}
 	case trace.Table:
 		query := c.Trace.Query().
 			Where(trace.IDIn(ids...))
@@ -886,6 +932,22 @@ func (c *Client) noders(ctx context.Context, table string, ids []int) ([]Noder, 
 		query := c.UserRole.Query().
 			Where(userrole.IDIn(ids...))
 		query, err := query.CollectFields(ctx, userroleImplementors...)
+		if err != nil {
+			return nil, err
+		}
+		nodes, err := query.All(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, node := range nodes {
+			for _, noder := range idmap[node.ID] {
+				*noder = node
+			}
+		}
+	case usertokenwallet.Table:
+		query := c.UserTokenWallet.Query().
+			Where(usertokenwallet.IDIn(ids...))
+		query, err := query.CollectFields(ctx, usertokenwalletImplementors...)
 		if err != nil {
 			return nil, err
 		}

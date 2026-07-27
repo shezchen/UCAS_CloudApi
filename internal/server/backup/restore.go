@@ -38,7 +38,7 @@ func (svc *BackupService) Restore(ctx context.Context, data []byte, opts Restore
 		return err
 	}
 
-	if !lo.Contains([]string{BackupVersion, BackupVersionV3, BackupVersionV2, BackupVersionV1}, backupData.Version) {
+	if !lo.Contains([]string{BackupVersion, BackupVersionV4, BackupVersionV3, BackupVersionV2, BackupVersionV1}, backupData.Version) {
 		log.Warn(ctx, "backup version mismatch",
 			log.String("expected", BackupVersion),
 			log.String("got", backupData.Version))
@@ -118,10 +118,23 @@ func (svc *BackupService) restore(ctx context.Context, db *ent.Client, backupDat
 		}
 	}
 
+	usageMaps := newUsageRestoreIDMaps()
 	if opts.IncludeUsageStats || opts.IncludeRequestLogs {
-		if err := svc.restoreUsageData(ctx, db, backupData.UsageRequests, backupData.UsageLogs, opts); err != nil {
+		usageMaps, err = svc.restoreUsageData(ctx, db, backupData.UsageRequests, backupData.UsageLogs, opts)
+		if err != nil {
 			return err
 		}
+	}
+
+	if err := svc.restoreTokenWalletData(
+		ctx,
+		db,
+		backupData.TokenWallets,
+		backupData.TokenWalletLedgers,
+		usageMaps,
+		channelIDMap,
+	); err != nil {
+		return err
 	}
 
 	return nil
@@ -835,25 +848,36 @@ func (svc *BackupService) restoreUsageData(
 	requestsData []*BackupUsageRequest,
 	usageLogs []*BackupUsageLog,
 	opts RestoreOptions,
-) error {
+) (*usageRestoreIDMaps, error) {
 	resolver, err := newUsageRestoreResolver(ctx, db)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	requestIDMap := map[int]int{}
 	if opts.IncludeRequestLogs {
 		requestIDMap, err = svc.restoreUsageRequests(ctx, db, requestsData, resolver)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	if opts.IncludeUsageStats {
-		return svc.restoreUsageLogs(ctx, db, usageLogs, requestIDMap, resolver)
+		if err := svc.restoreUsageLogs(ctx, db, usageLogs, requestIDMap, resolver); err != nil {
+			return nil, err
+		}
 	}
 
-	return nil
+	usageLogIDMap, usageLogIDsByRequest, err := buildRestoredUsageLogIDMap(ctx, db, usageLogs, requestIDMap)
+	if err != nil {
+		return nil, err
+	}
+
+	return &usageRestoreIDMaps{
+		requestIDs:           requestIDMap,
+		usageLogIDs:          usageLogIDMap,
+		usageLogIDsByRequest: usageLogIDsByRequest,
+	}, nil
 }
 
 func (svc *BackupService) restoreUsageRequests(
@@ -1154,19 +1178,18 @@ func (svc *BackupService) restoreUsageLogs(
 		requestIDs = append(requestIDs, requestID)
 	}
 
-	existingLogRequestIDs := map[int]struct{}{}
+	existingLogsByRequestID := map[int]*ent.UsageLog{}
 	for start := 0; start < len(requestIDs); start += usageBackupBatchSize {
 		end := min(start+usageBackupBatchSize, len(requestIDs))
 		logs, err := db.UsageLog.Query().
 			Where(usagelog.RequestIDIn(requestIDs[start:end]...)).
-			Select(usagelog.FieldRequestID).
 			All(ctx)
 		if err != nil {
 			return err
 		}
 
 		for _, usageLog := range logs {
-			existingLogRequestIDs[usageLog.RequestID] = struct{}{}
+			existingLogsByRequestID[usageLog.RequestID] = usageLog
 		}
 	}
 
@@ -1200,7 +1223,10 @@ func (svc *BackupService) restoreUsageLogs(
 			continue
 		}
 
-		if _, existing := existingLogRequestIDs[requestID]; existing {
+		if existing, ok := existingLogsByRequestID[requestID]; ok {
+			if err := validateExistingUsageWalletFields(existing, usageData); err != nil {
+				return fmt.Errorf("usage log already exists for request %d with incompatible wallet fields: %w", usageData.RequestID, err)
+			}
 			log.Warn(ctx, "usage log already exists for request, skipping",
 				log.Int("usage_log_id", usageData.ID),
 				log.Int("request_id", usageData.RequestID),
@@ -1252,6 +1278,10 @@ func (svc *BackupService) restoreUsageLogs(
 			SetPromptTokens(usageData.PromptTokens).
 			SetCompletionTokens(usageData.CompletionTokens).
 			SetTotalTokens(usageData.TotalTokens).
+			SetEffectiveTokens(usageData.EffectiveTokens).
+			SetCacheReadTokensKnown(usageData.CacheReadTokensKnown).
+			SetWalletConsumedTokens(usageData.WalletConsumedTokens).
+			SetDonorCreditTokens(usageData.DonorCreditTokens).
 			SetPromptAudioTokens(usageData.PromptAudioTokens).
 			SetPromptCachedTokens(usageData.PromptCachedTokens).
 			SetPromptWriteCachedTokens(usageData.PromptWriteCachedTokens).

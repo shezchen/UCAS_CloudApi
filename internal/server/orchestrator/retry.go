@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/looplj/axonhub/internal/ent"
+	"github.com/looplj/axonhub/internal/ent/apikey"
 	"github.com/looplj/axonhub/internal/objects"
 	"github.com/looplj/axonhub/internal/server/biz"
 	"github.com/looplj/axonhub/llm"
@@ -28,6 +29,13 @@ func isRetryableErrorForChannel(err error, ch *biz.Channel) bool {
 
 	statusCode := ExtractStatusCodeFromError(err)
 	if httpclient.IsHTTPStatusCodeRetryable(statusCode) {
+		return true
+	}
+	// A status-less failure means no valid HTTP/provider response was obtained
+	// (for example TLS, connection reset, decode failure, or response timeout).
+	// Local admission/circuit errors are filtered by CanRetry before this helper.
+	// Give the same channel exactly the configured one retry before failover.
+	if statusCode == 0 {
 		return true
 	}
 
@@ -93,6 +101,9 @@ func ExtractStatusCodeFromError(err error) int {
 func deriveLoadBalancerStrategy(retryPolicy *biz.RetryPolicy, apiKey *ent.APIKey) string {
 	strategy := retryPolicy.LoadBalancerStrategy
 	if apiKey == nil {
+		return strategy
+	}
+	if apiKey.Type == apikey.TypePersonal {
 		return strategy
 	}
 

@@ -223,7 +223,8 @@ type UsageStatsByUser {
 }
 
 """
-Privacy-safe campus leaderboard entry for recorded usage in a selected period.
+Privacy-safe campus leaderboard entry for effective-token usage in a selected
+Beijing calendar period. Effective tokens exclude cache-read input.
 The public alias is stable only within the current project and does not expose
 the underlying user, API key, channel, model, request content, or cost.
 """
@@ -235,6 +236,21 @@ type CampusUsageLeaderboardEntry {
   recordedTokens: Float!
   meteredRequestCount: Int!
   limitPercent: Float!
+}
+
+"""
+Privacy-safe model popularity entry. `inputTokens` includes cache reads while
+`effectiveTokens` excludes them. It contains no user, API key, channel,
+request-content, cost, or credential dimensions.
+"""
+type CampusModelUsageLeaderboardEntry {
+  rank: Int!
+  modelId: String!
+  effectiveTokens: Float!
+  inputTokens: Float!
+  cachedReadTokens: Float!
+  outputTokens: Float!
+  meteredRequestCount: Int!
 }
 
 extend type Query {
@@ -268,9 +284,14 @@ extend type Query {
   costStatsByAPIKey(timeWindow: String): [CostStatsByAPIKey!]!
   usageStatsByUser(timeWindow: String): [UsageStatsByUser!]!
   """
-  Privacy-safe campus usage leaderboard in the system timezone.
+  Privacy-safe campus effective-token leaderboard in Beijing time.
   `timeWindow` accepts `day`, `week`, or `month`, and defaults to `day`.
   Returns the top 50 entries plus the current member when outside the top 50.
   """
   campusUsageLeaderboard(timeWindow: String): [CampusUsageLeaderboardEntry!]!
+  """
+  Campus model usage leaderboard for `day`, `week`, or `month`; defaults to
+  the current Beijing calendar day and excludes test/probe traffic.
+  """
+  campusModelUsageLeaderboard(timeWindow: String): [CampusModelUsageLeaderboardEntry!]!
 }

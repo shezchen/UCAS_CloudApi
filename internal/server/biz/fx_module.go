@@ -2,9 +2,11 @@ package biz
 
 import (
 	"context"
+	"time"
 
 	"go.uber.org/fx"
 
+	"github.com/looplj/axonhub/internal/authz"
 	"github.com/looplj/axonhub/internal/log"
 	"github.com/looplj/axonhub/internal/server/scheduler"
 )
@@ -60,6 +62,13 @@ var Module = fx.Module("biz",
 			},
 		})
 	}),
+	fx.Invoke(func(lc fx.Lifecycle, svc *SystemService) {
+		lc.Append(fx.Hook{
+			OnStart: func(ctx context.Context) error {
+				return svc.EnsureCampusSharingPolicyV1(ctx)
+			},
+		})
+	}),
 	fx.Invoke(func(lc fx.Lifecycle, svc *ChannelService, s *scheduler.Scheduler) {
 		lc.Append(fx.Hook{
 			OnStart: func(ctx context.Context) error {
@@ -90,6 +99,39 @@ var Module = fx.Module("biz",
 		lc.Append(fx.Hook{
 			OnStart: func(ctx context.Context) error {
 				return svc.RegisterScheduledTasks(ctx, s)
+			},
+		})
+	}),
+	fx.Invoke(func(lc fx.Lifecycle, svc *RequestService, s *scheduler.Scheduler) {
+		lc.Append(fx.Hook{
+			OnStart: func(ctx context.Context) error {
+				if _, err := authz.RunWithSystemBypass(ctx, "campus-error-upgrade-sanitize", func(bypassCtx context.Context) (int, error) {
+					if _, err := svc.ScrubExpiredCampusExecutionErrors(bypassCtx); err != nil {
+						return 0, err
+					}
+					return svc.SanitizeRetainedCampusExecutionErrors(bypassCtx)
+				}); err != nil {
+					return err
+				}
+
+				return s.Register(ctx, scheduler.TaskSpec{
+					Name:        "campus-error-retention",
+					Description: "Remove sanitized API diagnostics after their rolling six-hour retention window",
+					CronExpr:    "*/15 * * * *",
+					Timezone:    "Asia/Shanghai",
+				}, func(taskCtx context.Context) {
+					if _, err := svc.ScrubExpiredCampusExecutionErrors(taskCtx); err != nil {
+						log.Error(taskCtx, "failed to scrub expired campus execution errors", log.Cause(err))
+					}
+				})
+			},
+		})
+	}),
+	fx.Invoke(func(lc fx.Lifecycle, svc *UsageLogService) {
+		lc.Append(fx.Hook{
+			OnStart: func(ctx context.Context) error {
+				_, err := svc.WalletService.EnsureStartedAt(ctx, time.Now().UTC())
+				return err
 			},
 		})
 	}),

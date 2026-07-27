@@ -22,6 +22,7 @@ type PersistenceState struct {
 	RetryPolicyProvider RetryPolicyProvider
 	CandidateSelector   CandidateSelector
 	LoadBalancer        *LoadBalancer
+	SessionAffinity     *SessionAffinityTracker
 
 	// Request state
 	ModelMapper *ModelMapper
@@ -32,6 +33,9 @@ type PersistenceState struct {
 	OriginalModel string
 	RawRequest    *httpclient.Request
 	LlmRequest    *llm.Request
+	// SessionAffinityKey is a salted digest of the stable conversation prefix.
+	// It is only populated when the request has no explicit trace/session ID.
+	SessionAffinityKey string
 
 	// OriginalRequestStream stores the client's original stream intent before any
 	// candidate-specific forcing to provider-side streaming happens.

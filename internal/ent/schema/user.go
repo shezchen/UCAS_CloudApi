@@ -51,10 +51,14 @@ func (User) Fields() []ent.Field {
 			},
 		),
 		field.Bool("is_owner").Default(false),
+		// Retained only for backward-compatible storage. Campus sharing quota is
+		// global and is enforced from UserDailyQuotaSettings for every account;
+		// this legacy per-user value must not be exposed as a configurable field.
 		field.Int64("daily_token_limit").
 			Default(200_000_000).
 			Min(0).
-			Comment("Maximum total tokens this user may consume per day"),
+			Comment("Deprecated legacy value; ignored by runtime quota enforcement").
+			Annotations(entgql.Skip()),
 		field.Strings("scopes").
 			Comment("User scopes in system level: write_channels, read_channels, add_users, read_users, etc.").
 			Default([]string{}).

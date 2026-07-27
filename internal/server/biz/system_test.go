@@ -18,6 +18,97 @@ import (
 	"github.com/looplj/axonhub/internal/pkg/xredis"
 )
 
+func TestDefaultRetryPolicy_RetriesSameChannelOnceAndRejectsEmptyResponses(t *testing.T) {
+	require.Equal(t, 1, defaultRetryPolicy.MaxSingleChannelRetries)
+	require.True(t, defaultRetryPolicy.EmptyResponseDetection)
+}
+
+func TestSystemService_EnsureCampusSharingPolicyV1MigratesOnce(t *testing.T) {
+	client := enttest.NewEntClient(t, "sqlite3", "file:campus-sharing-policy?mode=memory&_fk=0")
+	defer client.Close()
+
+	ctx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+	service := NewSystemService(SystemServiceParams{
+		CacheConfig: xcache.Config{Mode: xcache.ModeMemory},
+		Ent:         client,
+	})
+
+	legacyPolicy := &RetryPolicy{
+		Enabled:                         false,
+		MaxChannelRetries:               9,
+		MaxSingleChannelRetries:         7,
+		RetryDelayMs:                    25,
+		StreamFirstEventTimeoutSeconds:  17,
+		NonStreamResponseTimeoutSeconds: 23,
+		LoadBalancerStrategy:            LoadBalancerStrategyAdaptive,
+		EmptyResponseDetection:          false,
+		AutoDisableChannel: AutoDisableChannel{
+			Enabled: true,
+			Statuses: []AutoDisableChannelStatus{
+				{Status: 401, Times: 3},
+			},
+		},
+		UpstreamErrorPolicy: UpstreamErrorPolicy{
+			Mode:          UpstreamErrorModeCustom,
+			CustomMessage: "preserve me",
+		},
+	}
+	require.NoError(t, service.SetRetryPolicy(ctx, legacyPolicy))
+	require.NoError(t, service.SetUserDailyQuotaSettings(ctx, UserDailyQuotaSettings{
+		DailyTokenLimit:  200_000_000,
+		WeeklyTokenLimit: 800_000_000,
+	}))
+
+	require.NoError(t, service.EnsureCampusSharingPolicyV1(ctx))
+
+	migratedPolicy, err := service.RetryPolicy(ctx)
+	require.NoError(t, err)
+	require.Equal(t, LoadBalancerStrategyRoundRobin, migratedPolicy.LoadBalancerStrategy)
+	require.Equal(t, 1, migratedPolicy.MaxSingleChannelRetries)
+	require.True(t, migratedPolicy.EmptyResponseDetection)
+	require.Equal(t, 9, migratedPolicy.MaxChannelRetries)
+	require.Equal(t, 25, migratedPolicy.RetryDelayMs)
+	require.Equal(t, 17, migratedPolicy.StreamFirstEventTimeoutSeconds)
+	require.Equal(t, 23, migratedPolicy.NonStreamResponseTimeoutSeconds)
+	require.False(t, migratedPolicy.Enabled)
+	require.Equal(t, legacyPolicy.AutoDisableChannel, migratedPolicy.AutoDisableChannel)
+	require.Equal(t, legacyPolicy.UpstreamErrorPolicy, migratedPolicy.UpstreamErrorPolicy)
+
+	migratedQuota, err := service.UserDailyQuotaSettings(ctx)
+	require.NoError(t, err)
+	require.Equal(t, DefaultUserDailyTokenLimit, migratedQuota.DailyTokenLimit)
+	require.Equal(t, DefaultUserWeeklyTokenLimit, migratedQuota.WeeklyTokenLimit)
+
+	marker, err := service.getSystemValue(ctx, SystemKeyCampusSharingPolicyV1)
+	require.NoError(t, err)
+	require.Equal(t, "true", marker)
+
+	ownerPolicy := *migratedPolicy
+	ownerPolicy.LoadBalancerStrategy = LoadBalancerStrategyFailover
+	ownerPolicy.MaxSingleChannelRetries = 4
+	ownerPolicy.EmptyResponseDetection = false
+	ownerPolicy.RetryDelayMs = 77
+	require.NoError(t, service.SetRetryPolicy(ctx, &ownerPolicy))
+
+	ownerQuota := UserDailyQuotaSettings{
+		DailyTokenLimit:  17_000_000,
+		WeeklyTokenLimit: 65_000_000,
+	}
+	require.NoError(t, service.SetUserDailyQuotaSettings(ctx, ownerQuota))
+
+	// Startup runs this method on every process boot. Once the marker exists,
+	// it must never overwrite later Owner changes.
+	require.NoError(t, service.EnsureCampusSharingPolicyV1(ctx))
+
+	reloadedPolicy, err := service.RetryPolicy(ctx)
+	require.NoError(t, err)
+	require.Equal(t, ownerPolicy, *reloadedPolicy)
+
+	reloadedQuota, err := service.UserDailyQuotaSettings(ctx)
+	require.NoError(t, err)
+	require.Equal(t, ownerQuota, *reloadedQuota)
+}
+
 func TestSystemService_GetSecretKey_NotInitialized(t *testing.T) {
 	client := enttest.NewEntClient(t, "sqlite3", "file:ent?mode=memory&_fk=1")
 	defer client.Close()

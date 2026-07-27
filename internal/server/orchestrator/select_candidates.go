@@ -6,6 +6,8 @@ import (
 
 	"github.com/samber/lo"
 
+	"github.com/looplj/axonhub/internal/contexts"
+	"github.com/looplj/axonhub/internal/ent/apikey"
 	"github.com/looplj/axonhub/internal/ent/providerquotastatus"
 	"github.com/looplj/axonhub/internal/log"
 	"github.com/looplj/axonhub/internal/server/biz"
@@ -26,6 +28,25 @@ func selectCandidates(inbound *PersistentInboundTransformer, quotaProvider Provi
 
 		selector := inbound.state.CandidateSelector
 
+		// Explicit trace/session IDs remain authoritative. Mark an already-bound
+		// trace as sticky so its subsequent turns do not advance the fair
+		// new-session counter. Only clients without a trace receive the
+		// privacy-preserving context-prefix fallback.
+		if trace, hasTrace := contexts.GetTrace(ctx); hasTrace && inbound.state.RequestService != nil {
+			if preferredChannelID, err := inbound.state.RequestService.GetLastSuccessfulChannelID(ctx, trace.ID); err == nil && preferredChannelID > 0 {
+				ctx = contextWithSessionAffinityChannel(ctx, preferredChannelID)
+			}
+		} else if inbound.state.SessionAffinity != nil {
+			if inbound.state.SessionAffinityKey == "" {
+				if key, ok := inbound.state.SessionAffinity.RequestKey(ctx, llmRequest, inbound.state.APIKey); ok {
+					inbound.state.SessionAffinityKey = key
+				}
+			}
+			if preferredChannelID, ok := inbound.state.SessionAffinity.Lookup(inbound.state.SessionAffinityKey); ok {
+				ctx = contextWithSessionAffinityChannel(ctx, preferredChannelID)
+			}
+		}
+
 		// Project-level profile filtering (upper boundary)
 		if inbound.state.APIKey != nil {
 			if project := inbound.state.APIKey.Edges.Project; project != nil {
@@ -41,14 +62,18 @@ func selectCandidates(inbound *PersistentInboundTransformer, quotaProvider Provi
 			}
 		}
 
-		// Key-level profile filtering (narrows further within project scope)
-		if profile := inbound.state.APIKey.GetActiveProfile(); profile != nil {
-			if len(profile.ChannelIDs) > 0 {
-				selector = WithSelectedChannelsSelector(selector, profile.ChannelIDs)
-			}
+		// Key-level channel routing is an administrative feature. Campus
+		// personal keys may still set their own quota/model profile, but cannot
+		// pin traffic to one contributor or bypass the fair global rotation.
+		if inbound.state.APIKey != nil && inbound.state.APIKey.Type != apikey.TypePersonal {
+			if profile := inbound.state.APIKey.GetActiveProfile(); profile != nil {
+				if len(profile.ChannelIDs) > 0 {
+					selector = WithSelectedChannelsSelector(selector, profile.ChannelIDs)
+				}
 
-			if len(profile.ChannelTags) > 0 {
-				selector = WithChannelTagsFilterSelector(selector, profile.ChannelTags, profile.ChannelTagsMatchMode)
+				if len(profile.ChannelTags) > 0 {
+					selector = WithChannelTagsFilterSelector(selector, profile.ChannelTags, profile.ChannelTagsMatchMode)
+				}
 			}
 		}
 

@@ -303,10 +303,10 @@ func TestIsRetryableErrorForChannel(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:     "unmatched error text is not retryable",
+			name:     "status-less unmatched error is retryable once by policy",
 			err:      errors.New("failed to stream request: error: credentials rejected"),
 			channel:  channel,
-			expected: false,
+			expected: true,
 		},
 		{
 			name: "configured status is not retryable without channel settings",

@@ -9,6 +9,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/looplj/axonhub/internal/authz"
+	"github.com/looplj/axonhub/internal/contexts"
 	"github.com/looplj/axonhub/internal/ent"
 	"github.com/looplj/axonhub/internal/ent/apikey"
 	"github.com/looplj/axonhub/internal/ent/schema/schematype"
@@ -32,12 +33,32 @@ type QuotaUsage struct {
 type QuotaCheckResult struct {
 	Allowed bool
 	Message string
+	Scope   string
 	Window  QuotaWindow
 }
 
 type QuotaResult struct {
 	Window QuotaWindow
 	Usage  QuotaUsage
+}
+
+// AccountTokenQuotaPeriodUsage is one fixed Beijing-calendar allowance. Used
+// tokens are settled base tokens: cache-read input and wallet-paid tokens have
+// already been excluded.
+type AccountTokenQuotaPeriodUsage struct {
+	LimitTokens     int64
+	UsedTokens      int64
+	RemainingTokens int64
+	Window          QuotaWindow
+	ResetAt         time.Time
+}
+
+// AccountTokenQuotaOverview contains the user-facing quota and wallet state.
+// Daily and weekly usage reset independently; wallet balances are permanent.
+type AccountTokenQuotaOverview struct {
+	Daily  AccountTokenQuotaPeriodUsage
+	Weekly AccountTokenQuotaPeriodUsage
+	Wallet TokenWalletSummary
 }
 
 type QuotaService struct {
@@ -127,62 +148,219 @@ func (s *QuotaService) AccountDailyTokenLimit(ctx context.Context) (int64, error
 	return limit, nil
 }
 
-// CheckUserDailyTokenQuota enforces the globally configured account-wide daily
-// token limit across every API key created by the same user. Soft-deleted keys
-// remain part of the aggregate so rotating or deleting a key cannot reset the
-// account's usage.
+// AccountWeeklyTokenLimit returns the globally configured weekly
+// effective-token cap for every account.
+func (s *QuotaService) AccountWeeklyTokenLimit(ctx context.Context) (int64, error) {
+	limit, err := s.system.UserWeeklyTokenLimit(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get account weekly token limit: %w", err)
+	}
+
+	return limit, nil
+}
+
+var beijingQuotaLocation = func() *time.Location {
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err == nil {
+		return loc
+	}
+
+	return time.FixedZone("Asia/Shanghai", 8*60*60)
+}()
+
+func accountQuotaWindows(now time.Time) (daily QuotaWindow, weekly QuotaWindow) {
+	nowLocal := now.In(beijingQuotaLocation)
+	todayStartLocal := time.Date(
+		nowLocal.Year(),
+		nowLocal.Month(),
+		nowLocal.Day(),
+		0, 0, 0, 0,
+		beijingQuotaLocation,
+	)
+	weekday := int(nowLocal.Weekday())
+	if weekday == 0 {
+		weekday = 7
+	}
+	weekStartLocal := todayStartLocal.AddDate(0, 0, -(weekday - 1))
+
+	dailyStart := todayStartLocal.UTC()
+	dailyEnd := todayStartLocal.AddDate(0, 0, 1).UTC()
+	weeklyStart := weekStartLocal.UTC()
+	weeklyEnd := weekStartLocal.AddDate(0, 0, 7).UTC()
+
+	return QuotaWindow{Start: &dailyStart, End: &dailyEnd},
+		QuotaWindow{Start: &weeklyStart, End: &weeklyEnd}
+}
+
+func authorizeAccountQuotaOverview(ctx context.Context, userID int) error {
+	principal, ok := authz.GetPrincipal(ctx)
+	if !ok {
+		return fmt.Errorf("account quota overview requires an authenticated principal")
+	}
+
+	switch principal.Type {
+	case authz.PrincipalTypeSystem, authz.PrincipalTypeTest:
+		return nil
+	case authz.PrincipalTypeUser:
+		currentUser, ok := contexts.GetUser(ctx)
+		if !ok || currentUser == nil {
+			return fmt.Errorf("account quota overview user principal is missing")
+		}
+		if currentUser.IsOwner || currentUser.ID == userID {
+			return nil
+		}
+	case authz.PrincipalTypeAPIKey:
+		currentKey, ok := contexts.GetAPIKey(ctx)
+		if ok && currentKey != nil && currentKey.UserID == userID {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("account quota overview access denied for user %d", userID)
+}
+
+func (s *QuotaService) accountAPIKeyIDs(ctx context.Context, userID int) ([]int, error) {
+	if userID <= 0 {
+		return nil, nil
+	}
+
+	apiKeyIDs, err := authz.RunWithSystemBypass(ctx, "account-quota-api-keys", func(bypassCtx context.Context) ([]int, error) {
+		return s.ent.APIKey.Query().
+			Where(apikey.UserIDEQ(userID)).
+			IDs(schematype.SkipSoftDelete(bypassCtx))
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list account API keys for quota: %w", err)
+	}
+
+	return apiKeyIDs, nil
+}
+
+func (s *QuotaService) accountTokenQuotaUsage(
+	ctx context.Context,
+	userID int,
+	now time.Time,
+) (daily AccountTokenQuotaPeriodUsage, weekly AccountTokenQuotaPeriodUsage, err error) {
+	dailyLimit, err := s.AccountDailyTokenLimit(ctx)
+	if err != nil {
+		return daily, weekly, err
+	}
+	weeklyLimit, err := s.AccountWeeklyTokenLimit(ctx)
+	if err != nil {
+		return daily, weekly, err
+	}
+
+	dailyWindow, weeklyWindow := accountQuotaWindows(now)
+	apiKeyIDs, err := s.accountAPIKeyIDs(ctx, userID)
+	if err != nil {
+		return daily, weekly, err
+	}
+
+	dailyUsed, err := authz.RunWithSystemBypass(ctx, "account-daily-quota-usage", func(bypassCtx context.Context) (int64, error) {
+		return s.settledBaseTokenUsageForAPIKeys(bypassCtx, apiKeyIDs, dailyWindow)
+	})
+	if err != nil {
+		return daily, weekly, err
+	}
+	weeklyUsed, err := authz.RunWithSystemBypass(ctx, "account-weekly-quota-usage", func(bypassCtx context.Context) (int64, error) {
+		return s.settledBaseTokenUsageForAPIKeys(bypassCtx, apiKeyIDs, weeklyWindow)
+	})
+	if err != nil {
+		return daily, weekly, err
+	}
+
+	daily = AccountTokenQuotaPeriodUsage{
+		LimitTokens:     dailyLimit,
+		UsedTokens:      dailyUsed,
+		RemainingTokens: max(dailyLimit-dailyUsed, int64(0)),
+		Window:          dailyWindow,
+		ResetAt:         *dailyWindow.End,
+	}
+	weekly = AccountTokenQuotaPeriodUsage{
+		LimitTokens:     weeklyLimit,
+		UsedTokens:      weeklyUsed,
+		RemainingTokens: max(weeklyLimit-weeklyUsed, int64(0)),
+		Window:          weeklyWindow,
+		ResetAt:         *weeklyWindow.End,
+	}
+
+	return daily, weekly, nil
+}
+
+// AccountQuotaOverview returns the authenticated user's daily/weekly settled
+// usage and permanent wallet counters for the UI. Owner may inspect any user.
+func (s *QuotaService) AccountQuotaOverview(ctx context.Context, userID int) (AccountTokenQuotaOverview, error) {
+	if userID <= 0 {
+		return AccountTokenQuotaOverview{}, fmt.Errorf("account quota overview requires a positive user ID")
+	}
+	if err := authorizeAccountQuotaOverview(ctx, userID); err != nil {
+		return AccountTokenQuotaOverview{}, err
+	}
+
+	daily, weekly, err := s.accountTokenQuotaUsage(ctx, userID, xtime.UTCNow())
+	if err != nil {
+		return AccountTokenQuotaOverview{}, err
+	}
+	wallet, err := NewTokenWalletService(s.ent).Summary(ctx, userID)
+	if err != nil {
+		return AccountTokenQuotaOverview{}, err
+	}
+
+	return AccountTokenQuotaOverview{
+		Daily:  daily,
+		Weekly: weekly,
+		Wallet: wallet,
+	}, nil
+}
+
+// CheckUserDailyTokenQuota retains its historical name while enforcing both
+// account-wide daily and weekly effective-token limits. Soft-deleted keys remain
+// part of the aggregate so rotating or deleting a key cannot reset usage.
+// Permanent donation wallet credit is consumed before either calendar limit.
 func (s *QuotaService) CheckUserDailyTokenQuota(ctx context.Context, userID int) (QuotaCheckResult, error) {
 	if userID <= 0 {
 		return QuotaCheckResult{Allowed: true}, nil
 	}
-	dailyTokenLimit, err := s.AccountDailyTokenLimit(ctx)
+	walletBalance, err := NewTokenWalletService(s.ent).Balance(ctx, userID)
 	if err != nil {
 		return QuotaCheckResult{}, err
 	}
-
-	loc := s.system.TimeLocation(ctx)
-	window, err := quotaWindow(xtime.UTCNow(), objects.APIKeyQuotaPeriod{
-		Type: objects.APIKeyQuotaPeriodTypeCalendarDuration,
-		CalendarDuration: &objects.APIKeyQuotaCalendarDuration{
-			Unit: objects.APIKeyQuotaCalendarDurationUnitDay,
-		},
-	}, loc)
-	if err != nil {
-		return QuotaCheckResult{}, err
+	if walletBalance > 0 {
+		return QuotaCheckResult{Allowed: true}, nil
 	}
 
-	var apiKeyIDs []int
-	err = authz.RunWithSystemBypassVoid(ctx, "user-daily-quota-api-keys", func(bypassCtx context.Context) error {
-		var err error
-		apiKeyIDs, err = s.ent.APIKey.Query().
-			Where(apikey.UserIDEQ(userID)).
-			IDs(schematype.SkipSoftDelete(bypassCtx))
-		return err
-	})
+	daily, weekly, err := s.accountTokenQuotaUsage(ctx, userID, xtime.UTCNow())
 	if err != nil {
-		return QuotaCheckResult{}, fmt.Errorf("failed to list user API keys for daily quota: %w", err)
+		return QuotaCheckResult{}, fmt.Errorf("read account quota usage: %w", err)
 	}
 
-	usage, err := authz.RunWithSystemBypass(ctx, "user-daily-quota-usage", func(bypassCtx context.Context) (usageAggResult, error) {
-		return s.usageAggForAPIKeys(bypassCtx, apiKeyIDs, window, true, false)
-	})
-	if err != nil {
-		return QuotaCheckResult{}, err
-	}
-
-	if usage.TotalTokens >= dailyTokenLimit {
+	if daily.UsedTokens >= daily.LimitTokens {
 		return QuotaCheckResult{
 			Allowed: false,
 			Message: fmt.Sprintf(
-				"user daily total_tokens quota exceeded: %d/%d",
-				usage.TotalTokens,
-				dailyTokenLimit,
+				"user daily effective_tokens quota exceeded: %d/%d",
+				daily.UsedTokens,
+				daily.LimitTokens,
 			),
-			Window: window,
+			Scope:  "user_daily",
+			Window: daily.Window,
 		}, nil
 	}
 
-	return QuotaCheckResult{Allowed: true, Window: window}, nil
+	if weekly.UsedTokens >= weekly.LimitTokens {
+		return QuotaCheckResult{
+			Allowed: false,
+			Message: fmt.Sprintf(
+				"user weekly effective_tokens quota exceeded: %d/%d",
+				weekly.UsedTokens,
+				weekly.LimitTokens,
+			),
+			Scope:  "user_weekly",
+			Window: weekly.Window,
+		}, nil
+	}
+
+	return QuotaCheckResult{Allowed: true, Window: daily.Window}, nil
 }
 
 // ProfileQuotaUsage is the per-profile quota usage of an API key, shared by the
@@ -356,6 +534,111 @@ type usageAggResult struct {
 	TotalCost   decimal.Decimal
 }
 
+func effectiveTokensSQL(s *sql.Selector) string {
+	prompt := s.C(usagelog.FieldPromptTokens)
+	completion := s.C(usagelog.FieldCompletionTokens)
+	cached := s.C(usagelog.FieldPromptCachedTokens)
+	total := s.C(usagelog.FieldTotalTokens)
+	storedEffective := s.C(usagelog.FieldEffectiveTokens)
+	cacheReadKnown := s.C(usagelog.FieldCacheReadTokensKnown)
+
+	nonCachedPrompt := fmt.Sprintf(
+		"CASE WHEN COALESCE(%[1]s, 0) <= 0 OR COALESCE(%[2]s, 0) >= COALESCE(%[1]s, 0) THEN 0 WHEN COALESCE(%[1]s, 0) - CASE WHEN COALESCE(%[2]s, 0) > 0 THEN COALESCE(%[2]s, 0) ELSE 0 END > %[3]d THEN %[3]d ELSE COALESCE(%[1]s, 0) - CASE WHEN COALESCE(%[2]s, 0) > 0 THEN COALESCE(%[2]s, 0) ELSE 0 END END",
+		prompt,
+		cached,
+		MaxEffectiveTokensPerRequest,
+	)
+	completionBounded := fmt.Sprintf(
+		"CASE WHEN COALESCE(%[1]s, 0) <= 0 THEN 0 WHEN COALESCE(%[1]s, 0) > %[2]d THEN %[2]d ELSE COALESCE(%[1]s, 0) END",
+		completion,
+		MaxEffectiveTokensPerRequest,
+	)
+	derived := fmt.Sprintf(
+		"CASE WHEN (%[1]s) + (%[2]s) > %[3]d THEN %[3]d ELSE (%[1]s) + (%[2]s) END",
+		nonCachedPrompt,
+		completionBounded,
+		MaxEffectiveTokensPerRequest,
+	)
+	totalOnly := fmt.Sprintf(
+		"CASE WHEN COALESCE(%[1]s, 0) <= 0 OR COALESCE(%[2]s, 0) >= COALESCE(%[1]s, 0) THEN 0 WHEN COALESCE(%[1]s, 0) - CASE WHEN COALESCE(%[2]s, 0) > 0 THEN COALESCE(%[2]s, 0) ELSE 0 END > %[3]d THEN %[3]d ELSE COALESCE(%[1]s, 0) - CASE WHEN COALESCE(%[2]s, 0) > 0 THEN COALESCE(%[2]s, 0) ELSE 0 END END",
+		total,
+		cached,
+		MaxEffectiveTokensPerRequest,
+	)
+	legacy := fmt.Sprintf(
+		"CASE WHEN (%[1]s) >= (%[2]s) THEN (%[1]s) ELSE (%[2]s) END",
+		derived,
+		totalOnly,
+	)
+	storedBounded := fmt.Sprintf(
+		"CASE WHEN COALESCE(%[1]s, 0) <= 0 THEN 0 WHEN COALESCE(%[1]s, 0) > %[2]d THEN %[2]d ELSE COALESCE(%[1]s, 0) END",
+		storedEffective,
+		MaxEffectiveTokensPerRequest,
+	)
+
+	// effective_tokens is populated for every new row. The fallback keeps
+	// already-recorded rows quota-bearing immediately after the additive schema
+	// migration, without retroactively creating wallet credit.
+	return fmt.Sprintf(
+		"CASE WHEN COALESCE(%[1]s, 0) <> 0 OR COALESCE(%[2]s, FALSE) THEN (%[3]s) ELSE (%[4]s) END",
+		storedEffective,
+		cacheReadKnown,
+		storedBounded,
+		legacy,
+	)
+}
+
+func settledBaseTokensSQL(s *sql.Selector) string {
+	effective := effectiveTokensSQL(s)
+	walletConsumed := s.C(usagelog.FieldWalletConsumedTokens)
+
+	return fmt.Sprintf(
+		"CASE WHEN COALESCE(%[1]s, 0) >= (%[2]s) THEN 0 ELSE (%[2]s) - CASE WHEN COALESCE(%[1]s, 0) > 0 THEN COALESCE(%[1]s, 0) ELSE 0 END END",
+		walletConsumed,
+		effective,
+	)
+}
+
+func (s *QuotaService) settledBaseTokenUsageForAPIKeys(
+	ctx context.Context,
+	apiKeyIDs []int,
+	window QuotaWindow,
+) (int64, error) {
+	if len(apiKeyIDs) == 0 {
+		return 0, nil
+	}
+
+	type row struct {
+		TotalTokens int64 `json:"total_tokens"`
+	}
+	var rows []row
+
+	q := s.ent.UsageLog.Query().Where(
+		usagelog.APIKeyIDIn(apiKeyIDs...),
+		usagelog.SourceNEQ(usagelog.SourceTest),
+	)
+	if window.Start != nil {
+		q = q.Where(usagelog.CreatedAtGTE(*window.Start))
+	}
+	if window.End != nil {
+		q = q.Where(usagelog.CreatedAtLT(*window.End))
+	}
+
+	err := q.Modify(func(selector *sql.Selector) {
+		selector.Select(
+			sql.As(fmt.Sprintf("COALESCE(SUM(%s), 0)", settledBaseTokensSQL(selector)), "total_tokens"),
+		)
+	}).Scan(ctx, &rows)
+	if err != nil {
+		return 0, fmt.Errorf("aggregate settled base token usage: %w", err)
+	}
+	if len(rows) == 0 {
+		return 0, nil
+	}
+
+	return rows[0].TotalTokens, nil
+}
+
 func (s *QuotaService) usageAgg(ctx context.Context, apiKeyID int, window QuotaWindow, needTokens bool, needCost bool) (usageAggResult, error) {
 	return s.usageAggForAPIKeys(ctx, []int{apiKeyID}, window, needTokens, needCost)
 }
@@ -375,6 +658,10 @@ func (s *QuotaService) usageAggForAPIKeys(
 	}
 
 	queryAgg := func(q *ent.UsageLogQuery) (usageAggResult, error) {
+		if needTokens {
+			q = q.Where(usagelog.SourceNEQ(usagelog.SourceTest))
+		}
+
 		if window.Start != nil {
 			q = q.Where(usagelog.CreatedAtGTE(*window.Start))
 		}
@@ -398,7 +685,7 @@ func (s *QuotaService) usageAggForAPIKeys(
 
 			err := q.Modify(func(s *sql.Selector) {
 				s.Select(
-					sql.As(fmt.Sprintf("COALESCE(SUM(%s), 0)", s.C(usagelog.FieldTotalTokens)), "total_tokens"),
+					sql.As(fmt.Sprintf("COALESCE(SUM(%s), 0)", effectiveTokensSQL(s)), "total_tokens"),
 					sql.As(fmt.Sprintf("COALESCE(SUM(%s), 0)", s.C(usagelog.FieldTotalCost)), "total_cost"),
 				)
 			}).Scan(ctx, &rows)
@@ -423,7 +710,7 @@ func (s *QuotaService) usageAggForAPIKeys(
 
 			err := q.Modify(func(s *sql.Selector) {
 				s.Select(
-					sql.As(fmt.Sprintf("COALESCE(SUM(%s), 0)", s.C(usagelog.FieldTotalTokens)), "total_tokens"),
+					sql.As(fmt.Sprintf("COALESCE(SUM(%s), 0)", effectiveTokensSQL(s)), "total_tokens"),
 				)
 			}).Scan(ctx, &rows)
 			if err != nil {

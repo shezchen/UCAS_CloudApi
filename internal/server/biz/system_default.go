@@ -21,10 +21,11 @@ var defaultStoragePolicy = StoragePolicy{
 
 var defaultRetryPolicy = RetryPolicy{
 	MaxChannelRetries:       3,
-	MaxSingleChannelRetries: 2,
+	MaxSingleChannelRetries: 1,
 	RetryDelayMs:            1000,
-	LoadBalancerStrategy:    "adaptive",
+	LoadBalancerStrategy:    LoadBalancerStrategyRoundRobin,
 	Enabled:                 true,
+	EmptyResponseDetection:  true,
 	UpstreamErrorPolicy: UpstreamErrorPolicy{
 		Mode: UpstreamErrorModePassthrough,
 	},

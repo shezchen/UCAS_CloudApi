@@ -246,8 +246,8 @@ func (m *ModelCircuitBreaker) RecordSuccess(ctx context.Context, channelID int, 
 	stats.State = StateClosed
 	stats.ConsecutiveFailures = 0
 	stats.NextProbeAt = time.Time{} // Clear probe time
-	stats.probingInProgress = 0     // Reset probing flag
-	stats.probeAttempts = 0         // Reset probe count
+	atomic.StoreInt32(&stats.probingInProgress, 0)
+	stats.probeAttempts = 0 // Reset probe count
 }
 
 // GetModelCircuitBreakerStats returns the current state and statistics of a model.
@@ -314,7 +314,11 @@ func (m *ModelCircuitBreaker) GetEffectiveWeight(ctx context.Context, channelID 
 		return baseWeight
 
 	case StateHalfOpen:
-		// Half-Open: reduce weight to decrease traffic, but retain probing capability
+		// Half-open recovery is a single-flight probe, not a reduced-weight
+		// traffic flood.
+		if atomic.LoadInt32(&stats.probingInProgress) != 0 {
+			return 0
+		}
 		return baseWeight * policy.HalfOpenWeight
 
 	case StateOpen:
@@ -340,11 +344,14 @@ func (m *ModelCircuitBreaker) TryBeginProbe(ctx context.Context, channelID int, 
 	stats.Lock()
 	defer stats.Unlock()
 
-	if stats.State != StateOpen {
-		return false
-	}
-
-	if stats.NextProbeAt.IsZero() || time.Now().Before(stats.NextProbeAt) {
+	switch stats.State {
+	case StateHalfOpen:
+		// A half-open model may admit exactly one recovery request.
+	case StateOpen:
+		if stats.NextProbeAt.IsZero() || time.Now().Before(stats.NextProbeAt) {
+			return false
+		}
+	default:
 		return false
 	}
 

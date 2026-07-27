@@ -27,11 +27,13 @@ import (
 	"github.com/looplj/axonhub/internal/ent/role"
 	"github.com/looplj/axonhub/internal/ent/system"
 	"github.com/looplj/axonhub/internal/ent/thread"
+	"github.com/looplj/axonhub/internal/ent/tokenwalletledger"
 	"github.com/looplj/axonhub/internal/ent/trace"
 	"github.com/looplj/axonhub/internal/ent/usagelog"
 	"github.com/looplj/axonhub/internal/ent/user"
 	"github.com/looplj/axonhub/internal/ent/userproject"
 	"github.com/looplj/axonhub/internal/ent/userrole"
+	"github.com/looplj/axonhub/internal/ent/usertokenwallet"
 )
 
 // APIKeyWhereInput represents a where input for filtering APIKey queries.
@@ -9404,6 +9406,490 @@ func (i *ThreadWhereInput) P() (predicate.Thread, error) {
 	}
 }
 
+// TokenWalletLedgerWhereInput represents a where input for filtering TokenWalletLedger queries.
+type TokenWalletLedgerWhereInput struct {
+	Predicates []predicate.TokenWalletLedger  `json:"-"`
+	Not        *TokenWalletLedgerWhereInput   `json:"not,omitempty"`
+	Or         []*TokenWalletLedgerWhereInput `json:"or,omitempty"`
+	And        []*TokenWalletLedgerWhereInput `json:"and,omitempty"`
+
+	// "id" field predicates.
+	ID      *int  `json:"id,omitempty"`
+	IDNEQ   *int  `json:"idNEQ,omitempty"`
+	IDIn    []int `json:"idIn,omitempty"`
+	IDNotIn []int `json:"idNotIn,omitempty"`
+	IDGT    *int  `json:"idGT,omitempty"`
+	IDGTE   *int  `json:"idGTE,omitempty"`
+	IDLT    *int  `json:"idLT,omitempty"`
+	IDLTE   *int  `json:"idLTE,omitempty"`
+
+	// "created_at" field predicates.
+	CreatedAt      *time.Time  `json:"createdAt,omitempty"`
+	CreatedAtNEQ   *time.Time  `json:"createdAtNEQ,omitempty"`
+	CreatedAtIn    []time.Time `json:"createdAtIn,omitempty"`
+	CreatedAtNotIn []time.Time `json:"createdAtNotIn,omitempty"`
+	CreatedAtGT    *time.Time  `json:"createdAtGT,omitempty"`
+	CreatedAtGTE   *time.Time  `json:"createdAtGTE,omitempty"`
+	CreatedAtLT    *time.Time  `json:"createdAtLT,omitempty"`
+	CreatedAtLTE   *time.Time  `json:"createdAtLTE,omitempty"`
+
+	// "updated_at" field predicates.
+	UpdatedAt      *time.Time  `json:"updatedAt,omitempty"`
+	UpdatedAtNEQ   *time.Time  `json:"updatedAtNEQ,omitempty"`
+	UpdatedAtIn    []time.Time `json:"updatedAtIn,omitempty"`
+	UpdatedAtNotIn []time.Time `json:"updatedAtNotIn,omitempty"`
+	UpdatedAtGT    *time.Time  `json:"updatedAtGT,omitempty"`
+	UpdatedAtGTE   *time.Time  `json:"updatedAtGTE,omitempty"`
+	UpdatedAtLT    *time.Time  `json:"updatedAtLT,omitempty"`
+	UpdatedAtLTE   *time.Time  `json:"updatedAtLTE,omitempty"`
+
+	// "user_id" field predicates.
+	UserID      *int  `json:"userID,omitempty"`
+	UserIDNEQ   *int  `json:"userIDNEQ,omitempty"`
+	UserIDIn    []int `json:"userIDIn,omitempty"`
+	UserIDNotIn []int `json:"userIDNotIn,omitempty"`
+	UserIDGT    *int  `json:"userIDGT,omitempty"`
+	UserIDGTE   *int  `json:"userIDGTE,omitempty"`
+	UserIDLT    *int  `json:"userIDLT,omitempty"`
+	UserIDLTE   *int  `json:"userIDLTE,omitempty"`
+
+	// "request_id" field predicates.
+	RequestID      *int  `json:"requestID,omitempty"`
+	RequestIDNEQ   *int  `json:"requestIDNEQ,omitempty"`
+	RequestIDIn    []int `json:"requestIDIn,omitempty"`
+	RequestIDNotIn []int `json:"requestIDNotIn,omitempty"`
+	RequestIDGT    *int  `json:"requestIDGT,omitempty"`
+	RequestIDGTE   *int  `json:"requestIDGTE,omitempty"`
+	RequestIDLT    *int  `json:"requestIDLT,omitempty"`
+	RequestIDLTE   *int  `json:"requestIDLTE,omitempty"`
+
+	// "usage_log_id" field predicates.
+	UsageLogID       *int  `json:"usageLogID,omitempty"`
+	UsageLogIDNEQ    *int  `json:"usageLogIDNEQ,omitempty"`
+	UsageLogIDIn     []int `json:"usageLogIDIn,omitempty"`
+	UsageLogIDNotIn  []int `json:"usageLogIDNotIn,omitempty"`
+	UsageLogIDGT     *int  `json:"usageLogIDGT,omitempty"`
+	UsageLogIDGTE    *int  `json:"usageLogIDGTE,omitempty"`
+	UsageLogIDLT     *int  `json:"usageLogIDLT,omitempty"`
+	UsageLogIDLTE    *int  `json:"usageLogIDLTE,omitempty"`
+	UsageLogIDIsNil  bool  `json:"usageLogIDIsNil,omitempty"`
+	UsageLogIDNotNil bool  `json:"usageLogIDNotNil,omitempty"`
+
+	// "channel_id" field predicates.
+	ChannelID       *int  `json:"channelID,omitempty"`
+	ChannelIDNEQ    *int  `json:"channelIDNEQ,omitempty"`
+	ChannelIDIn     []int `json:"channelIDIn,omitempty"`
+	ChannelIDNotIn  []int `json:"channelIDNotIn,omitempty"`
+	ChannelIDGT     *int  `json:"channelIDGT,omitempty"`
+	ChannelIDGTE    *int  `json:"channelIDGTE,omitempty"`
+	ChannelIDLT     *int  `json:"channelIDLT,omitempty"`
+	ChannelIDLTE    *int  `json:"channelIDLTE,omitempty"`
+	ChannelIDIsNil  bool  `json:"channelIDIsNil,omitempty"`
+	ChannelIDNotNil bool  `json:"channelIDNotNil,omitempty"`
+
+	// "channel_name_snapshot" field predicates.
+	ChannelNameSnapshot             *string  `json:"channelNameSnapshot,omitempty"`
+	ChannelNameSnapshotNEQ          *string  `json:"channelNameSnapshotNEQ,omitempty"`
+	ChannelNameSnapshotIn           []string `json:"channelNameSnapshotIn,omitempty"`
+	ChannelNameSnapshotNotIn        []string `json:"channelNameSnapshotNotIn,omitempty"`
+	ChannelNameSnapshotGT           *string  `json:"channelNameSnapshotGT,omitempty"`
+	ChannelNameSnapshotGTE          *string  `json:"channelNameSnapshotGTE,omitempty"`
+	ChannelNameSnapshotLT           *string  `json:"channelNameSnapshotLT,omitempty"`
+	ChannelNameSnapshotLTE          *string  `json:"channelNameSnapshotLTE,omitempty"`
+	ChannelNameSnapshotContains     *string  `json:"channelNameSnapshotContains,omitempty"`
+	ChannelNameSnapshotHasPrefix    *string  `json:"channelNameSnapshotHasPrefix,omitempty"`
+	ChannelNameSnapshotHasSuffix    *string  `json:"channelNameSnapshotHasSuffix,omitempty"`
+	ChannelNameSnapshotEqualFold    *string  `json:"channelNameSnapshotEqualFold,omitempty"`
+	ChannelNameSnapshotContainsFold *string  `json:"channelNameSnapshotContainsFold,omitempty"`
+
+	// "kind" field predicates.
+	Kind      *tokenwalletledger.Kind  `json:"kind,omitempty"`
+	KindNEQ   *tokenwalletledger.Kind  `json:"kindNEQ,omitempty"`
+	KindIn    []tokenwalletledger.Kind `json:"kindIn,omitempty"`
+	KindNotIn []tokenwalletledger.Kind `json:"kindNotIn,omitempty"`
+
+	// "amount_tokens" field predicates.
+	AmountTokens      *int64  `json:"amountTokens,omitempty"`
+	AmountTokensNEQ   *int64  `json:"amountTokensNEQ,omitempty"`
+	AmountTokensIn    []int64 `json:"amountTokensIn,omitempty"`
+	AmountTokensNotIn []int64 `json:"amountTokensNotIn,omitempty"`
+	AmountTokensGT    *int64  `json:"amountTokensGT,omitempty"`
+	AmountTokensGTE   *int64  `json:"amountTokensGTE,omitempty"`
+	AmountTokensLT    *int64  `json:"amountTokensLT,omitempty"`
+	AmountTokensLTE   *int64  `json:"amountTokensLTE,omitempty"`
+
+	// "effective_tokens_snapshot" field predicates.
+	EffectiveTokensSnapshot      *int64  `json:"effectiveTokensSnapshot,omitempty"`
+	EffectiveTokensSnapshotNEQ   *int64  `json:"effectiveTokensSnapshotNEQ,omitempty"`
+	EffectiveTokensSnapshotIn    []int64 `json:"effectiveTokensSnapshotIn,omitempty"`
+	EffectiveTokensSnapshotNotIn []int64 `json:"effectiveTokensSnapshotNotIn,omitempty"`
+	EffectiveTokensSnapshotGT    *int64  `json:"effectiveTokensSnapshotGT,omitempty"`
+	EffectiveTokensSnapshotGTE   *int64  `json:"effectiveTokensSnapshotGTE,omitempty"`
+	EffectiveTokensSnapshotLT    *int64  `json:"effectiveTokensSnapshotLT,omitempty"`
+	EffectiveTokensSnapshotLTE   *int64  `json:"effectiveTokensSnapshotLTE,omitempty"`
+}
+
+// AddPredicates adds custom predicates to the where input to be used during the filtering phase.
+func (i *TokenWalletLedgerWhereInput) AddPredicates(predicates ...predicate.TokenWalletLedger) {
+	i.Predicates = append(i.Predicates, predicates...)
+}
+
+// Filter applies the TokenWalletLedgerWhereInput filter on the TokenWalletLedgerQuery builder.
+func (i *TokenWalletLedgerWhereInput) Filter(q *TokenWalletLedgerQuery) (*TokenWalletLedgerQuery, error) {
+	if i == nil {
+		return q, nil
+	}
+	p, err := i.P()
+	if err != nil {
+		if err == ErrEmptyTokenWalletLedgerWhereInput {
+			return q, nil
+		}
+		return nil, err
+	}
+	return q.Where(p), nil
+}
+
+// ErrEmptyTokenWalletLedgerWhereInput is returned in case the TokenWalletLedgerWhereInput is empty.
+var ErrEmptyTokenWalletLedgerWhereInput = errors.New("ent: empty predicate TokenWalletLedgerWhereInput")
+
+// P returns a predicate for filtering tokenwalletledgers.
+// An error is returned if the input is empty or invalid.
+func (i *TokenWalletLedgerWhereInput) P() (predicate.TokenWalletLedger, error) {
+	var predicates []predicate.TokenWalletLedger
+	if i.Not != nil {
+		p, err := i.Not.P()
+		if err != nil {
+			return nil, fmt.Errorf("%w: field 'not'", err)
+		}
+		predicates = append(predicates, tokenwalletledger.Not(p))
+	}
+	switch n := len(i.Or); {
+	case n == 1:
+		p, err := i.Or[0].P()
+		if err != nil {
+			return nil, fmt.Errorf("%w: field 'or'", err)
+		}
+		predicates = append(predicates, p)
+	case n > 1:
+		or := make([]predicate.TokenWalletLedger, 0, n)
+		for _, w := range i.Or {
+			p, err := w.P()
+			if err != nil {
+				return nil, fmt.Errorf("%w: field 'or'", err)
+			}
+			or = append(or, p)
+		}
+		predicates = append(predicates, tokenwalletledger.Or(or...))
+	}
+	switch n := len(i.And); {
+	case n == 1:
+		p, err := i.And[0].P()
+		if err != nil {
+			return nil, fmt.Errorf("%w: field 'and'", err)
+		}
+		predicates = append(predicates, p)
+	case n > 1:
+		and := make([]predicate.TokenWalletLedger, 0, n)
+		for _, w := range i.And {
+			p, err := w.P()
+			if err != nil {
+				return nil, fmt.Errorf("%w: field 'and'", err)
+			}
+			and = append(and, p)
+		}
+		predicates = append(predicates, tokenwalletledger.And(and...))
+	}
+	predicates = append(predicates, i.Predicates...)
+	if i.ID != nil {
+		predicates = append(predicates, tokenwalletledger.IDEQ(*i.ID))
+	}
+	if i.IDNEQ != nil {
+		predicates = append(predicates, tokenwalletledger.IDNEQ(*i.IDNEQ))
+	}
+	if len(i.IDIn) > 0 {
+		predicates = append(predicates, tokenwalletledger.IDIn(i.IDIn...))
+	}
+	if len(i.IDNotIn) > 0 {
+		predicates = append(predicates, tokenwalletledger.IDNotIn(i.IDNotIn...))
+	}
+	if i.IDGT != nil {
+		predicates = append(predicates, tokenwalletledger.IDGT(*i.IDGT))
+	}
+	if i.IDGTE != nil {
+		predicates = append(predicates, tokenwalletledger.IDGTE(*i.IDGTE))
+	}
+	if i.IDLT != nil {
+		predicates = append(predicates, tokenwalletledger.IDLT(*i.IDLT))
+	}
+	if i.IDLTE != nil {
+		predicates = append(predicates, tokenwalletledger.IDLTE(*i.IDLTE))
+	}
+	if i.CreatedAt != nil {
+		predicates = append(predicates, tokenwalletledger.CreatedAtEQ(*i.CreatedAt))
+	}
+	if i.CreatedAtNEQ != nil {
+		predicates = append(predicates, tokenwalletledger.CreatedAtNEQ(*i.CreatedAtNEQ))
+	}
+	if len(i.CreatedAtIn) > 0 {
+		predicates = append(predicates, tokenwalletledger.CreatedAtIn(i.CreatedAtIn...))
+	}
+	if len(i.CreatedAtNotIn) > 0 {
+		predicates = append(predicates, tokenwalletledger.CreatedAtNotIn(i.CreatedAtNotIn...))
+	}
+	if i.CreatedAtGT != nil {
+		predicates = append(predicates, tokenwalletledger.CreatedAtGT(*i.CreatedAtGT))
+	}
+	if i.CreatedAtGTE != nil {
+		predicates = append(predicates, tokenwalletledger.CreatedAtGTE(*i.CreatedAtGTE))
+	}
+	if i.CreatedAtLT != nil {
+		predicates = append(predicates, tokenwalletledger.CreatedAtLT(*i.CreatedAtLT))
+	}
+	if i.CreatedAtLTE != nil {
+		predicates = append(predicates, tokenwalletledger.CreatedAtLTE(*i.CreatedAtLTE))
+	}
+	if i.UpdatedAt != nil {
+		predicates = append(predicates, tokenwalletledger.UpdatedAtEQ(*i.UpdatedAt))
+	}
+	if i.UpdatedAtNEQ != nil {
+		predicates = append(predicates, tokenwalletledger.UpdatedAtNEQ(*i.UpdatedAtNEQ))
+	}
+	if len(i.UpdatedAtIn) > 0 {
+		predicates = append(predicates, tokenwalletledger.UpdatedAtIn(i.UpdatedAtIn...))
+	}
+	if len(i.UpdatedAtNotIn) > 0 {
+		predicates = append(predicates, tokenwalletledger.UpdatedAtNotIn(i.UpdatedAtNotIn...))
+	}
+	if i.UpdatedAtGT != nil {
+		predicates = append(predicates, tokenwalletledger.UpdatedAtGT(*i.UpdatedAtGT))
+	}
+	if i.UpdatedAtGTE != nil {
+		predicates = append(predicates, tokenwalletledger.UpdatedAtGTE(*i.UpdatedAtGTE))
+	}
+	if i.UpdatedAtLT != nil {
+		predicates = append(predicates, tokenwalletledger.UpdatedAtLT(*i.UpdatedAtLT))
+	}
+	if i.UpdatedAtLTE != nil {
+		predicates = append(predicates, tokenwalletledger.UpdatedAtLTE(*i.UpdatedAtLTE))
+	}
+	if i.UserID != nil {
+		predicates = append(predicates, tokenwalletledger.UserIDEQ(*i.UserID))
+	}
+	if i.UserIDNEQ != nil {
+		predicates = append(predicates, tokenwalletledger.UserIDNEQ(*i.UserIDNEQ))
+	}
+	if len(i.UserIDIn) > 0 {
+		predicates = append(predicates, tokenwalletledger.UserIDIn(i.UserIDIn...))
+	}
+	if len(i.UserIDNotIn) > 0 {
+		predicates = append(predicates, tokenwalletledger.UserIDNotIn(i.UserIDNotIn...))
+	}
+	if i.UserIDGT != nil {
+		predicates = append(predicates, tokenwalletledger.UserIDGT(*i.UserIDGT))
+	}
+	if i.UserIDGTE != nil {
+		predicates = append(predicates, tokenwalletledger.UserIDGTE(*i.UserIDGTE))
+	}
+	if i.UserIDLT != nil {
+		predicates = append(predicates, tokenwalletledger.UserIDLT(*i.UserIDLT))
+	}
+	if i.UserIDLTE != nil {
+		predicates = append(predicates, tokenwalletledger.UserIDLTE(*i.UserIDLTE))
+	}
+	if i.RequestID != nil {
+		predicates = append(predicates, tokenwalletledger.RequestIDEQ(*i.RequestID))
+	}
+	if i.RequestIDNEQ != nil {
+		predicates = append(predicates, tokenwalletledger.RequestIDNEQ(*i.RequestIDNEQ))
+	}
+	if len(i.RequestIDIn) > 0 {
+		predicates = append(predicates, tokenwalletledger.RequestIDIn(i.RequestIDIn...))
+	}
+	if len(i.RequestIDNotIn) > 0 {
+		predicates = append(predicates, tokenwalletledger.RequestIDNotIn(i.RequestIDNotIn...))
+	}
+	if i.RequestIDGT != nil {
+		predicates = append(predicates, tokenwalletledger.RequestIDGT(*i.RequestIDGT))
+	}
+	if i.RequestIDGTE != nil {
+		predicates = append(predicates, tokenwalletledger.RequestIDGTE(*i.RequestIDGTE))
+	}
+	if i.RequestIDLT != nil {
+		predicates = append(predicates, tokenwalletledger.RequestIDLT(*i.RequestIDLT))
+	}
+	if i.RequestIDLTE != nil {
+		predicates = append(predicates, tokenwalletledger.RequestIDLTE(*i.RequestIDLTE))
+	}
+	if i.UsageLogID != nil {
+		predicates = append(predicates, tokenwalletledger.UsageLogIDEQ(*i.UsageLogID))
+	}
+	if i.UsageLogIDNEQ != nil {
+		predicates = append(predicates, tokenwalletledger.UsageLogIDNEQ(*i.UsageLogIDNEQ))
+	}
+	if len(i.UsageLogIDIn) > 0 {
+		predicates = append(predicates, tokenwalletledger.UsageLogIDIn(i.UsageLogIDIn...))
+	}
+	if len(i.UsageLogIDNotIn) > 0 {
+		predicates = append(predicates, tokenwalletledger.UsageLogIDNotIn(i.UsageLogIDNotIn...))
+	}
+	if i.UsageLogIDGT != nil {
+		predicates = append(predicates, tokenwalletledger.UsageLogIDGT(*i.UsageLogIDGT))
+	}
+	if i.UsageLogIDGTE != nil {
+		predicates = append(predicates, tokenwalletledger.UsageLogIDGTE(*i.UsageLogIDGTE))
+	}
+	if i.UsageLogIDLT != nil {
+		predicates = append(predicates, tokenwalletledger.UsageLogIDLT(*i.UsageLogIDLT))
+	}
+	if i.UsageLogIDLTE != nil {
+		predicates = append(predicates, tokenwalletledger.UsageLogIDLTE(*i.UsageLogIDLTE))
+	}
+	if i.UsageLogIDIsNil {
+		predicates = append(predicates, tokenwalletledger.UsageLogIDIsNil())
+	}
+	if i.UsageLogIDNotNil {
+		predicates = append(predicates, tokenwalletledger.UsageLogIDNotNil())
+	}
+	if i.ChannelID != nil {
+		predicates = append(predicates, tokenwalletledger.ChannelIDEQ(*i.ChannelID))
+	}
+	if i.ChannelIDNEQ != nil {
+		predicates = append(predicates, tokenwalletledger.ChannelIDNEQ(*i.ChannelIDNEQ))
+	}
+	if len(i.ChannelIDIn) > 0 {
+		predicates = append(predicates, tokenwalletledger.ChannelIDIn(i.ChannelIDIn...))
+	}
+	if len(i.ChannelIDNotIn) > 0 {
+		predicates = append(predicates, tokenwalletledger.ChannelIDNotIn(i.ChannelIDNotIn...))
+	}
+	if i.ChannelIDGT != nil {
+		predicates = append(predicates, tokenwalletledger.ChannelIDGT(*i.ChannelIDGT))
+	}
+	if i.ChannelIDGTE != nil {
+		predicates = append(predicates, tokenwalletledger.ChannelIDGTE(*i.ChannelIDGTE))
+	}
+	if i.ChannelIDLT != nil {
+		predicates = append(predicates, tokenwalletledger.ChannelIDLT(*i.ChannelIDLT))
+	}
+	if i.ChannelIDLTE != nil {
+		predicates = append(predicates, tokenwalletledger.ChannelIDLTE(*i.ChannelIDLTE))
+	}
+	if i.ChannelIDIsNil {
+		predicates = append(predicates, tokenwalletledger.ChannelIDIsNil())
+	}
+	if i.ChannelIDNotNil {
+		predicates = append(predicates, tokenwalletledger.ChannelIDNotNil())
+	}
+	if i.ChannelNameSnapshot != nil {
+		predicates = append(predicates, tokenwalletledger.ChannelNameSnapshotEQ(*i.ChannelNameSnapshot))
+	}
+	if i.ChannelNameSnapshotNEQ != nil {
+		predicates = append(predicates, tokenwalletledger.ChannelNameSnapshotNEQ(*i.ChannelNameSnapshotNEQ))
+	}
+	if len(i.ChannelNameSnapshotIn) > 0 {
+		predicates = append(predicates, tokenwalletledger.ChannelNameSnapshotIn(i.ChannelNameSnapshotIn...))
+	}
+	if len(i.ChannelNameSnapshotNotIn) > 0 {
+		predicates = append(predicates, tokenwalletledger.ChannelNameSnapshotNotIn(i.ChannelNameSnapshotNotIn...))
+	}
+	if i.ChannelNameSnapshotGT != nil {
+		predicates = append(predicates, tokenwalletledger.ChannelNameSnapshotGT(*i.ChannelNameSnapshotGT))
+	}
+	if i.ChannelNameSnapshotGTE != nil {
+		predicates = append(predicates, tokenwalletledger.ChannelNameSnapshotGTE(*i.ChannelNameSnapshotGTE))
+	}
+	if i.ChannelNameSnapshotLT != nil {
+		predicates = append(predicates, tokenwalletledger.ChannelNameSnapshotLT(*i.ChannelNameSnapshotLT))
+	}
+	if i.ChannelNameSnapshotLTE != nil {
+		predicates = append(predicates, tokenwalletledger.ChannelNameSnapshotLTE(*i.ChannelNameSnapshotLTE))
+	}
+	if i.ChannelNameSnapshotContains != nil {
+		predicates = append(predicates, tokenwalletledger.ChannelNameSnapshotContains(*i.ChannelNameSnapshotContains))
+	}
+	if i.ChannelNameSnapshotHasPrefix != nil {
+		predicates = append(predicates, tokenwalletledger.ChannelNameSnapshotHasPrefix(*i.ChannelNameSnapshotHasPrefix))
+	}
+	if i.ChannelNameSnapshotHasSuffix != nil {
+		predicates = append(predicates, tokenwalletledger.ChannelNameSnapshotHasSuffix(*i.ChannelNameSnapshotHasSuffix))
+	}
+	if i.ChannelNameSnapshotEqualFold != nil {
+		predicates = append(predicates, tokenwalletledger.ChannelNameSnapshotEqualFold(*i.ChannelNameSnapshotEqualFold))
+	}
+	if i.ChannelNameSnapshotContainsFold != nil {
+		predicates = append(predicates, tokenwalletledger.ChannelNameSnapshotContainsFold(*i.ChannelNameSnapshotContainsFold))
+	}
+	if i.Kind != nil {
+		predicates = append(predicates, tokenwalletledger.KindEQ(*i.Kind))
+	}
+	if i.KindNEQ != nil {
+		predicates = append(predicates, tokenwalletledger.KindNEQ(*i.KindNEQ))
+	}
+	if len(i.KindIn) > 0 {
+		predicates = append(predicates, tokenwalletledger.KindIn(i.KindIn...))
+	}
+	if len(i.KindNotIn) > 0 {
+		predicates = append(predicates, tokenwalletledger.KindNotIn(i.KindNotIn...))
+	}
+	if i.AmountTokens != nil {
+		predicates = append(predicates, tokenwalletledger.AmountTokensEQ(*i.AmountTokens))
+	}
+	if i.AmountTokensNEQ != nil {
+		predicates = append(predicates, tokenwalletledger.AmountTokensNEQ(*i.AmountTokensNEQ))
+	}
+	if len(i.AmountTokensIn) > 0 {
+		predicates = append(predicates, tokenwalletledger.AmountTokensIn(i.AmountTokensIn...))
+	}
+	if len(i.AmountTokensNotIn) > 0 {
+		predicates = append(predicates, tokenwalletledger.AmountTokensNotIn(i.AmountTokensNotIn...))
+	}
+	if i.AmountTokensGT != nil {
+		predicates = append(predicates, tokenwalletledger.AmountTokensGT(*i.AmountTokensGT))
+	}
+	if i.AmountTokensGTE != nil {
+		predicates = append(predicates, tokenwalletledger.AmountTokensGTE(*i.AmountTokensGTE))
+	}
+	if i.AmountTokensLT != nil {
+		predicates = append(predicates, tokenwalletledger.AmountTokensLT(*i.AmountTokensLT))
+	}
+	if i.AmountTokensLTE != nil {
+		predicates = append(predicates, tokenwalletledger.AmountTokensLTE(*i.AmountTokensLTE))
+	}
+	if i.EffectiveTokensSnapshot != nil {
+		predicates = append(predicates, tokenwalletledger.EffectiveTokensSnapshotEQ(*i.EffectiveTokensSnapshot))
+	}
+	if i.EffectiveTokensSnapshotNEQ != nil {
+		predicates = append(predicates, tokenwalletledger.EffectiveTokensSnapshotNEQ(*i.EffectiveTokensSnapshotNEQ))
+	}
+	if len(i.EffectiveTokensSnapshotIn) > 0 {
+		predicates = append(predicates, tokenwalletledger.EffectiveTokensSnapshotIn(i.EffectiveTokensSnapshotIn...))
+	}
+	if len(i.EffectiveTokensSnapshotNotIn) > 0 {
+		predicates = append(predicates, tokenwalletledger.EffectiveTokensSnapshotNotIn(i.EffectiveTokensSnapshotNotIn...))
+	}
+	if i.EffectiveTokensSnapshotGT != nil {
+		predicates = append(predicates, tokenwalletledger.EffectiveTokensSnapshotGT(*i.EffectiveTokensSnapshotGT))
+	}
+	if i.EffectiveTokensSnapshotGTE != nil {
+		predicates = append(predicates, tokenwalletledger.EffectiveTokensSnapshotGTE(*i.EffectiveTokensSnapshotGTE))
+	}
+	if i.EffectiveTokensSnapshotLT != nil {
+		predicates = append(predicates, tokenwalletledger.EffectiveTokensSnapshotLT(*i.EffectiveTokensSnapshotLT))
+	}
+	if i.EffectiveTokensSnapshotLTE != nil {
+		predicates = append(predicates, tokenwalletledger.EffectiveTokensSnapshotLTE(*i.EffectiveTokensSnapshotLTE))
+	}
+
+	switch len(predicates) {
+	case 0:
+		return nil, ErrEmptyTokenWalletLedgerWhereInput
+	case 1:
+		return predicates[0], nil
+	default:
+		return tokenwalletledger.And(predicates...), nil
+	}
+}
+
 // TraceWhereInput represents a where input for filtering Trace queries.
 type TraceWhereInput struct {
 	Predicates []predicate.Trace  `json:"-"`
@@ -9873,6 +10359,40 @@ type UsageLogWhereInput struct {
 	TotalTokensGTE   *int64  `json:"totalTokensGTE,omitempty"`
 	TotalTokensLT    *int64  `json:"totalTokensLT,omitempty"`
 	TotalTokensLTE   *int64  `json:"totalTokensLTE,omitempty"`
+
+	// "effective_tokens" field predicates.
+	EffectiveTokens      *int64  `json:"effectiveTokens,omitempty"`
+	EffectiveTokensNEQ   *int64  `json:"effectiveTokensNEQ,omitempty"`
+	EffectiveTokensIn    []int64 `json:"effectiveTokensIn,omitempty"`
+	EffectiveTokensNotIn []int64 `json:"effectiveTokensNotIn,omitempty"`
+	EffectiveTokensGT    *int64  `json:"effectiveTokensGT,omitempty"`
+	EffectiveTokensGTE   *int64  `json:"effectiveTokensGTE,omitempty"`
+	EffectiveTokensLT    *int64  `json:"effectiveTokensLT,omitempty"`
+	EffectiveTokensLTE   *int64  `json:"effectiveTokensLTE,omitempty"`
+
+	// "cache_read_tokens_known" field predicates.
+	CacheReadTokensKnown    *bool `json:"cacheReadTokensKnown,omitempty"`
+	CacheReadTokensKnownNEQ *bool `json:"cacheReadTokensKnownNEQ,omitempty"`
+
+	// "wallet_consumed_tokens" field predicates.
+	WalletConsumedTokens      *int64  `json:"walletConsumedTokens,omitempty"`
+	WalletConsumedTokensNEQ   *int64  `json:"walletConsumedTokensNEQ,omitempty"`
+	WalletConsumedTokensIn    []int64 `json:"walletConsumedTokensIn,omitempty"`
+	WalletConsumedTokensNotIn []int64 `json:"walletConsumedTokensNotIn,omitempty"`
+	WalletConsumedTokensGT    *int64  `json:"walletConsumedTokensGT,omitempty"`
+	WalletConsumedTokensGTE   *int64  `json:"walletConsumedTokensGTE,omitempty"`
+	WalletConsumedTokensLT    *int64  `json:"walletConsumedTokensLT,omitempty"`
+	WalletConsumedTokensLTE   *int64  `json:"walletConsumedTokensLTE,omitempty"`
+
+	// "donor_credit_tokens" field predicates.
+	DonorCreditTokens      *int64  `json:"donorCreditTokens,omitempty"`
+	DonorCreditTokensNEQ   *int64  `json:"donorCreditTokensNEQ,omitempty"`
+	DonorCreditTokensIn    []int64 `json:"donorCreditTokensIn,omitempty"`
+	DonorCreditTokensNotIn []int64 `json:"donorCreditTokensNotIn,omitempty"`
+	DonorCreditTokensGT    *int64  `json:"donorCreditTokensGT,omitempty"`
+	DonorCreditTokensGTE   *int64  `json:"donorCreditTokensGTE,omitempty"`
+	DonorCreditTokensLT    *int64  `json:"donorCreditTokensLT,omitempty"`
+	DonorCreditTokensLTE   *int64  `json:"donorCreditTokensLTE,omitempty"`
 
 	// "prompt_audio_tokens" field predicates.
 	PromptAudioTokens       *int64  `json:"promptAudioTokens,omitempty"`
@@ -10370,6 +10890,84 @@ func (i *UsageLogWhereInput) P() (predicate.UsageLog, error) {
 	}
 	if i.TotalTokensLTE != nil {
 		predicates = append(predicates, usagelog.TotalTokensLTE(*i.TotalTokensLTE))
+	}
+	if i.EffectiveTokens != nil {
+		predicates = append(predicates, usagelog.EffectiveTokensEQ(*i.EffectiveTokens))
+	}
+	if i.EffectiveTokensNEQ != nil {
+		predicates = append(predicates, usagelog.EffectiveTokensNEQ(*i.EffectiveTokensNEQ))
+	}
+	if len(i.EffectiveTokensIn) > 0 {
+		predicates = append(predicates, usagelog.EffectiveTokensIn(i.EffectiveTokensIn...))
+	}
+	if len(i.EffectiveTokensNotIn) > 0 {
+		predicates = append(predicates, usagelog.EffectiveTokensNotIn(i.EffectiveTokensNotIn...))
+	}
+	if i.EffectiveTokensGT != nil {
+		predicates = append(predicates, usagelog.EffectiveTokensGT(*i.EffectiveTokensGT))
+	}
+	if i.EffectiveTokensGTE != nil {
+		predicates = append(predicates, usagelog.EffectiveTokensGTE(*i.EffectiveTokensGTE))
+	}
+	if i.EffectiveTokensLT != nil {
+		predicates = append(predicates, usagelog.EffectiveTokensLT(*i.EffectiveTokensLT))
+	}
+	if i.EffectiveTokensLTE != nil {
+		predicates = append(predicates, usagelog.EffectiveTokensLTE(*i.EffectiveTokensLTE))
+	}
+	if i.CacheReadTokensKnown != nil {
+		predicates = append(predicates, usagelog.CacheReadTokensKnownEQ(*i.CacheReadTokensKnown))
+	}
+	if i.CacheReadTokensKnownNEQ != nil {
+		predicates = append(predicates, usagelog.CacheReadTokensKnownNEQ(*i.CacheReadTokensKnownNEQ))
+	}
+	if i.WalletConsumedTokens != nil {
+		predicates = append(predicates, usagelog.WalletConsumedTokensEQ(*i.WalletConsumedTokens))
+	}
+	if i.WalletConsumedTokensNEQ != nil {
+		predicates = append(predicates, usagelog.WalletConsumedTokensNEQ(*i.WalletConsumedTokensNEQ))
+	}
+	if len(i.WalletConsumedTokensIn) > 0 {
+		predicates = append(predicates, usagelog.WalletConsumedTokensIn(i.WalletConsumedTokensIn...))
+	}
+	if len(i.WalletConsumedTokensNotIn) > 0 {
+		predicates = append(predicates, usagelog.WalletConsumedTokensNotIn(i.WalletConsumedTokensNotIn...))
+	}
+	if i.WalletConsumedTokensGT != nil {
+		predicates = append(predicates, usagelog.WalletConsumedTokensGT(*i.WalletConsumedTokensGT))
+	}
+	if i.WalletConsumedTokensGTE != nil {
+		predicates = append(predicates, usagelog.WalletConsumedTokensGTE(*i.WalletConsumedTokensGTE))
+	}
+	if i.WalletConsumedTokensLT != nil {
+		predicates = append(predicates, usagelog.WalletConsumedTokensLT(*i.WalletConsumedTokensLT))
+	}
+	if i.WalletConsumedTokensLTE != nil {
+		predicates = append(predicates, usagelog.WalletConsumedTokensLTE(*i.WalletConsumedTokensLTE))
+	}
+	if i.DonorCreditTokens != nil {
+		predicates = append(predicates, usagelog.DonorCreditTokensEQ(*i.DonorCreditTokens))
+	}
+	if i.DonorCreditTokensNEQ != nil {
+		predicates = append(predicates, usagelog.DonorCreditTokensNEQ(*i.DonorCreditTokensNEQ))
+	}
+	if len(i.DonorCreditTokensIn) > 0 {
+		predicates = append(predicates, usagelog.DonorCreditTokensIn(i.DonorCreditTokensIn...))
+	}
+	if len(i.DonorCreditTokensNotIn) > 0 {
+		predicates = append(predicates, usagelog.DonorCreditTokensNotIn(i.DonorCreditTokensNotIn...))
+	}
+	if i.DonorCreditTokensGT != nil {
+		predicates = append(predicates, usagelog.DonorCreditTokensGT(*i.DonorCreditTokensGT))
+	}
+	if i.DonorCreditTokensGTE != nil {
+		predicates = append(predicates, usagelog.DonorCreditTokensGTE(*i.DonorCreditTokensGTE))
+	}
+	if i.DonorCreditTokensLT != nil {
+		predicates = append(predicates, usagelog.DonorCreditTokensLT(*i.DonorCreditTokensLT))
+	}
+	if i.DonorCreditTokensLTE != nil {
+		predicates = append(predicates, usagelog.DonorCreditTokensLTE(*i.DonorCreditTokensLTE))
 	}
 	if i.PromptAudioTokens != nil {
 		predicates = append(predicates, usagelog.PromptAudioTokensEQ(*i.PromptAudioTokens))
@@ -10986,16 +11584,6 @@ type UserWhereInput struct {
 	IsOwner    *bool `json:"isOwner,omitempty"`
 	IsOwnerNEQ *bool `json:"isOwnerNEQ,omitempty"`
 
-	// "daily_token_limit" field predicates.
-	DailyTokenLimit      *int64  `json:"dailyTokenLimit,omitempty"`
-	DailyTokenLimitNEQ   *int64  `json:"dailyTokenLimitNEQ,omitempty"`
-	DailyTokenLimitIn    []int64 `json:"dailyTokenLimitIn,omitempty"`
-	DailyTokenLimitNotIn []int64 `json:"dailyTokenLimitNotIn,omitempty"`
-	DailyTokenLimitGT    *int64  `json:"dailyTokenLimitGT,omitempty"`
-	DailyTokenLimitGTE   *int64  `json:"dailyTokenLimitGTE,omitempty"`
-	DailyTokenLimitLT    *int64  `json:"dailyTokenLimitLT,omitempty"`
-	DailyTokenLimitLTE   *int64  `json:"dailyTokenLimitLTE,omitempty"`
-
 	// "projects" edge predicates.
 	HasProjects     *bool                `json:"hasProjects,omitempty"`
 	HasProjectsWith []*ProjectWhereInput `json:"hasProjectsWith,omitempty"`
@@ -11468,30 +12056,6 @@ func (i *UserWhereInput) P() (predicate.User, error) {
 	}
 	if i.IsOwnerNEQ != nil {
 		predicates = append(predicates, user.IsOwnerNEQ(*i.IsOwnerNEQ))
-	}
-	if i.DailyTokenLimit != nil {
-		predicates = append(predicates, user.DailyTokenLimitEQ(*i.DailyTokenLimit))
-	}
-	if i.DailyTokenLimitNEQ != nil {
-		predicates = append(predicates, user.DailyTokenLimitNEQ(*i.DailyTokenLimitNEQ))
-	}
-	if len(i.DailyTokenLimitIn) > 0 {
-		predicates = append(predicates, user.DailyTokenLimitIn(i.DailyTokenLimitIn...))
-	}
-	if len(i.DailyTokenLimitNotIn) > 0 {
-		predicates = append(predicates, user.DailyTokenLimitNotIn(i.DailyTokenLimitNotIn...))
-	}
-	if i.DailyTokenLimitGT != nil {
-		predicates = append(predicates, user.DailyTokenLimitGT(*i.DailyTokenLimitGT))
-	}
-	if i.DailyTokenLimitGTE != nil {
-		predicates = append(predicates, user.DailyTokenLimitGTE(*i.DailyTokenLimitGTE))
-	}
-	if i.DailyTokenLimitLT != nil {
-		predicates = append(predicates, user.DailyTokenLimitLT(*i.DailyTokenLimitLT))
-	}
-	if i.DailyTokenLimitLTE != nil {
-		predicates = append(predicates, user.DailyTokenLimitLTE(*i.DailyTokenLimitLTE))
 	}
 
 	if i.HasProjects != nil {
@@ -12215,5 +12779,367 @@ func (i *UserRoleWhereInput) P() (predicate.UserRole, error) {
 		return predicates[0], nil
 	default:
 		return userrole.And(predicates...), nil
+	}
+}
+
+// UserTokenWalletWhereInput represents a where input for filtering UserTokenWallet queries.
+type UserTokenWalletWhereInput struct {
+	Predicates []predicate.UserTokenWallet  `json:"-"`
+	Not        *UserTokenWalletWhereInput   `json:"not,omitempty"`
+	Or         []*UserTokenWalletWhereInput `json:"or,omitempty"`
+	And        []*UserTokenWalletWhereInput `json:"and,omitempty"`
+
+	// "id" field predicates.
+	ID      *int  `json:"id,omitempty"`
+	IDNEQ   *int  `json:"idNEQ,omitempty"`
+	IDIn    []int `json:"idIn,omitempty"`
+	IDNotIn []int `json:"idNotIn,omitempty"`
+	IDGT    *int  `json:"idGT,omitempty"`
+	IDGTE   *int  `json:"idGTE,omitempty"`
+	IDLT    *int  `json:"idLT,omitempty"`
+	IDLTE   *int  `json:"idLTE,omitempty"`
+
+	// "created_at" field predicates.
+	CreatedAt      *time.Time  `json:"createdAt,omitempty"`
+	CreatedAtNEQ   *time.Time  `json:"createdAtNEQ,omitempty"`
+	CreatedAtIn    []time.Time `json:"createdAtIn,omitempty"`
+	CreatedAtNotIn []time.Time `json:"createdAtNotIn,omitempty"`
+	CreatedAtGT    *time.Time  `json:"createdAtGT,omitempty"`
+	CreatedAtGTE   *time.Time  `json:"createdAtGTE,omitempty"`
+	CreatedAtLT    *time.Time  `json:"createdAtLT,omitempty"`
+	CreatedAtLTE   *time.Time  `json:"createdAtLTE,omitempty"`
+
+	// "updated_at" field predicates.
+	UpdatedAt      *time.Time  `json:"updatedAt,omitempty"`
+	UpdatedAtNEQ   *time.Time  `json:"updatedAtNEQ,omitempty"`
+	UpdatedAtIn    []time.Time `json:"updatedAtIn,omitempty"`
+	UpdatedAtNotIn []time.Time `json:"updatedAtNotIn,omitempty"`
+	UpdatedAtGT    *time.Time  `json:"updatedAtGT,omitempty"`
+	UpdatedAtGTE   *time.Time  `json:"updatedAtGTE,omitempty"`
+	UpdatedAtLT    *time.Time  `json:"updatedAtLT,omitempty"`
+	UpdatedAtLTE   *time.Time  `json:"updatedAtLTE,omitempty"`
+
+	// "user_id" field predicates.
+	UserID      *int  `json:"userID,omitempty"`
+	UserIDNEQ   *int  `json:"userIDNEQ,omitempty"`
+	UserIDIn    []int `json:"userIDIn,omitempty"`
+	UserIDNotIn []int `json:"userIDNotIn,omitempty"`
+	UserIDGT    *int  `json:"userIDGT,omitempty"`
+	UserIDGTE   *int  `json:"userIDGTE,omitempty"`
+	UserIDLT    *int  `json:"userIDLT,omitempty"`
+	UserIDLTE   *int  `json:"userIDLTE,omitempty"`
+
+	// "balance_tokens" field predicates.
+	BalanceTokens      *int64  `json:"balanceTokens,omitempty"`
+	BalanceTokensNEQ   *int64  `json:"balanceTokensNEQ,omitempty"`
+	BalanceTokensIn    []int64 `json:"balanceTokensIn,omitempty"`
+	BalanceTokensNotIn []int64 `json:"balanceTokensNotIn,omitempty"`
+	BalanceTokensGT    *int64  `json:"balanceTokensGT,omitempty"`
+	BalanceTokensGTE   *int64  `json:"balanceTokensGTE,omitempty"`
+	BalanceTokensLT    *int64  `json:"balanceTokensLT,omitempty"`
+	BalanceTokensLTE   *int64  `json:"balanceTokensLTE,omitempty"`
+
+	// "lifetime_credited_tokens" field predicates.
+	LifetimeCreditedTokens      *int64  `json:"lifetimeCreditedTokens,omitempty"`
+	LifetimeCreditedTokensNEQ   *int64  `json:"lifetimeCreditedTokensNEQ,omitempty"`
+	LifetimeCreditedTokensIn    []int64 `json:"lifetimeCreditedTokensIn,omitempty"`
+	LifetimeCreditedTokensNotIn []int64 `json:"lifetimeCreditedTokensNotIn,omitempty"`
+	LifetimeCreditedTokensGT    *int64  `json:"lifetimeCreditedTokensGT,omitempty"`
+	LifetimeCreditedTokensGTE   *int64  `json:"lifetimeCreditedTokensGTE,omitempty"`
+	LifetimeCreditedTokensLT    *int64  `json:"lifetimeCreditedTokensLT,omitempty"`
+	LifetimeCreditedTokensLTE   *int64  `json:"lifetimeCreditedTokensLTE,omitempty"`
+
+	// "lifetime_debited_tokens" field predicates.
+	LifetimeDebitedTokens      *int64  `json:"lifetimeDebitedTokens,omitempty"`
+	LifetimeDebitedTokensNEQ   *int64  `json:"lifetimeDebitedTokensNEQ,omitempty"`
+	LifetimeDebitedTokensIn    []int64 `json:"lifetimeDebitedTokensIn,omitempty"`
+	LifetimeDebitedTokensNotIn []int64 `json:"lifetimeDebitedTokensNotIn,omitempty"`
+	LifetimeDebitedTokensGT    *int64  `json:"lifetimeDebitedTokensGT,omitempty"`
+	LifetimeDebitedTokensGTE   *int64  `json:"lifetimeDebitedTokensGTE,omitempty"`
+	LifetimeDebitedTokensLT    *int64  `json:"lifetimeDebitedTokensLT,omitempty"`
+	LifetimeDebitedTokensLTE   *int64  `json:"lifetimeDebitedTokensLTE,omitempty"`
+
+	// "version" field predicates.
+	Version      *int64  `json:"version,omitempty"`
+	VersionNEQ   *int64  `json:"versionNEQ,omitempty"`
+	VersionIn    []int64 `json:"versionIn,omitempty"`
+	VersionNotIn []int64 `json:"versionNotIn,omitempty"`
+	VersionGT    *int64  `json:"versionGT,omitempty"`
+	VersionGTE   *int64  `json:"versionGTE,omitempty"`
+	VersionLT    *int64  `json:"versionLT,omitempty"`
+	VersionLTE   *int64  `json:"versionLTE,omitempty"`
+}
+
+// AddPredicates adds custom predicates to the where input to be used during the filtering phase.
+func (i *UserTokenWalletWhereInput) AddPredicates(predicates ...predicate.UserTokenWallet) {
+	i.Predicates = append(i.Predicates, predicates...)
+}
+
+// Filter applies the UserTokenWalletWhereInput filter on the UserTokenWalletQuery builder.
+func (i *UserTokenWalletWhereInput) Filter(q *UserTokenWalletQuery) (*UserTokenWalletQuery, error) {
+	if i == nil {
+		return q, nil
+	}
+	p, err := i.P()
+	if err != nil {
+		if err == ErrEmptyUserTokenWalletWhereInput {
+			return q, nil
+		}
+		return nil, err
+	}
+	return q.Where(p), nil
+}
+
+// ErrEmptyUserTokenWalletWhereInput is returned in case the UserTokenWalletWhereInput is empty.
+var ErrEmptyUserTokenWalletWhereInput = errors.New("ent: empty predicate UserTokenWalletWhereInput")
+
+// P returns a predicate for filtering usertokenwallets.
+// An error is returned if the input is empty or invalid.
+func (i *UserTokenWalletWhereInput) P() (predicate.UserTokenWallet, error) {
+	var predicates []predicate.UserTokenWallet
+	if i.Not != nil {
+		p, err := i.Not.P()
+		if err != nil {
+			return nil, fmt.Errorf("%w: field 'not'", err)
+		}
+		predicates = append(predicates, usertokenwallet.Not(p))
+	}
+	switch n := len(i.Or); {
+	case n == 1:
+		p, err := i.Or[0].P()
+		if err != nil {
+			return nil, fmt.Errorf("%w: field 'or'", err)
+		}
+		predicates = append(predicates, p)
+	case n > 1:
+		or := make([]predicate.UserTokenWallet, 0, n)
+		for _, w := range i.Or {
+			p, err := w.P()
+			if err != nil {
+				return nil, fmt.Errorf("%w: field 'or'", err)
+			}
+			or = append(or, p)
+		}
+		predicates = append(predicates, usertokenwallet.Or(or...))
+	}
+	switch n := len(i.And); {
+	case n == 1:
+		p, err := i.And[0].P()
+		if err != nil {
+			return nil, fmt.Errorf("%w: field 'and'", err)
+		}
+		predicates = append(predicates, p)
+	case n > 1:
+		and := make([]predicate.UserTokenWallet, 0, n)
+		for _, w := range i.And {
+			p, err := w.P()
+			if err != nil {
+				return nil, fmt.Errorf("%w: field 'and'", err)
+			}
+			and = append(and, p)
+		}
+		predicates = append(predicates, usertokenwallet.And(and...))
+	}
+	predicates = append(predicates, i.Predicates...)
+	if i.ID != nil {
+		predicates = append(predicates, usertokenwallet.IDEQ(*i.ID))
+	}
+	if i.IDNEQ != nil {
+		predicates = append(predicates, usertokenwallet.IDNEQ(*i.IDNEQ))
+	}
+	if len(i.IDIn) > 0 {
+		predicates = append(predicates, usertokenwallet.IDIn(i.IDIn...))
+	}
+	if len(i.IDNotIn) > 0 {
+		predicates = append(predicates, usertokenwallet.IDNotIn(i.IDNotIn...))
+	}
+	if i.IDGT != nil {
+		predicates = append(predicates, usertokenwallet.IDGT(*i.IDGT))
+	}
+	if i.IDGTE != nil {
+		predicates = append(predicates, usertokenwallet.IDGTE(*i.IDGTE))
+	}
+	if i.IDLT != nil {
+		predicates = append(predicates, usertokenwallet.IDLT(*i.IDLT))
+	}
+	if i.IDLTE != nil {
+		predicates = append(predicates, usertokenwallet.IDLTE(*i.IDLTE))
+	}
+	if i.CreatedAt != nil {
+		predicates = append(predicates, usertokenwallet.CreatedAtEQ(*i.CreatedAt))
+	}
+	if i.CreatedAtNEQ != nil {
+		predicates = append(predicates, usertokenwallet.CreatedAtNEQ(*i.CreatedAtNEQ))
+	}
+	if len(i.CreatedAtIn) > 0 {
+		predicates = append(predicates, usertokenwallet.CreatedAtIn(i.CreatedAtIn...))
+	}
+	if len(i.CreatedAtNotIn) > 0 {
+		predicates = append(predicates, usertokenwallet.CreatedAtNotIn(i.CreatedAtNotIn...))
+	}
+	if i.CreatedAtGT != nil {
+		predicates = append(predicates, usertokenwallet.CreatedAtGT(*i.CreatedAtGT))
+	}
+	if i.CreatedAtGTE != nil {
+		predicates = append(predicates, usertokenwallet.CreatedAtGTE(*i.CreatedAtGTE))
+	}
+	if i.CreatedAtLT != nil {
+		predicates = append(predicates, usertokenwallet.CreatedAtLT(*i.CreatedAtLT))
+	}
+	if i.CreatedAtLTE != nil {
+		predicates = append(predicates, usertokenwallet.CreatedAtLTE(*i.CreatedAtLTE))
+	}
+	if i.UpdatedAt != nil {
+		predicates = append(predicates, usertokenwallet.UpdatedAtEQ(*i.UpdatedAt))
+	}
+	if i.UpdatedAtNEQ != nil {
+		predicates = append(predicates, usertokenwallet.UpdatedAtNEQ(*i.UpdatedAtNEQ))
+	}
+	if len(i.UpdatedAtIn) > 0 {
+		predicates = append(predicates, usertokenwallet.UpdatedAtIn(i.UpdatedAtIn...))
+	}
+	if len(i.UpdatedAtNotIn) > 0 {
+		predicates = append(predicates, usertokenwallet.UpdatedAtNotIn(i.UpdatedAtNotIn...))
+	}
+	if i.UpdatedAtGT != nil {
+		predicates = append(predicates, usertokenwallet.UpdatedAtGT(*i.UpdatedAtGT))
+	}
+	if i.UpdatedAtGTE != nil {
+		predicates = append(predicates, usertokenwallet.UpdatedAtGTE(*i.UpdatedAtGTE))
+	}
+	if i.UpdatedAtLT != nil {
+		predicates = append(predicates, usertokenwallet.UpdatedAtLT(*i.UpdatedAtLT))
+	}
+	if i.UpdatedAtLTE != nil {
+		predicates = append(predicates, usertokenwallet.UpdatedAtLTE(*i.UpdatedAtLTE))
+	}
+	if i.UserID != nil {
+		predicates = append(predicates, usertokenwallet.UserIDEQ(*i.UserID))
+	}
+	if i.UserIDNEQ != nil {
+		predicates = append(predicates, usertokenwallet.UserIDNEQ(*i.UserIDNEQ))
+	}
+	if len(i.UserIDIn) > 0 {
+		predicates = append(predicates, usertokenwallet.UserIDIn(i.UserIDIn...))
+	}
+	if len(i.UserIDNotIn) > 0 {
+		predicates = append(predicates, usertokenwallet.UserIDNotIn(i.UserIDNotIn...))
+	}
+	if i.UserIDGT != nil {
+		predicates = append(predicates, usertokenwallet.UserIDGT(*i.UserIDGT))
+	}
+	if i.UserIDGTE != nil {
+		predicates = append(predicates, usertokenwallet.UserIDGTE(*i.UserIDGTE))
+	}
+	if i.UserIDLT != nil {
+		predicates = append(predicates, usertokenwallet.UserIDLT(*i.UserIDLT))
+	}
+	if i.UserIDLTE != nil {
+		predicates = append(predicates, usertokenwallet.UserIDLTE(*i.UserIDLTE))
+	}
+	if i.BalanceTokens != nil {
+		predicates = append(predicates, usertokenwallet.BalanceTokensEQ(*i.BalanceTokens))
+	}
+	if i.BalanceTokensNEQ != nil {
+		predicates = append(predicates, usertokenwallet.BalanceTokensNEQ(*i.BalanceTokensNEQ))
+	}
+	if len(i.BalanceTokensIn) > 0 {
+		predicates = append(predicates, usertokenwallet.BalanceTokensIn(i.BalanceTokensIn...))
+	}
+	if len(i.BalanceTokensNotIn) > 0 {
+		predicates = append(predicates, usertokenwallet.BalanceTokensNotIn(i.BalanceTokensNotIn...))
+	}
+	if i.BalanceTokensGT != nil {
+		predicates = append(predicates, usertokenwallet.BalanceTokensGT(*i.BalanceTokensGT))
+	}
+	if i.BalanceTokensGTE != nil {
+		predicates = append(predicates, usertokenwallet.BalanceTokensGTE(*i.BalanceTokensGTE))
+	}
+	if i.BalanceTokensLT != nil {
+		predicates = append(predicates, usertokenwallet.BalanceTokensLT(*i.BalanceTokensLT))
+	}
+	if i.BalanceTokensLTE != nil {
+		predicates = append(predicates, usertokenwallet.BalanceTokensLTE(*i.BalanceTokensLTE))
+	}
+	if i.LifetimeCreditedTokens != nil {
+		predicates = append(predicates, usertokenwallet.LifetimeCreditedTokensEQ(*i.LifetimeCreditedTokens))
+	}
+	if i.LifetimeCreditedTokensNEQ != nil {
+		predicates = append(predicates, usertokenwallet.LifetimeCreditedTokensNEQ(*i.LifetimeCreditedTokensNEQ))
+	}
+	if len(i.LifetimeCreditedTokensIn) > 0 {
+		predicates = append(predicates, usertokenwallet.LifetimeCreditedTokensIn(i.LifetimeCreditedTokensIn...))
+	}
+	if len(i.LifetimeCreditedTokensNotIn) > 0 {
+		predicates = append(predicates, usertokenwallet.LifetimeCreditedTokensNotIn(i.LifetimeCreditedTokensNotIn...))
+	}
+	if i.LifetimeCreditedTokensGT != nil {
+		predicates = append(predicates, usertokenwallet.LifetimeCreditedTokensGT(*i.LifetimeCreditedTokensGT))
+	}
+	if i.LifetimeCreditedTokensGTE != nil {
+		predicates = append(predicates, usertokenwallet.LifetimeCreditedTokensGTE(*i.LifetimeCreditedTokensGTE))
+	}
+	if i.LifetimeCreditedTokensLT != nil {
+		predicates = append(predicates, usertokenwallet.LifetimeCreditedTokensLT(*i.LifetimeCreditedTokensLT))
+	}
+	if i.LifetimeCreditedTokensLTE != nil {
+		predicates = append(predicates, usertokenwallet.LifetimeCreditedTokensLTE(*i.LifetimeCreditedTokensLTE))
+	}
+	if i.LifetimeDebitedTokens != nil {
+		predicates = append(predicates, usertokenwallet.LifetimeDebitedTokensEQ(*i.LifetimeDebitedTokens))
+	}
+	if i.LifetimeDebitedTokensNEQ != nil {
+		predicates = append(predicates, usertokenwallet.LifetimeDebitedTokensNEQ(*i.LifetimeDebitedTokensNEQ))
+	}
+	if len(i.LifetimeDebitedTokensIn) > 0 {
+		predicates = append(predicates, usertokenwallet.LifetimeDebitedTokensIn(i.LifetimeDebitedTokensIn...))
+	}
+	if len(i.LifetimeDebitedTokensNotIn) > 0 {
+		predicates = append(predicates, usertokenwallet.LifetimeDebitedTokensNotIn(i.LifetimeDebitedTokensNotIn...))
+	}
+	if i.LifetimeDebitedTokensGT != nil {
+		predicates = append(predicates, usertokenwallet.LifetimeDebitedTokensGT(*i.LifetimeDebitedTokensGT))
+	}
+	if i.LifetimeDebitedTokensGTE != nil {
+		predicates = append(predicates, usertokenwallet.LifetimeDebitedTokensGTE(*i.LifetimeDebitedTokensGTE))
+	}
+	if i.LifetimeDebitedTokensLT != nil {
+		predicates = append(predicates, usertokenwallet.LifetimeDebitedTokensLT(*i.LifetimeDebitedTokensLT))
+	}
+	if i.LifetimeDebitedTokensLTE != nil {
+		predicates = append(predicates, usertokenwallet.LifetimeDebitedTokensLTE(*i.LifetimeDebitedTokensLTE))
+	}
+	if i.Version != nil {
+		predicates = append(predicates, usertokenwallet.VersionEQ(*i.Version))
+	}
+	if i.VersionNEQ != nil {
+		predicates = append(predicates, usertokenwallet.VersionNEQ(*i.VersionNEQ))
+	}
+	if len(i.VersionIn) > 0 {
+		predicates = append(predicates, usertokenwallet.VersionIn(i.VersionIn...))
+	}
+	if len(i.VersionNotIn) > 0 {
+		predicates = append(predicates, usertokenwallet.VersionNotIn(i.VersionNotIn...))
+	}
+	if i.VersionGT != nil {
+		predicates = append(predicates, usertokenwallet.VersionGT(*i.VersionGT))
+	}
+	if i.VersionGTE != nil {
+		predicates = append(predicates, usertokenwallet.VersionGTE(*i.VersionGTE))
+	}
+	if i.VersionLT != nil {
+		predicates = append(predicates, usertokenwallet.VersionLT(*i.VersionLT))
+	}
+	if i.VersionLTE != nil {
+		predicates = append(predicates, usertokenwallet.VersionLTE(*i.VersionLTE))
+	}
+
+	switch len(predicates) {
+	case 0:
+		return nil, ErrEmptyUserTokenWalletWhereInput
+	case 1:
+		return predicates[0], nil
+	default:
+		return usertokenwallet.And(predicates...), nil
 	}
 }

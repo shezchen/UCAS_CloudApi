@@ -105,6 +105,26 @@ func TotalTokens(v int64) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldTotalTokens, v))
 }
 
+// EffectiveTokens applies equality check predicate on the "effective_tokens" field. It's identical to EffectiveTokensEQ.
+func EffectiveTokens(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldEffectiveTokens, v))
+}
+
+// CacheReadTokensKnown applies equality check predicate on the "cache_read_tokens_known" field. It's identical to CacheReadTokensKnownEQ.
+func CacheReadTokensKnown(v bool) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldCacheReadTokensKnown, v))
+}
+
+// WalletConsumedTokens applies equality check predicate on the "wallet_consumed_tokens" field. It's identical to WalletConsumedTokensEQ.
+func WalletConsumedTokens(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldWalletConsumedTokens, v))
+}
+
+// DonorCreditTokens applies equality check predicate on the "donor_credit_tokens" field. It's identical to DonorCreditTokensEQ.
+func DonorCreditTokens(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldDonorCreditTokens, v))
+}
+
 // PromptAudioTokens applies equality check predicate on the "prompt_audio_tokens" field. It's identical to PromptAudioTokensEQ.
 func PromptAudioTokens(v int64) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldPromptAudioTokens, v))
@@ -548,6 +568,136 @@ func TotalTokensLT(v int64) predicate.UsageLog {
 // TotalTokensLTE applies the LTE predicate on the "total_tokens" field.
 func TotalTokensLTE(v int64) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldLTE(FieldTotalTokens, v))
+}
+
+// EffectiveTokensEQ applies the EQ predicate on the "effective_tokens" field.
+func EffectiveTokensEQ(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldEffectiveTokens, v))
+}
+
+// EffectiveTokensNEQ applies the NEQ predicate on the "effective_tokens" field.
+func EffectiveTokensNEQ(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldEffectiveTokens, v))
+}
+
+// EffectiveTokensIn applies the In predicate on the "effective_tokens" field.
+func EffectiveTokensIn(vs ...int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldEffectiveTokens, vs...))
+}
+
+// EffectiveTokensNotIn applies the NotIn predicate on the "effective_tokens" field.
+func EffectiveTokensNotIn(vs ...int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldEffectiveTokens, vs...))
+}
+
+// EffectiveTokensGT applies the GT predicate on the "effective_tokens" field.
+func EffectiveTokensGT(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldEffectiveTokens, v))
+}
+
+// EffectiveTokensGTE applies the GTE predicate on the "effective_tokens" field.
+func EffectiveTokensGTE(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldEffectiveTokens, v))
+}
+
+// EffectiveTokensLT applies the LT predicate on the "effective_tokens" field.
+func EffectiveTokensLT(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldEffectiveTokens, v))
+}
+
+// EffectiveTokensLTE applies the LTE predicate on the "effective_tokens" field.
+func EffectiveTokensLTE(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldEffectiveTokens, v))
+}
+
+// CacheReadTokensKnownEQ applies the EQ predicate on the "cache_read_tokens_known" field.
+func CacheReadTokensKnownEQ(v bool) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldCacheReadTokensKnown, v))
+}
+
+// CacheReadTokensKnownNEQ applies the NEQ predicate on the "cache_read_tokens_known" field.
+func CacheReadTokensKnownNEQ(v bool) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldCacheReadTokensKnown, v))
+}
+
+// WalletConsumedTokensEQ applies the EQ predicate on the "wallet_consumed_tokens" field.
+func WalletConsumedTokensEQ(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldWalletConsumedTokens, v))
+}
+
+// WalletConsumedTokensNEQ applies the NEQ predicate on the "wallet_consumed_tokens" field.
+func WalletConsumedTokensNEQ(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldWalletConsumedTokens, v))
+}
+
+// WalletConsumedTokensIn applies the In predicate on the "wallet_consumed_tokens" field.
+func WalletConsumedTokensIn(vs ...int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldWalletConsumedTokens, vs...))
+}
+
+// WalletConsumedTokensNotIn applies the NotIn predicate on the "wallet_consumed_tokens" field.
+func WalletConsumedTokensNotIn(vs ...int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldWalletConsumedTokens, vs...))
+}
+
+// WalletConsumedTokensGT applies the GT predicate on the "wallet_consumed_tokens" field.
+func WalletConsumedTokensGT(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldWalletConsumedTokens, v))
+}
+
+// WalletConsumedTokensGTE applies the GTE predicate on the "wallet_consumed_tokens" field.
+func WalletConsumedTokensGTE(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldWalletConsumedTokens, v))
+}
+
+// WalletConsumedTokensLT applies the LT predicate on the "wallet_consumed_tokens" field.
+func WalletConsumedTokensLT(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldWalletConsumedTokens, v))
+}
+
+// WalletConsumedTokensLTE applies the LTE predicate on the "wallet_consumed_tokens" field.
+func WalletConsumedTokensLTE(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldWalletConsumedTokens, v))
+}
+
+// DonorCreditTokensEQ applies the EQ predicate on the "donor_credit_tokens" field.
+func DonorCreditTokensEQ(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldDonorCreditTokens, v))
+}
+
+// DonorCreditTokensNEQ applies the NEQ predicate on the "donor_credit_tokens" field.
+func DonorCreditTokensNEQ(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldDonorCreditTokens, v))
+}
+
+// DonorCreditTokensIn applies the In predicate on the "donor_credit_tokens" field.
+func DonorCreditTokensIn(vs ...int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldDonorCreditTokens, vs...))
+}
+
+// DonorCreditTokensNotIn applies the NotIn predicate on the "donor_credit_tokens" field.
+func DonorCreditTokensNotIn(vs ...int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldDonorCreditTokens, vs...))
+}
+
+// DonorCreditTokensGT applies the GT predicate on the "donor_credit_tokens" field.
+func DonorCreditTokensGT(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldDonorCreditTokens, v))
+}
+
+// DonorCreditTokensGTE applies the GTE predicate on the "donor_credit_tokens" field.
+func DonorCreditTokensGTE(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldDonorCreditTokens, v))
+}
+
+// DonorCreditTokensLT applies the LT predicate on the "donor_credit_tokens" field.
+func DonorCreditTokensLT(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldDonorCreditTokens, v))
+}
+
+// DonorCreditTokensLTE applies the LTE predicate on the "donor_credit_tokens" field.
+func DonorCreditTokensLTE(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldDonorCreditTokens, v))
 }
 
 // PromptAudioTokensEQ applies the EQ predicate on the "prompt_audio_tokens" field.

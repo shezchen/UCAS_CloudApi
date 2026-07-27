@@ -39,6 +39,14 @@ const (
 	FieldCompletionTokens = "completion_tokens"
 	// FieldTotalTokens holds the string denoting the total_tokens field in the database.
 	FieldTotalTokens = "total_tokens"
+	// FieldEffectiveTokens holds the string denoting the effective_tokens field in the database.
+	FieldEffectiveTokens = "effective_tokens"
+	// FieldCacheReadTokensKnown holds the string denoting the cache_read_tokens_known field in the database.
+	FieldCacheReadTokensKnown = "cache_read_tokens_known"
+	// FieldWalletConsumedTokens holds the string denoting the wallet_consumed_tokens field in the database.
+	FieldWalletConsumedTokens = "wallet_consumed_tokens"
+	// FieldDonorCreditTokens holds the string denoting the donor_credit_tokens field in the database.
+	FieldDonorCreditTokens = "donor_credit_tokens"
 	// FieldPromptAudioTokens holds the string denoting the prompt_audio_tokens field in the database.
 	FieldPromptAudioTokens = "prompt_audio_tokens"
 	// FieldPromptCachedTokens holds the string denoting the prompt_cached_tokens field in the database.
@@ -111,6 +119,10 @@ var Columns = []string{
 	FieldPromptTokens,
 	FieldCompletionTokens,
 	FieldTotalTokens,
+	FieldEffectiveTokens,
+	FieldCacheReadTokensKnown,
+	FieldWalletConsumedTokens,
+	FieldDonorCreditTokens,
 	FieldPromptAudioTokens,
 	FieldPromptCachedTokens,
 	FieldPromptWriteCachedTokens,
@@ -159,6 +171,14 @@ var (
 	DefaultCompletionTokens int64
 	// DefaultTotalTokens holds the default value on creation for the "total_tokens" field.
 	DefaultTotalTokens int64
+	// DefaultEffectiveTokens holds the default value on creation for the "effective_tokens" field.
+	DefaultEffectiveTokens int64
+	// DefaultCacheReadTokensKnown holds the default value on creation for the "cache_read_tokens_known" field.
+	DefaultCacheReadTokensKnown bool
+	// DefaultWalletConsumedTokens holds the default value on creation for the "wallet_consumed_tokens" field.
+	DefaultWalletConsumedTokens int64
+	// DefaultDonorCreditTokens holds the default value on creation for the "donor_credit_tokens" field.
+	DefaultDonorCreditTokens int64
 	// DefaultPromptAudioTokens holds the default value on creation for the "prompt_audio_tokens" field.
 	DefaultPromptAudioTokens int64
 	// DefaultPromptCachedTokens holds the default value on creation for the "prompt_cached_tokens" field.
@@ -266,6 +286,26 @@ func ByCompletionTokens(opts ...sql.OrderTermOption) OrderOption {
 // ByTotalTokens orders the results by the total_tokens field.
 func ByTotalTokens(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldTotalTokens, opts...).ToFunc()
+}
+
+// ByEffectiveTokens orders the results by the effective_tokens field.
+func ByEffectiveTokens(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldEffectiveTokens, opts...).ToFunc()
+}
+
+// ByCacheReadTokensKnown orders the results by the cache_read_tokens_known field.
+func ByCacheReadTokensKnown(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCacheReadTokensKnown, opts...).ToFunc()
+}
+
+// ByWalletConsumedTokens orders the results by the wallet_consumed_tokens field.
+func ByWalletConsumedTokens(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldWalletConsumedTokens, opts...).ToFunc()
+}
+
+// ByDonorCreditTokens orders the results by the donor_credit_tokens field.
+func ByDonorCreditTokens(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldDonorCreditTokens, opts...).ToFunc()
 }
 
 // ByPromptAudioTokens orders the results by the prompt_audio_tokens field.

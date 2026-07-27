@@ -117,7 +117,21 @@ type CampusFriendLinkInput struct {
 	Description *string `json:"description,omitempty"`
 }
 
-// Privacy-safe campus leaderboard entry for recorded usage in a selected period.
+// Privacy-safe model popularity entry. `inputTokens` includes cache reads while
+// `effectiveTokens` excludes them. It contains no user, API key, channel,
+// request-content, cost, or credential dimensions.
+type CampusModelUsageLeaderboardEntry struct {
+	Rank                int     `json:"rank"`
+	ModelID             string  `json:"modelId"`
+	EffectiveTokens     float64 `json:"effectiveTokens"`
+	InputTokens         float64 `json:"inputTokens"`
+	CachedReadTokens    float64 `json:"cachedReadTokens"`
+	OutputTokens        float64 `json:"outputTokens"`
+	MeteredRequestCount int     `json:"meteredRequestCount"`
+}
+
+// Privacy-safe campus leaderboard entry for effective-token usage in a selected
+// Beijing calendar period. Effective tokens exclude cache-read input.
 // The public alias is stable only within the current project and does not expose
 // the underlying user, API key, channel, model, request content, or cost.
 type CampusUsageLeaderboardEntry struct {
@@ -577,7 +591,8 @@ type UpdateUserAgentPassThroughSettingsInput struct {
 }
 
 type UpdateUserDailyQuotaSettingsInput struct {
-	DailyTokenLimit int `json:"dailyTokenLimit"`
+	DailyTokenLimit  int `json:"dailyTokenLimit"`
+	WeeklyTokenLimit int `json:"weeklyTokenLimit"`
 }
 
 // Usage statistics grouped by user

@@ -200,7 +200,6 @@ func TestAuthHandlers_TwoPhaseCampusSignUp(t *testing.T) {
 		Only(fixture.setupCtx)
 	require.NoError(t, err)
 	require.Equal(t, "星河同学", created.Nickname)
-	require.Equal(t, int64(200_000_000), created.DailyTokenLimit)
 
 	defaultProject, err := fixture.client.Project.Query().Only(fixture.setupCtx)
 	require.NoError(t, err)

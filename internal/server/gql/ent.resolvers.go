@@ -790,6 +790,11 @@ func (r *threadResolver) ProjectID(ctx context.Context, obj *ent.Thread) (*objec
 }
 
 // ID is the resolver for the id field.
+func (r *tokenWalletLedgerResolver) ID(ctx context.Context, obj *ent.TokenWalletLedger) (*objects.GUID, error) {
+	panic(fmt.Errorf("not implemented: ID - id"))
+}
+
+// ID is the resolver for the id field.
 func (r *traceResolver) ID(ctx context.Context, obj *ent.Trace) (*objects.GUID, error) {
 	return &objects.GUID{
 		Type: ent.TypeTrace,
@@ -916,6 +921,11 @@ func (r *userRoleResolver) RoleID(ctx context.Context, obj *ent.UserRole) (*obje
 	}, nil
 }
 
+// ID is the resolver for the id field.
+func (r *userTokenWalletResolver) ID(ctx context.Context, obj *ent.UserTokenWallet) (*objects.GUID, error) {
+	panic(fmt.Errorf("not implemented: ID - id"))
+}
+
 // APIKey returns APIKeyResolver implementation.
 func (r *Resolver) APIKey() APIKeyResolver { return &aPIKeyResolver{r} }
 
@@ -988,6 +998,11 @@ func (r *Resolver) System() SystemResolver { return &systemResolver{r} }
 // Thread returns ThreadResolver implementation.
 func (r *Resolver) Thread() ThreadResolver { return &threadResolver{r} }
 
+// TokenWalletLedger returns TokenWalletLedgerResolver implementation.
+func (r *Resolver) TokenWalletLedger() TokenWalletLedgerResolver {
+	return &tokenWalletLedgerResolver{r}
+}
+
 // Trace returns TraceResolver implementation.
 func (r *Resolver) Trace() TraceResolver { return &traceResolver{r} }
 
@@ -1002,6 +1017,9 @@ func (r *Resolver) UserProject() UserProjectResolver { return &userProjectResolv
 
 // UserRole returns UserRoleResolver implementation.
 func (r *Resolver) UserRole() UserRoleResolver { return &userRoleResolver{r} }
+
+// UserTokenWallet returns UserTokenWalletResolver implementation.
+func (r *Resolver) UserTokenWallet() UserTokenWalletResolver { return &userTokenWalletResolver{r} }
 
 type aPIKeyResolver struct{ *Resolver }
 type aPIKeyProfileTemplateResolver struct{ *Resolver }
@@ -1023,8 +1041,10 @@ type requestExecutionResolver struct{ *Resolver }
 type roleResolver struct{ *Resolver }
 type systemResolver struct{ *Resolver }
 type threadResolver struct{ *Resolver }
+type tokenWalletLedgerResolver struct{ *Resolver }
 type traceResolver struct{ *Resolver }
 type usageLogResolver struct{ *Resolver }
 type userResolver struct{ *Resolver }
 type userProjectResolver struct{ *Resolver }
 type userRoleResolver struct{ *Resolver }
+type userTokenWalletResolver struct{ *Resolver }

@@ -120,6 +120,16 @@ func SetupRoutes(server *Server, handlers Handlers, client *ent.Client, services
 			handlers.CampusCatalog.GetResources,
 		)
 		adminGroup.GET(
+			"/campus/api-activity",
+			middleware.WithTimeout(server.Config.RequestTimeout),
+			handlers.CampusCatalog.GetAPIActivity,
+		)
+		adminGroup.POST(
+			"/campus/channels/:id/probe",
+			middleware.WithTimeout(server.Config.RequestTimeout),
+			handlers.CampusCatalog.PostChannelProbe,
+		)
+		adminGroup.GET(
 			"/campus/channel-model-capabilities",
 			middleware.WithTimeout(server.Config.RequestTimeout),
 			handlers.CampusCatalog.GetChannelModelCapabilities,

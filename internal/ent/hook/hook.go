@@ -249,6 +249,18 @@ func (f ThreadFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, erro
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ThreadMutation", m)
 }
 
+// The TokenWalletLedgerFunc type is an adapter to allow the use of ordinary
+// function as TokenWalletLedger mutator.
+type TokenWalletLedgerFunc func(context.Context, *ent.TokenWalletLedgerMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f TokenWalletLedgerFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.TokenWalletLedgerMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.TokenWalletLedgerMutation", m)
+}
+
 // The TraceFunc type is an adapter to allow the use of ordinary
 // function as Trace mutator.
 type TraceFunc func(context.Context, *ent.TraceMutation) (ent.Value, error)
@@ -307,6 +319,18 @@ func (f UserRoleFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, er
 		return f(ctx, mv)
 	}
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.UserRoleMutation", m)
+}
+
+// The UserTokenWalletFunc type is an adapter to allow the use of ordinary
+// function as UserTokenWallet mutator.
+type UserTokenWalletFunc func(context.Context, *ent.UserTokenWalletMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f UserTokenWalletFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.UserTokenWalletMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.UserTokenWalletMutation", m)
 }
 
 // Condition is a hook condition function.

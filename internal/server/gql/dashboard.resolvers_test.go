@@ -14,6 +14,7 @@ import (
 	"github.com/looplj/axonhub/internal/ent"
 	"github.com/looplj/axonhub/internal/ent/enttest"
 	"github.com/looplj/axonhub/internal/ent/project"
+	"github.com/looplj/axonhub/internal/ent/usagelog"
 	"github.com/looplj/axonhub/internal/ent/user"
 	"github.com/looplj/axonhub/internal/pkg/xtime"
 	"github.com/looplj/axonhub/internal/server/biz"
@@ -385,6 +386,25 @@ func TestCampusLeaderboardPeriod(t *testing.T) {
 	require.ErrorContains(t, err, "invalid campus leaderboard time window")
 }
 
+func TestCampusLeaderboardQuotaLimitMatchesSelectedPeriod(t *testing.T) {
+	settings := &biz.UserDailyQuotaSettings{
+		DailyTokenLimit:  16_000_000,
+		WeeklyTokenLimit: 64_000_000,
+	}
+
+	require.Equal(t, int64(16_000_000), campusLeaderboardQuotaLimit(settings, nil))
+	day := "day"
+	require.Equal(t, int64(16_000_000), campusLeaderboardQuotaLimit(settings, &day))
+	week := "week"
+	require.Equal(t, int64(64_000_000), campusLeaderboardQuotaLimit(settings, &week))
+	month := "month"
+	require.Equal(t, int64(-1), campusLeaderboardQuotaLimit(settings, &month))
+	require.Zero(t, campusLimitPercent(123, -1))
+
+	_, offset := time.Now().In(campusLeaderboardLocation).Zone()
+	require.Equal(t, 8*60*60, offset)
+}
+
 func TestQueryResolverCampusUsageLeaderboardPrivacyAndDeletedKeys(t *testing.T) {
 	client := enttest.NewEntClient(t, "sqlite3", "file:ent?mode=memory&_fk=0")
 	defer client.Close()
@@ -435,7 +455,7 @@ func TestQueryResolverCampusUsageLeaderboardPrivacyAndDeletedKeys(t *testing.T) 
 	require.NoError(t, err)
 
 	now := xtime.UTCNow()
-	createUsage := func(requestID, apiKeyID int, totalTokens int64, createdAt time.Time) {
+	createUsage := func(requestID, apiKeyID int, totalTokens int64, source usagelog.Source, createdAt time.Time) {
 		t.Helper()
 		_, createErr := client.UsageLog.Create().
 			SetRequestID(requestID).
@@ -444,14 +464,16 @@ func TestQueryResolverCampusUsageLeaderboardPrivacyAndDeletedKeys(t *testing.T) 
 			SetChannelID(1).
 			SetModelID("private-model-name").
 			SetFormat("openai/chat_completions").
+			SetSource(source).
 			SetTotalTokens(totalTokens).
 			SetCreatedAt(createdAt).
 			Save(setupCtx)
 		require.NoError(t, createErr)
 	}
-	createUsage(1, memberKey.ID, 25, now.Add(-time.Minute))
-	createUsage(2, memberKey.ID, 500, now.Add(-25*time.Hour))
-	createUsage(3, leaderKey.ID, 100, now.Add(-time.Minute))
+	createUsage(1, memberKey.ID, 25, usagelog.SourceAPI, now.Add(-time.Minute))
+	createUsage(2, memberKey.ID, 500, usagelog.SourceAPI, now.Add(-25*time.Hour))
+	createUsage(3, leaderKey.ID, 100, usagelog.SourceAPI, now.Add(-time.Minute))
+	createUsage(4, leaderKey.ID, 10_000, usagelog.SourceTest, now.Add(-time.Minute))
 
 	// The already-recorded usage must remain after the member rotates/deletes a key.
 	require.NoError(t, client.APIKey.DeleteOne(memberKey).Exec(setupCtx))
@@ -537,4 +559,114 @@ func TestQueryResolverCampusUsageLeaderboardPrivacyAndDeletedKeys(t *testing.T) 
 	require.Equal(t, []string{
 		"Rank", "DisplayName", "PublicAlias", "IsMe", "RecordedTokens", "MeteredRequestCount", "LimitPercent",
 	}, fieldNames)
+}
+
+func TestQueryResolverCampusModelUsageLeaderboardEffectiveTokensAndPrivacy(t *testing.T) {
+	client := enttest.NewEntClient(t, "sqlite3", "file:campus-model-leaderboard?mode=memory&_fk=0")
+	defer client.Close()
+
+	setupCtx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+	projectRow, err := client.Project.Create().
+		SetName("campus").
+		SetStatus(project.StatusActive).
+		Save(setupCtx)
+	require.NoError(t, err)
+	member, err := client.User.Create().
+		SetEmail("model-reader@mails.ucas.ac.cn").
+		SetPassword("password").
+		SetStatus(user.StatusActivated).
+		Save(setupCtx)
+	require.NoError(t, err)
+	_, err = client.UserProject.Create().
+		SetUserID(member.ID).
+		SetProjectID(projectRow.ID).
+		Save(setupCtx)
+	require.NoError(t, err)
+
+	now := xtime.UTCNow()
+	createUsage := func(
+		requestID int,
+		modelID string,
+		source usagelog.Source,
+		promptTokens, cachedReadTokens, outputTokens, totalTokens, effectiveTokens int64,
+		cacheReadTokensKnown bool,
+		createdAt time.Time,
+	) {
+		t.Helper()
+		create := client.UsageLog.Create().
+			SetRequestID(requestID).
+			SetProjectID(projectRow.ID).
+			SetChannelID(100 + requestID).
+			SetModelID(modelID).
+			SetFormat("openai/chat_completions").
+			SetSource(source).
+			SetPromptTokens(promptTokens).
+			SetPromptCachedTokens(cachedReadTokens).
+			SetCompletionTokens(outputTokens).
+			SetTotalTokens(totalTokens).
+			SetEffectiveTokens(effectiveTokens).
+			SetCreatedAt(createdAt)
+		if cacheReadTokensKnown {
+			create.SetCacheReadTokensKnown(true)
+		}
+		_, createErr := create.Save(setupCtx)
+		require.NoError(t, createErr)
+	}
+
+	// model-a: (100 - 40 + 20) + (5 - 0 + 5) = 90 effective.
+	createUsage(1, "model-a", usagelog.SourceAPI, 100, 40, 20, 120, 80, true, now.Add(-2*time.Minute))
+	createUsage(2, "model-a", usagelog.SourceAPI, 5, 0, 5, 10, 10, true, now.Add(-time.Minute))
+	// Legacy total-only rows remain visible through the shared effective-token
+	// SQL fallback after the additive migration.
+	createUsage(3, "model-b", usagelog.SourceAPI, 0, 0, 0, 50, 0, false, now.Add(-time.Minute))
+	// Probe/test and playground traffic must not affect the public ranking.
+	createUsage(4, "model-a", usagelog.SourceTest, 1_000, 0, 0, 1_000, 1_000, true, now.Add(-time.Minute))
+	createUsage(5, "model-b", usagelog.SourcePlayground, 1_000, 0, 0, 1_000, 1_000, true, now.Add(-time.Minute))
+	// Previous-day traffic is outside the default Beijing calendar-day window.
+	createUsage(6, "model-c", usagelog.SourceAPI, 500, 0, 0, 500, 500, true, now.Add(-25*time.Hour))
+
+	resolver := &queryResolver{&Resolver{client: client}}
+	memberCtx := contexts.WithProjectID(
+		contexts.WithUser(authz.NewUserContext(context.Background(), member.ID), member),
+		projectRow.ID,
+	)
+
+	entries, err := resolver.CampusModelUsageLeaderboard(memberCtx, nil)
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+
+	require.Equal(t, 1, entries[0].Rank)
+	require.Equal(t, "model-a", entries[0].ModelID)
+	require.Equal(t, float64(90), entries[0].EffectiveTokens)
+	require.Equal(t, float64(105), entries[0].InputTokens)
+	require.Equal(t, float64(40), entries[0].CachedReadTokens)
+	require.Equal(t, float64(25), entries[0].OutputTokens)
+	require.Equal(t, 2, entries[0].MeteredRequestCount)
+
+	require.Equal(t, 2, entries[1].Rank)
+	require.Equal(t, "model-b", entries[1].ModelID)
+	require.Equal(t, float64(50), entries[1].EffectiveTokens)
+	require.Equal(t, 1, entries[1].MeteredRequestCount)
+
+	entryType := reflect.TypeOf(CampusModelUsageLeaderboardEntry{})
+	fieldNames := make([]string, 0, entryType.NumField())
+	for i := range entryType.NumField() {
+		fieldNames = append(fieldNames, entryType.Field(i).Name)
+	}
+	require.Equal(t, []string{
+		"Rank", "ModelID", "EffectiveTokens", "InputTokens", "CachedReadTokens", "OutputTokens", "MeteredRequestCount",
+	}, fieldNames)
+
+	nonMember, err := client.User.Create().
+		SetEmail("model-outsider@mails.ucas.ac.cn").
+		SetPassword("password").
+		SetStatus(user.StatusActivated).
+		Save(setupCtx)
+	require.NoError(t, err)
+	nonMemberCtx := contexts.WithProjectID(
+		contexts.WithUser(authz.NewUserContext(context.Background(), nonMember.ID), nonMember),
+		projectRow.ID,
+	)
+	_, err = resolver.CampusModelUsageLeaderboard(nonMemberCtx, nil)
+	require.ErrorContains(t, err, "not a project member")
 }

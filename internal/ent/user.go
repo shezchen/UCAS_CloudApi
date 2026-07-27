@@ -42,7 +42,7 @@ type User struct {
 	Avatar string `json:"avatar,omitempty"`
 	// IsOwner holds the value of the "is_owner" field.
 	IsOwner bool `json:"is_owner,omitempty"`
-	// Maximum total tokens this user may consume per day
+	// Deprecated legacy value; ignored by runtime quota enforcement
 	DailyTokenLimit int64 `json:"daily_token_limit,omitempty"`
 	// User scopes in system level: write_channels, read_channels, add_users, read_users, etc.
 	Scopes []string `json:"scopes,omitempty"`

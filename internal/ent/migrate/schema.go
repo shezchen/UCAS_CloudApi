@@ -778,6 +778,43 @@ var (
 			},
 		},
 	}
+	// TokenWalletLedgersColumns holds the columns for the "token_wallet_ledgers" table.
+	TokenWalletLedgersColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "created_at", Type: field.TypeTime, Default: schema.Expr("CURRENT_TIMESTAMP")},
+		{Name: "updated_at", Type: field.TypeTime, Default: schema.Expr("CURRENT_TIMESTAMP")},
+		{Name: "user_id", Type: field.TypeInt},
+		{Name: "request_id", Type: field.TypeInt},
+		{Name: "usage_log_id", Type: field.TypeInt, Nullable: true},
+		{Name: "channel_id", Type: field.TypeInt, Nullable: true},
+		{Name: "channel_name_snapshot", Type: field.TypeString, Default: ""},
+		{Name: "kind", Type: field.TypeEnum, Enums: []string{"credit", "debit"}},
+		{Name: "amount_tokens", Type: field.TypeInt64},
+		{Name: "effective_tokens_snapshot", Type: field.TypeInt64, Default: 0},
+	}
+	// TokenWalletLedgersTable holds the schema information for the "token_wallet_ledgers" table.
+	TokenWalletLedgersTable = &schema.Table{
+		Name:       "token_wallet_ledgers",
+		Columns:    TokenWalletLedgersColumns,
+		PrimaryKey: []*schema.Column{TokenWalletLedgersColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "token_wallet_ledger_by_request_user_kind",
+				Unique:  true,
+				Columns: []*schema.Column{TokenWalletLedgersColumns[4], TokenWalletLedgersColumns[3], TokenWalletLedgersColumns[8]},
+			},
+			{
+				Name:    "token_wallet_ledger_by_user_created_at",
+				Unique:  false,
+				Columns: []*schema.Column{TokenWalletLedgersColumns[3], TokenWalletLedgersColumns[1]},
+			},
+			{
+				Name:    "token_wallet_ledger_by_channel_created_at",
+				Unique:  false,
+				Columns: []*schema.Column{TokenWalletLedgersColumns[6], TokenWalletLedgersColumns[1]},
+			},
+		},
+	}
 	// TracesColumns holds the columns for the "traces" table.
 	TracesColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt, Increment: true},
@@ -834,6 +871,10 @@ var (
 		{Name: "prompt_tokens", Type: field.TypeInt64, Default: 0},
 		{Name: "completion_tokens", Type: field.TypeInt64, Default: 0},
 		{Name: "total_tokens", Type: field.TypeInt64, Default: 0},
+		{Name: "effective_tokens", Type: field.TypeInt64, Default: 0},
+		{Name: "cache_read_tokens_known", Type: field.TypeBool, Default: false},
+		{Name: "wallet_consumed_tokens", Type: field.TypeInt64, Default: 0},
+		{Name: "donor_credit_tokens", Type: field.TypeInt64, Default: 0},
 		{Name: "prompt_audio_tokens", Type: field.TypeInt64, Nullable: true, Default: 0},
 		{Name: "prompt_cached_tokens", Type: field.TypeInt64, Nullable: true, Default: 0},
 		{Name: "prompt_write_cached_tokens", Type: field.TypeInt64, Nullable: true, Default: 0},
@@ -860,29 +901,29 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "usage_logs_channels_usage_logs",
-				Columns:    []*schema.Column{UsageLogsColumns[22]},
+				Columns:    []*schema.Column{UsageLogsColumns[26]},
 				RefColumns: []*schema.Column{ChannelsColumns[0]},
 				OnDelete:   schema.SetNull,
 			},
 			{
 				Symbol:     "usage_logs_projects_usage_logs",
-				Columns:    []*schema.Column{UsageLogsColumns[23]},
+				Columns:    []*schema.Column{UsageLogsColumns[27]},
 				RefColumns: []*schema.Column{ProjectsColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
 			{
 				Symbol:     "usage_logs_requests_usage_logs",
-				Columns:    []*schema.Column{UsageLogsColumns[24]},
+				Columns:    []*schema.Column{UsageLogsColumns[28]},
 				RefColumns: []*schema.Column{RequestsColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
 		},
 		Indexes: []*schema.Index{
-			{
-				Name:    "usage_logs_by_request_id",
-				Unique:  false,
-				Columns: []*schema.Column{UsageLogsColumns[24]},
-			},
+				{
+					Name:    "usage_logs_by_request_id",
+					Unique:  false,
+					Columns: []*schema.Column{UsageLogsColumns[28]},
+				},
 			{
 				Name:    "usage_logs_by_created_at",
 				Unique:  false,
@@ -896,12 +937,12 @@ var (
 			{
 				Name:    "usage_logs_by_project_id_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{UsageLogsColumns[23], UsageLogsColumns[1]},
+				Columns: []*schema.Column{UsageLogsColumns[27], UsageLogsColumns[1]},
 			},
 			{
 				Name:    "usage_logs_by_channel_id_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{UsageLogsColumns[22], UsageLogsColumns[1]},
+				Columns: []*schema.Column{UsageLogsColumns[26], UsageLogsColumns[1]},
 			},
 			{
 				Name:    "usage_logs_by_api_key_id_created_at",
@@ -1023,6 +1064,30 @@ var (
 			},
 		},
 	}
+	// UserTokenWalletsColumns holds the columns for the "user_token_wallets" table.
+	UserTokenWalletsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "created_at", Type: field.TypeTime, Default: schema.Expr("CURRENT_TIMESTAMP")},
+		{Name: "updated_at", Type: field.TypeTime, Default: schema.Expr("CURRENT_TIMESTAMP")},
+		{Name: "user_id", Type: field.TypeInt},
+		{Name: "balance_tokens", Type: field.TypeInt64, Default: 0},
+		{Name: "lifetime_credited_tokens", Type: field.TypeInt64, Default: 0},
+		{Name: "lifetime_debited_tokens", Type: field.TypeInt64, Default: 0},
+		{Name: "version", Type: field.TypeInt64, Default: 0},
+	}
+	// UserTokenWalletsTable holds the schema information for the "user_token_wallets" table.
+	UserTokenWalletsTable = &schema.Table{
+		Name:       "user_token_wallets",
+		Columns:    UserTokenWalletsColumns,
+		PrimaryKey: []*schema.Column{UserTokenWalletsColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "user_token_wallets_by_user_id",
+				Unique:  true,
+				Columns: []*schema.Column{UserTokenWalletsColumns[3]},
+			},
+		},
+	}
 	// ProjectPromptsColumns holds the columns for the "project_prompts" table.
 	ProjectPromptsColumns = []*schema.Column{
 		{Name: "project_id", Type: field.TypeInt},
@@ -1070,11 +1135,13 @@ var (
 		RolesTable,
 		SystemsTable,
 		ThreadsTable,
+		TokenWalletLedgersTable,
 		TracesTable,
 		UsageLogsTable,
 		UsersTable,
 		UserProjectsTable,
 		UserRolesTable,
+		UserTokenWalletsTable,
 		ProjectPromptsTable,
 	}
 )

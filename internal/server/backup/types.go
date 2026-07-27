@@ -6,6 +6,7 @@ import (
 
 	"github.com/looplj/axonhub/internal/ent"
 	"github.com/looplj/axonhub/internal/ent/request"
+	"github.com/looplj/axonhub/internal/ent/tokenwalletledger"
 	"github.com/looplj/axonhub/internal/ent/usagelog"
 	"github.com/looplj/axonhub/internal/objects"
 )
@@ -20,6 +21,8 @@ type BackupData struct {
 	APIKeys            []*BackupAPIKey            `json:"api_keys,omitempty"`
 	UsageRequests      []*BackupUsageRequest      `json:"usage_requests,omitempty"`
 	UsageLogs          []*BackupUsageLog          `json:"usage_logs,omitempty"`
+	TokenWallets       []*BackupUserTokenWallet   `json:"token_wallets,omitempty"`
+	TokenWalletLedgers []*BackupTokenWalletLedger `json:"token_wallet_ledgers,omitempty"`
 }
 
 type BackupProject struct {
@@ -127,6 +130,43 @@ type BackupUsageLog struct {
 	APIKeyKey   string `json:"api_key_key,omitempty"`
 }
 
+// BackupUserTokenWallet is the materialized state of a permanent donation
+// wallet. UserEmail is the stable restore identity; UserID is retained only as
+// a legacy fallback and for correlating wallet and ledger rows in this backup.
+type BackupUserTokenWallet struct {
+	ID                     int       `json:"id,omitempty"`
+	CreatedAt              time.Time `json:"created_at,omitzero"`
+	UpdatedAt              time.Time `json:"updated_at,omitzero"`
+	UserID                 int       `json:"user_id"`
+	UserEmail              string    `json:"user_email,omitempty"`
+	BalanceTokens          int64     `json:"balance_tokens"`
+	LifetimeCreditedTokens int64     `json:"lifetime_credited_tokens"`
+	LifetimeDebitedTokens  int64     `json:"lifetime_debited_tokens"`
+	Version                int64     `json:"version"`
+}
+
+// BackupTokenWalletLedger is the append-only source of wallet balance
+// changes. The reference snapshots allow IDs to be safely remapped on restore
+// without serializing request bodies, API keys, credentials, or other secrets.
+type BackupTokenWalletLedger struct {
+	ID                      int                    `json:"id,omitempty"`
+	CreatedAt               time.Time              `json:"created_at,omitzero"`
+	UpdatedAt               time.Time              `json:"updated_at,omitzero"`
+	UserID                  int                    `json:"user_id"`
+	UserEmail               string                 `json:"user_email,omitempty"`
+	RequestID               int                    `json:"request_id"`
+	RequestCreatedAt        time.Time              `json:"request_created_at,omitzero"`
+	RequestExternalID       string                 `json:"request_external_id,omitempty"`
+	UsageLogID              int                    `json:"usage_log_id,omitempty"`
+	UsageRequestID          int                    `json:"usage_request_id,omitempty"`
+	ChannelID               int                    `json:"channel_id,omitempty"`
+	ChannelName             string                 `json:"channel_name,omitempty"`
+	ChannelNameSnapshot     string                 `json:"channel_name_snapshot,omitempty"`
+	Kind                    tokenwalletledger.Kind `json:"kind"`
+	AmountTokens            int64                  `json:"amount_tokens"`
+	EffectiveTokensSnapshot int64                  `json:"effective_tokens_snapshot"`
+}
+
 func (l BackupUsageLog) MarshalJSON() ([]byte, error) {
 	type usageLogData struct {
 		ID                                 int                `json:"id,omitempty"`
@@ -139,6 +179,10 @@ func (l BackupUsageLog) MarshalJSON() ([]byte, error) {
 		PromptTokens                       int64              `json:"prompt_tokens,omitempty"`
 		CompletionTokens                   int64              `json:"completion_tokens,omitempty"`
 		TotalTokens                        int64              `json:"total_tokens,omitempty"`
+		EffectiveTokens                    int64              `json:"effective_tokens,omitempty"`
+		CacheReadTokensKnown               bool               `json:"cache_read_tokens_known,omitempty"`
+		WalletConsumedTokens               int64              `json:"wallet_consumed_tokens,omitempty"`
+		DonorCreditTokens                  int64              `json:"donor_credit_tokens,omitempty"`
 		PromptAudioTokens                  int64              `json:"prompt_audio_tokens,omitempty"`
 		PromptCachedTokens                 int64              `json:"prompt_cached_tokens,omitempty"`
 		PromptWriteCachedTokens            int64              `json:"prompt_write_cached_tokens,omitempty"`
@@ -169,6 +213,10 @@ func (l BackupUsageLog) MarshalJSON() ([]byte, error) {
 		PromptTokens:                       l.PromptTokens,
 		CompletionTokens:                   l.CompletionTokens,
 		TotalTokens:                        l.TotalTokens,
+		EffectiveTokens:                    l.EffectiveTokens,
+		CacheReadTokensKnown:               l.CacheReadTokensKnown,
+		WalletConsumedTokens:               l.WalletConsumedTokens,
+		DonorCreditTokens:                  l.DonorCreditTokens,
 		PromptAudioTokens:                  l.PromptAudioTokens,
 		PromptCachedTokens:                 l.PromptCachedTokens,
 		PromptWriteCachedTokens:            l.PromptWriteCachedTokens,
@@ -190,10 +238,11 @@ func (l BackupUsageLog) MarshalJSON() ([]byte, error) {
 }
 
 const (
-	BackupVersion   = "1.3"
+	BackupVersion   = "1.4"
 	BackupVersionV1 = "1.0"
 	BackupVersionV2 = "1.1"
 	BackupVersionV3 = "1.2"
+	BackupVersionV4 = "1.3"
 )
 
 type BackupOptions struct {

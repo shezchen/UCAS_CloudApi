@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
 
+	"entgo.io/ent/dialect/sql"
 	"go.uber.org/fx"
 
 	"github.com/looplj/axonhub/internal/authz"
@@ -18,7 +20,12 @@ import (
 	"github.com/looplj/axonhub/internal/ent"
 	"github.com/looplj/axonhub/internal/ent/apikey"
 	"github.com/looplj/axonhub/internal/ent/channel"
+	"github.com/looplj/axonhub/internal/ent/channelprobe"
 	"github.com/looplj/axonhub/internal/ent/project"
+	"github.com/looplj/axonhub/internal/ent/request"
+	"github.com/looplj/axonhub/internal/ent/requestexecution"
+	"github.com/looplj/axonhub/internal/ent/schema/schematype"
+	"github.com/looplj/axonhub/internal/ent/usagelog"
 	"github.com/looplj/axonhub/internal/ent/user"
 	"github.com/looplj/axonhub/internal/ent/userproject"
 	"github.com/looplj/axonhub/internal/objects"
@@ -46,11 +53,14 @@ type CampusCatalogServiceParams struct {
 	Ent            *ent.Client
 	ModelService   *ModelService
 	ChannelService *ChannelService
+	QuotaService   *QuotaService
 }
 
 func NewCampusCatalogService(params CampusCatalogServiceParams) *CampusCatalogService {
 	return &CampusCatalogService{
 		client:                             params.Ent,
+		quotaService:                       params.QuotaService,
+		walletService:                      NewTokenWalletService(params.Ent),
 		listEnabledModels:                  params.ModelService.ListEnabledModels,
 		resolveChannelModelFacade:          params.ModelService.ResolveChannelModelFacade,
 		updateChannelModelMetadataOverride: params.ChannelService.UpdateChannelModelMetadataOverride,
@@ -59,6 +69,8 @@ func NewCampusCatalogService(params CampusCatalogServiceParams) *CampusCatalogSe
 
 type CampusCatalogService struct {
 	client                             *ent.Client
+	quotaService                       *QuotaService
+	walletService                      *TokenWalletService
 	listEnabledModels                  func(context.Context) ([]ModelFacade, error)
 	resolveChannelModelFacade          func(*Channel, ChannelModelEntry) ModelFacade
 	updateChannelModelMetadataOverride func(context.Context, int, int, string, *objects.ModelMetadataPatch) (*ent.Channel, error)
@@ -67,10 +79,49 @@ type CampusCatalogService struct {
 // CampusResources is a deliberately narrow public projection. Never replace
 // these DTOs with Ent entities: API keys and channels carry sensitive fields.
 type CampusResources struct {
-	Models       []string                `json:"models"`
-	ModelDetails []CampusModelDetail     `json:"modelDetails"`
-	APIKeys      []CampusAPIKeyResources `json:"apiKeys"`
-	Channels     []CampusChannelResource `json:"channels"`
+	Models        []string                `json:"models"`
+	ModelDetails  []CampusModelDetail     `json:"modelDetails"`
+	APIKeys       []CampusAPIKeyResources `json:"apiKeys"`
+	Channels      []CampusChannelResource `json:"channels"`
+	UsageOverview *CampusUsageOverview    `json:"usageOverview,omitempty"`
+}
+
+type CampusUsageOverview struct {
+	AccountingMethod string                  `json:"accountingMethod"`
+	Daily            CampusQuotaPeriod       `json:"daily"`
+	Weekly           CampusQuotaPeriod       `json:"weekly"`
+	Wallet           CampusWalletOverview    `json:"wallet"`
+	Tokens           CampusTokenOverview     `json:"tokens"`
+	Donations        []CampusDonationBenefit `json:"donations"`
+}
+
+type CampusQuotaPeriod struct {
+	Limit     int64     `json:"limit"`
+	Used      int64     `json:"used"`
+	Remaining int64     `json:"remaining"`
+	ResetAt   time.Time `json:"resetAt"`
+}
+
+type CampusWalletOverview struct {
+	Balance        int64 `json:"balance"`
+	LifetimeEarned int64 `json:"lifetimeEarned"`
+	LifetimeSpent  int64 `json:"lifetimeSpent"`
+}
+
+type CampusTokenOverview struct {
+	Input     int64 `json:"input"`
+	CacheRead int64 `json:"cacheRead"`
+	Output    int64 `json:"output"`
+	Effective int64 `json:"effective"`
+}
+
+type CampusDonationBenefit struct {
+	ChannelID            string     `json:"channelId"`
+	Name                 string     `json:"name"`
+	ExpiresAt            *time.Time `json:"expiresAt,omitempty"`
+	EffectiveTokens      int64      `json:"effectiveTokens"`
+	RewardEligibleTokens int64      `json:"rewardEligibleTokens"`
+	CreditTokens         int64      `json:"creditTokens"`
 }
 
 type CampusAPIKeyResources struct {
@@ -116,14 +167,59 @@ type UpdateCampusChannelModelCapabilitiesInput struct {
 }
 
 type CampusChannelResource struct {
-	Name        string     `json:"name"`
-	Provider    string     `json:"provider"`
-	Source      string     `json:"source"`
-	Description string     `json:"description,omitempty"`
-	Contributor string     `json:"contributor"`
-	Status      string     `json:"status"`
-	ExpiresAt   *time.Time `json:"expiresAt,omitempty"`
-	ModelCount  int        `json:"modelCount"`
+	ID          string               `json:"id"`
+	Name        string               `json:"name"`
+	Provider    string               `json:"provider"`
+	Source      string               `json:"source"`
+	Description string               `json:"description,omitempty"`
+	Contributor string               `json:"contributor"`
+	Status      string               `json:"status"`
+	ExpiresAt   *time.Time           `json:"expiresAt,omitempty"`
+	ModelCount  int                  `json:"modelCount"`
+	CanProbe    bool                 `json:"canProbe"`
+	Health      *CampusChannelHealth `json:"health,omitempty"`
+}
+
+type CampusChannelHealth struct {
+	State               string     `json:"state"`
+	RecentSuccessRate   float64    `json:"recentSuccessRate"`
+	RecentRequestCount  int        `json:"recentRequestCount"`
+	LastCheckedAt       *time.Time `json:"lastCheckedAt,omitempty"`
+	LastSuccessAt       *time.Time `json:"lastSuccessAt,omitempty"`
+	LastFailureCategory string     `json:"lastFailureCategory,omitempty"`
+}
+
+type CampusAPIActivity struct {
+	WindowStartedAt time.Time                `json:"windowStartedAt"`
+	APIKeys         []CampusAPIActivityKey   `json:"apiKeys"`
+	Events          []CampusAPIActivityEvent `json:"events"`
+}
+
+type CampusAPIActivityKey struct {
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	Suffix           string `json:"suffix"`
+	InputTokens      int64  `json:"inputTokens"`
+	CachedReadTokens int64  `json:"cachedReadTokens"`
+	OutputTokens     int64  `json:"outputTokens"`
+	EffectiveTokens  int64  `json:"effectiveTokens"`
+	SuccessCount     int    `json:"successCount"`
+	ErrorCount       int    `json:"errorCount"`
+	LastStatus       string `json:"lastStatus"`
+}
+
+type CampusAPIActivityEvent struct {
+	RequestID     string    `json:"requestId"`
+	APIKeyID      string    `json:"apiKeyId"`
+	APIKeyName    string    `json:"apiKeyName"`
+	APIKeySuffix  string    `json:"apiKeySuffix"`
+	Model         string    `json:"model"`
+	Status        string    `json:"status"`
+	StatusCode    *int      `json:"statusCode,omitempty"`
+	ErrorCategory string    `json:"errorCategory,omitempty"`
+	ErrorMessage  string    `json:"errorMessage,omitempty"`
+	LatencyMs     *int64    `json:"latencyMs,omitempty"`
+	CreatedAt     time.Time `json:"createdAt"`
 }
 
 // GetResources returns the effective model names for the current user's own
@@ -259,9 +355,179 @@ func (svc *CampusCatalogService) GetResources(ctx context.Context) (*CampusResou
 		if err != nil {
 			return nil, err
 		}
+		resources.UsageOverview, err = svc.campusUsageOverview(bypassCtx, currentUser.ID)
+		if err != nil {
+			return nil, err
+		}
 
 		return resources, nil
 	})
+}
+
+func (svc *CampusCatalogService) campusUsageOverview(ctx context.Context, userID int) (*CampusUsageOverview, error) {
+	if svc.quotaService == nil || svc.walletService == nil {
+		return nil, nil
+	}
+
+	quota, err := svc.quotaService.AccountQuotaOverview(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("load campus account quota overview: %w", err)
+	}
+
+	result := &CampusUsageOverview{
+		AccountingMethod: "effective=input-cache_read+output;cache_write_counted;unknown_cache_counted_as_input",
+		Daily: CampusQuotaPeriod{
+			Limit:     quota.Daily.LimitTokens,
+			Used:      quota.Daily.UsedTokens,
+			Remaining: quota.Daily.RemainingTokens,
+			ResetAt:   quota.Daily.ResetAt,
+		},
+		Weekly: CampusQuotaPeriod{
+			Limit:     quota.Weekly.LimitTokens,
+			Used:      quota.Weekly.UsedTokens,
+			Remaining: quota.Weekly.RemainingTokens,
+			ResetAt:   quota.Weekly.ResetAt,
+		},
+		Wallet: CampusWalletOverview{
+			Balance:        quota.Wallet.BalanceTokens,
+			LifetimeEarned: quota.Wallet.LifetimeCreditedTokens,
+			LifetimeSpent:  quota.Wallet.LifetimeDebitedTokens,
+		},
+		Donations: []CampusDonationBenefit{},
+	}
+
+	apiKeyIDs, err := svc.client.APIKey.Query().
+		Where(apikey.UserIDEQ(userID)).
+		IDs(schematype.SkipSoftDelete(ctx))
+	if err != nil {
+		return nil, fmt.Errorf("list campus account API keys for usage overview: %w", err)
+	}
+	if len(apiKeyIDs) > 0 {
+		type tokenRow struct {
+			Input     int64 `json:"input_tokens"`
+			CacheRead int64 `json:"cache_read_tokens"`
+			Output    int64 `json:"output_tokens"`
+			Effective int64 `json:"effective_tokens"`
+		}
+		var rows []tokenRow
+		query := svc.client.UsageLog.Query().
+			Where(
+				usagelog.APIKeyIDIn(apiKeyIDs...),
+				usagelog.SourceNEQ(usagelog.SourceTest),
+			)
+		if quota.Daily.Window.Start != nil {
+			query = query.Where(usagelog.CreatedAtGTE(*quota.Daily.Window.Start))
+		}
+		if quota.Daily.Window.End != nil {
+			query = query.Where(usagelog.CreatedAtLT(*quota.Daily.Window.End))
+		}
+		if err := query.Modify(func(selector *sql.Selector) {
+			selector.Select(
+				sql.As(fmt.Sprintf("COALESCE(SUM(%s), 0)", selector.C(usagelog.FieldPromptTokens)), "input_tokens"),
+				sql.As(fmt.Sprintf("COALESCE(SUM(%s), 0)", selector.C(usagelog.FieldPromptCachedTokens)), "cache_read_tokens"),
+				sql.As(fmt.Sprintf("COALESCE(SUM(%s), 0)", selector.C(usagelog.FieldCompletionTokens)), "output_tokens"),
+				sql.As(fmt.Sprintf("COALESCE(SUM(%s), 0)", effectiveTokensSQL(selector)), "effective_tokens"),
+			)
+		}).Scan(ctx, &rows); err != nil {
+			return nil, fmt.Errorf("aggregate campus account daily tokens: %w", err)
+		}
+		if len(rows) > 0 {
+			result.Tokens = CampusTokenOverview{
+				Input:     max(rows[0].Input, int64(0)),
+				CacheRead: max(rows[0].CacheRead, int64(0)),
+				Output:    max(rows[0].Output, int64(0)),
+				Effective: max(rows[0].Effective, int64(0)),
+			}
+		}
+	}
+
+	donations, err := svc.campusDonationBenefits(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	result.Donations = donations
+
+	return result, nil
+}
+
+func (svc *CampusCatalogService) campusDonationBenefits(ctx context.Context, userID int) ([]CampusDonationBenefit, error) {
+	ownedChannels, err := svc.client.Channel.Query().
+		Where(channel.UserIDEQ(userID)).
+		Select(channel.FieldID, channel.FieldName, channel.FieldExpiresAt).
+		Order(ent.Asc(channel.FieldName), ent.Asc(channel.FieldID)).
+		All(schematype.SkipSoftDelete(ctx))
+	if err != nil {
+		return nil, fmt.Errorf("list own donated channels for benefits: %w", err)
+	}
+	if len(ownedChannels) == 0 {
+		return []CampusDonationBenefit{}, nil
+	}
+
+	startedAt, err := svc.walletService.EnsureStartedAt(ctx, time.Now().UTC())
+	if err != nil {
+		return nil, fmt.Errorf("load donation wallet cutover: %w", err)
+	}
+
+	channelIDs := make([]int, 0, len(ownedChannels))
+	for _, ch := range ownedChannels {
+		channelIDs = append(channelIDs, ch.ID)
+	}
+
+	type aggregateRow struct {
+		ChannelID            int   `json:"channel_id"`
+		EffectiveTokens      int64 `json:"effective_tokens"`
+		RewardEligibleTokens int64 `json:"reward_eligible_tokens"`
+		CreditTokens         int64 `json:"credit_tokens"`
+	}
+	var rows []aggregateRow
+	if err := svc.client.UsageLog.Query().
+		Where(
+			usagelog.ChannelIDIn(channelIDs...),
+			usagelog.SourceNEQ(usagelog.SourceTest),
+			usagelog.CreatedAtGTE(startedAt),
+		).
+		Modify(func(selector *sql.Selector) {
+			effective := effectiveTokensSQL(selector)
+			donorCredit := selector.C(usagelog.FieldDonorCreditTokens)
+			selector.
+				Select(
+					selector.C(usagelog.FieldChannelID),
+					sql.As(fmt.Sprintf("COALESCE(SUM(%s), 0)", effective), "effective_tokens"),
+					sql.As(
+						fmt.Sprintf(
+							"COALESCE(SUM(CASE WHEN COALESCE(%s, 0) > 0 THEN %s ELSE 0 END), 0)",
+							donorCredit,
+							effective,
+						),
+						"reward_eligible_tokens",
+					),
+					sql.As(fmt.Sprintf("COALESCE(SUM(%s), 0)", donorCredit), "credit_tokens"),
+				).
+				GroupBy(selector.C(usagelog.FieldChannelID))
+		}).
+		Scan(ctx, &rows); err != nil {
+		return nil, fmt.Errorf("aggregate own donated channel benefits: %w", err)
+	}
+
+	byChannelID := make(map[int]aggregateRow, len(rows))
+	for _, row := range rows {
+		byChannelID[row.ChannelID] = row
+	}
+
+	result := make([]CampusDonationBenefit, 0, len(ownedChannels))
+	for _, ch := range ownedChannels {
+		row := byChannelID[ch.ID]
+		result = append(result, CampusDonationBenefit{
+			ChannelID:            strconv.Itoa(ch.ID),
+			Name:                 ch.Name,
+			ExpiresAt:            ch.ExpiresAt,
+			EffectiveTokens:      max(row.EffectiveTokens, int64(0)),
+			RewardEligibleTokens: max(row.RewardEligibleTokens, int64(0)),
+			CreditTokens:         max(row.CreditTokens, int64(0)),
+		})
+	}
+
+	return result, nil
 }
 
 func (svc *CampusCatalogService) verifyCampusProjectAccess(ctx context.Context, currentUser *ent.User, projectID int) (*ent.Project, error) {
@@ -532,9 +798,19 @@ func (svc *CampusCatalogService) listPublicChannels(ctx context.Context, project
 		return nil, fmt.Errorf("query public campus channels: %w", err)
 	}
 
+	channelIDs := make([]int, 0, len(channels))
+	for _, ch := range channels {
+		channelIDs = append(channelIDs, ch.ID)
+	}
+	healthByChannel, err := svc.channelHealthMap(ctx, channelIDs, now)
+	if err != nil {
+		return nil, err
+	}
+
 	result := make([]CampusChannelResource, 0, len(channels))
 	for _, ch := range channels {
 		resource := CampusChannelResource{
+			ID:          strconv.Itoa(ch.ID),
 			Name:        ch.Name,
 			Provider:    ch.Type.String(),
 			Source:      "project",
@@ -542,6 +818,14 @@ func (svc *CampusCatalogService) listPublicChannels(ctx context.Context, project
 			Status:      ch.Status.String(),
 			ExpiresAt:   ch.ExpiresAt,
 			ModelCount:  uniqueNonEmptyCount(ch.SupportedModels),
+			CanProbe:    ch.Status == channel.StatusEnabled && firstCampusProbeModel(ch) != "",
+			Health:      healthByChannel[ch.ID],
+		}
+		if ch.Status != channel.StatusEnabled {
+			resource.Health = &CampusChannelHealth{
+				State:               "unhealthy",
+				LastFailureCategory: "administratively_disabled",
+			}
 		}
 
 		if ch.UserID != nil {
@@ -559,6 +843,420 @@ func (svc *CampusCatalogService) listPublicChannels(ctx context.Context, project
 	}
 
 	return result, nil
+}
+
+func firstCampusProbeModel(ch *ent.Channel) string {
+	if ch == nil {
+		return ""
+	}
+	for _, modelID := range ch.SupportedModels {
+		if modelID = strings.TrimSpace(modelID); modelID != "" {
+			return modelID
+		}
+	}
+
+	return strings.TrimSpace(ch.DefaultTestModel)
+}
+
+func (svc *CampusCatalogService) channelHealthMap(
+	ctx context.Context,
+	channelIDs []int,
+	now time.Time,
+) (map[int]*CampusChannelHealth, error) {
+	result := make(map[int]*CampusChannelHealth, len(channelIDs))
+	if len(channelIDs) == 0 {
+		return result, nil
+	}
+
+	for _, channelID := range channelIDs {
+		result[channelID] = &CampusChannelHealth{State: "unknown"}
+	}
+
+	cutoff := now.Add(-6 * time.Hour)
+	probes, err := svc.client.ChannelProbe.Query().
+		Where(
+			channelprobe.ChannelIDIn(channelIDs...),
+			channelprobe.TimestampGTE(cutoff.Unix()),
+		).
+		Order(ent.Asc(channelprobe.FieldTimestamp), ent.Asc(channelprobe.FieldID)).
+		All(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("query public channel health: %w", err)
+	}
+
+	type healthAccumulator struct {
+		total         int
+		success       int
+		lastPoint     *ent.ChannelProbe
+		previousPoint *ent.ChannelProbe
+		lastSuccessAt *time.Time
+	}
+	accumulators := make(map[int]*healthAccumulator, len(channelIDs))
+	for _, probe := range probes {
+		accumulator := accumulators[probe.ChannelID]
+		if accumulator == nil {
+			accumulator = &healthAccumulator{}
+			accumulators[probe.ChannelID] = accumulator
+		}
+		accumulator.total += max(probe.TotalRequestCount, 0)
+		accumulator.success += max(probe.SuccessRequestCount, 0)
+		accumulator.previousPoint = accumulator.lastPoint
+		accumulator.lastPoint = probe
+		if probe.SuccessRequestCount > 0 {
+			successAt := time.Unix(probe.Timestamp, 0).UTC()
+			accumulator.lastSuccessAt = &successAt
+		}
+	}
+
+	for channelID, accumulator := range accumulators {
+		if accumulator.lastPoint == nil {
+			continue
+		}
+		checkedAt := time.Unix(accumulator.lastPoint.Timestamp, 0).UTC()
+		health := &CampusChannelHealth{
+			State:              "unknown",
+			RecentRequestCount: accumulator.total,
+			LastCheckedAt:      &checkedAt,
+			LastSuccessAt:      accumulator.lastSuccessAt,
+		}
+		if accumulator.total > 0 {
+			health.RecentSuccessRate = float64(accumulator.success) / float64(accumulator.total)
+		}
+
+		latestFailed := accumulator.lastPoint.TotalRequestCount > 0 &&
+			accumulator.lastPoint.SuccessRequestCount == 0
+		previousFailed := accumulator.previousPoint != nil &&
+			accumulator.previousPoint.TotalRequestCount > 0 &&
+			accumulator.previousPoint.SuccessRequestCount == 0
+		latestSucceeded := accumulator.lastPoint.SuccessRequestCount > 0
+
+		switch {
+		case latestFailed:
+			health.State = "unhealthy"
+		case latestSucceeded && previousFailed:
+			health.State = "recovering"
+		case health.RecentSuccessRate >= 0.9:
+			health.State = "healthy"
+		case health.RecentSuccessRate > 0:
+			health.State = "degraded"
+		case accumulator.total > 0:
+			health.State = "unhealthy"
+		default:
+			health.State = "unknown"
+		}
+		result[channelID] = health
+	}
+
+	failures, err := svc.client.RequestExecution.Query().
+		Where(
+			requestexecution.ChannelIDIn(channelIDs...),
+			requestexecution.CreatedAtGTE(cutoff),
+			requestexecution.StatusIn(requestexecution.StatusFailed, requestexecution.StatusCanceled),
+		).
+		Order(ent.Desc(requestexecution.FieldCreatedAt), ent.Desc(requestexecution.FieldID)).
+		All(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("query public channel failure categories: %w", err)
+	}
+	seenFailure := make(map[int]struct{}, len(channelIDs))
+	for _, execution := range failures {
+		if _, ok := seenFailure[execution.ChannelID]; ok {
+			continue
+		}
+		seenFailure[execution.ChannelID] = struct{}{}
+		result[execution.ChannelID].LastFailureCategory = campusFailureCategory(
+			execution.ResponseStatusCode,
+			execution.ErrorMessage,
+		)
+	}
+
+	return result, nil
+}
+
+func campusFailureCategory(statusCode *int, message string) string {
+	if statusCode != nil {
+		switch {
+		case *statusCode == 401 || *statusCode == 403:
+			return "authentication"
+		case *statusCode == 408:
+			return "timeout"
+		case *statusCode == 429:
+			return "rate_limited"
+		case *statusCode >= 500:
+			return "upstream_unavailable"
+		case *statusCode >= 400:
+			return "request_rejected"
+		}
+	}
+
+	lower := strings.ToLower(message)
+	switch {
+	case strings.Contains(lower, "timeout"), strings.Contains(lower, "deadline"):
+		return "timeout"
+	case strings.Contains(lower, "connection"), strings.Contains(lower, "tls"), strings.Contains(lower, "network"):
+		return "network"
+	case strings.Contains(lower, "unauthorized"), strings.Contains(lower, "invalid token"), strings.Contains(lower, "authentication"):
+		return "authentication"
+	case strings.Contains(lower, "empty response"), strings.Contains(lower, "no content"):
+		return "empty_response"
+	case strings.Contains(lower, "rate limit"):
+		return "rate_limited"
+	case strings.TrimSpace(lower) != "":
+		return "provider_error"
+	default:
+		return "unknown"
+	}
+}
+
+// PrepareChannelProbe authorizes a project member against the privacy-safe
+// catalog and selects the first non-empty model server-side. The caller never
+// supplies a model, URL, proxy or credential.
+func (svc *CampusCatalogService) PrepareChannelProbe(
+	ctx context.Context,
+	channelID int,
+) (objects.GUID, string, error) {
+	currentUser, projectID, err := campusCatalogIdentity(ctx)
+	if err != nil {
+		return objects.GUID{}, "", err
+	}
+	if channelID <= 0 {
+		return objects.GUID{}, "", ErrCampusCatalogInvalidInput
+	}
+
+	type preparedProbe struct {
+		guid  objects.GUID
+		model string
+	}
+	prepared, err := authz.RunWithSystemBypass(ctx, "campus-public-channel-probe", func(bypassCtx context.Context) (preparedProbe, error) {
+		if _, err := svc.verifyCampusProjectAccess(bypassCtx, currentUser, projectID); err != nil {
+			return preparedProbe{}, err
+		}
+
+		now := time.Now()
+		ch, err := svc.client.Channel.Query().
+			Where(
+				channel.IDEQ(channelID),
+				channel.StatusEQ(channel.StatusEnabled),
+				channel.Or(channel.ExpiresAtIsNil(), channel.ExpiresAtGT(now)),
+			).
+			Only(bypassCtx)
+		if err != nil {
+			if ent.IsNotFound(err) {
+				return preparedProbe{}, ErrCampusChannelNotFound
+			}
+			return preparedProbe{}, fmt.Errorf("load channel for public probe: %w", err)
+		}
+
+		modelID := firstCampusProbeModel(ch)
+		if modelID == "" {
+			return preparedProbe{}, ErrCampusCatalogInvalidInput
+		}
+
+		return preparedProbe{
+			guid:  objects.GUID{Type: ent.TypeChannel, ID: ch.ID},
+			model: modelID,
+		}, nil
+	})
+	if err != nil {
+		return objects.GUID{}, "", err
+	}
+
+	return prepared.guid, prepared.model, nil
+}
+
+// GetChannelHealth returns only the narrow health projection after verifying
+// project membership and public-channel eligibility.
+func (svc *CampusCatalogService) GetChannelHealth(ctx context.Context, channelID int) (*CampusChannelHealth, error) {
+	currentUser, projectID, err := campusCatalogIdentity(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return authz.RunWithSystemBypass(ctx, "campus-public-channel-health", func(bypassCtx context.Context) (*CampusChannelHealth, error) {
+		if _, err := svc.verifyCampusProjectAccess(bypassCtx, currentUser, projectID); err != nil {
+			return nil, err
+		}
+		exists, err := svc.client.Channel.Query().
+			Where(
+				channel.IDEQ(channelID),
+				channel.Or(channel.ExpiresAtIsNil(), channel.ExpiresAtGT(time.Now())),
+			).
+			Exist(bypassCtx)
+		if err != nil {
+			return nil, fmt.Errorf("verify public channel health target: %w", err)
+		}
+		if !exists {
+			return nil, ErrCampusChannelNotFound
+		}
+
+		healthByChannel, err := svc.channelHealthMap(bypassCtx, []int{channelID}, time.Now())
+		if err != nil {
+			return nil, err
+		}
+		return healthByChannel[channelID], nil
+	})
+}
+
+// GetAPIActivity exposes a six-hour, current-user-only diagnostic projection.
+// It deliberately omits request/response bodies, headers, IPs, URLs and full
+// API key values.
+func (svc *CampusCatalogService) GetAPIActivity(ctx context.Context, selectedAPIKeyID *int) (*CampusAPIActivity, error) {
+	currentUser, projectID, err := campusCatalogIdentity(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return authz.RunWithSystemBypass(ctx, "campus-own-api-activity", func(bypassCtx context.Context) (*CampusAPIActivity, error) {
+		if _, err := svc.verifyCampusProjectAccess(bypassCtx, currentUser, projectID); err != nil {
+			return nil, err
+		}
+
+		windowStartedAt := time.Now().Add(-campusExecutionErrorRetention)
+		keyQuery := svc.client.APIKey.Query().
+			Where(
+				apikey.UserIDEQ(currentUser.ID),
+				apikey.ProjectIDEQ(projectID),
+			).
+			Select(apikey.FieldID, apikey.FieldName, apikey.FieldKey).
+			Order(ent.Asc(apikey.FieldName), ent.Asc(apikey.FieldID))
+		if selectedAPIKeyID != nil {
+			keyQuery = keyQuery.Where(apikey.IDEQ(*selectedAPIKeyID))
+		}
+
+		keys, err := keyQuery.All(schematype.SkipSoftDelete(bypassCtx))
+		if err != nil {
+			return nil, fmt.Errorf("query own API keys for campus activity: %w", err)
+		}
+		if selectedAPIKeyID != nil && len(keys) == 0 {
+			return nil, ErrCampusCatalogForbidden
+		}
+
+		result := &CampusAPIActivity{
+			WindowStartedAt: windowStartedAt,
+			APIKeys:         make([]CampusAPIActivityKey, 0, len(keys)),
+			Events:          []CampusAPIActivityEvent{},
+		}
+		if len(keys) == 0 {
+			return result, nil
+		}
+
+		keyByID := make(map[int]*ent.APIKey, len(keys))
+		summaryIndexByID := make(map[int]int, len(keys))
+		keyIDs := make([]int, 0, len(keys))
+		for _, key := range keys {
+			keyByID[key.ID] = key
+			keyIDs = append(keyIDs, key.ID)
+			summary := CampusAPIActivityKey{
+				ID:     strconv.Itoa(key.ID),
+				Name:   key.Name,
+				Suffix: campusAPIKeySuffix(key.Key),
+			}
+			result.APIKeys = append(result.APIKeys, summary)
+			summaryIndexByID[key.ID] = len(result.APIKeys) - 1
+		}
+
+		requests, err := svc.client.Request.Query().
+			Where(
+				request.ProjectIDEQ(projectID),
+				request.APIKeyIDIn(keyIDs...),
+				request.SourceEQ(request.SourceAPI),
+				request.CreatedAtGTE(windowStartedAt),
+			).
+			WithExecutions(func(query *ent.RequestExecutionQuery) {
+				query.Order(ent.Desc(requestexecution.FieldCreatedAt), ent.Desc(requestexecution.FieldID))
+			}).
+			WithUsageLogs().
+			Order(ent.Desc(request.FieldCreatedAt), ent.Desc(request.FieldID)).
+			Limit(200).
+			All(bypassCtx)
+		if err != nil {
+			return nil, fmt.Errorf("query own recent API activity: %w", err)
+		}
+
+		for _, req := range requests {
+			key := keyByID[req.APIKeyID]
+			summaryIndex, hasSummary := summaryIndexByID[req.APIKeyID]
+			if key == nil || !hasSummary {
+				continue
+			}
+			summary := &result.APIKeys[summaryIndex]
+
+			status := string(req.Status)
+			if summary.LastStatus == "" {
+				summary.LastStatus = status
+			}
+			switch req.Status {
+			case request.StatusCompleted:
+				summary.SuccessCount++
+			case request.StatusFailed, request.StatusCanceled:
+				summary.ErrorCount++
+			}
+
+			for _, usage := range req.Edges.UsageLogs {
+				summary.InputTokens += max(usage.PromptTokens, int64(0))
+				summary.CachedReadTokens += max(usage.PromptCachedTokens, int64(0))
+				summary.OutputTokens += max(usage.CompletionTokens, int64(0))
+				summary.EffectiveTokens += campusStoredEffectiveTokens(usage)
+			}
+
+			if len(result.Events) >= 100 {
+				continue
+			}
+
+			event := CampusAPIActivityEvent{
+				RequestID:    strconv.Itoa(req.ID),
+				APIKeyID:     strconv.Itoa(key.ID),
+				APIKeyName:   key.Name,
+				APIKeySuffix: campusAPIKeySuffix(key.Key),
+				Model:        req.ModelID,
+				Status:       status,
+				LatencyMs:    req.MetricsLatencyMs,
+				CreatedAt:    req.CreatedAt,
+			}
+			if len(req.Edges.Executions) > 0 {
+				execution := req.Edges.Executions[0]
+				event.Status = string(execution.Status)
+				event.StatusCode = execution.ResponseStatusCode
+				if execution.ModelID != "" {
+					event.Model = execution.ModelID
+				}
+				if execution.MetricsLatencyMs != nil {
+					event.LatencyMs = execution.MetricsLatencyMs
+				}
+				if execution.Status == requestexecution.StatusFailed ||
+					execution.Status == requestexecution.StatusCanceled {
+					event.ErrorCategory = campusFailureCategory(execution.ResponseStatusCode, execution.ErrorMessage)
+					event.ErrorMessage = sanitizeRequestExecutionErrorMessage(execution.ErrorMessage)
+				}
+			}
+			result.Events = append(result.Events, event)
+		}
+
+		return result, nil
+	})
+}
+
+func campusAPIKeySuffix(key string) string {
+	runes := []rune(strings.TrimSpace(key))
+	if len(runes) <= 4 {
+		return string(runes)
+	}
+
+	return string(runes[len(runes)-4:])
+}
+
+func campusStoredEffectiveTokens(usage *ent.UsageLog) int64 {
+	if usage == nil {
+		return 0
+	}
+	return StoredEffectiveTokens(
+		usage.EffectiveTokens,
+		usage.CacheReadTokensKnown,
+		usage.PromptTokens,
+		usage.CompletionTokens,
+		usage.TotalTokens,
+		usage.PromptCachedTokens,
+	)
 }
 
 func sortedStringSet(values map[string]struct{}) []string {

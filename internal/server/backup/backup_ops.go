@@ -129,6 +129,8 @@ func (svc *BackupService) doBackup(ctx context.Context, opts BackupOptions) ([]b
 	var (
 		usageRequestDataList []*BackupUsageRequest
 		usageLogDataList     []*BackupUsageLog
+		tokenWalletDataList  []*BackupUserTokenWallet
+		tokenLedgerDataList  []*BackupTokenWalletLedger
 	)
 
 	if opts.IncludeRequestLogs {
@@ -147,6 +149,15 @@ func (svc *BackupService) doBackup(ctx context.Context, opts BackupOptions) ([]b
 		}
 	}
 
+	// Permanent donation wallet state is core application data, not optional
+	// analytics. Always back it up as a validated materialized-state + ledger
+	// group even when historical usage statistics are excluded.
+	var err error
+	tokenWalletDataList, tokenLedgerDataList, err = svc.backupTokenWalletData(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	backupData := &BackupData{
 		Version:            BackupVersion,
 		Timestamp:          time.Now(),
@@ -157,6 +168,8 @@ func (svc *BackupService) doBackup(ctx context.Context, opts BackupOptions) ([]b
 		APIKeys:            apiKeyDataList,
 		UsageRequests:      usageRequestDataList,
 		UsageLogs:          usageLogDataList,
+		TokenWallets:       tokenWalletDataList,
+		TokenWalletLedgers: tokenLedgerDataList,
 	}
 
 	if opts.IncludeUsageStats || opts.IncludeRequestLogs {

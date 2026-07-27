@@ -52,6 +52,22 @@ func (UsageLog) Fields() []ent.Field {
 		field.Int64("prompt_tokens").Default(0).Comment("Number of tokens in the prompt"),
 		field.Int64("completion_tokens").Default(0).Comment("Number of tokens in the completion"),
 		field.Int64("total_tokens").Default(0).Comment("Total number of tokens used"),
+		field.Int64("effective_tokens").
+			Default(0).
+			Immutable().
+			Comment("Quota-bearing tokens after excluding cache-read input tokens"),
+		field.Bool("cache_read_tokens_known").
+			Default(false).
+			Immutable().
+			Comment("Whether the upstream response explicitly exposed cache-read token details"),
+		field.Int64("wallet_consumed_tokens").
+			Default(0).
+			Immutable().
+			Comment("Effective tokens paid from the caller's permanent donation wallet"),
+		field.Int64("donor_credit_tokens").
+			Default(0).
+			Immutable().
+			Comment("Permanent wallet tokens credited to the donor for this request"),
 
 		// Prompt tokens details from llm.PromptTokensDetails
 		field.Int64("prompt_audio_tokens").Default(0).Optional().Comment("Number of audio tokens in the prompt"),

@@ -12,6 +12,7 @@ import (
 	"github.com/looplj/axonhub/internal/contexts"
 	"github.com/looplj/axonhub/internal/ent"
 	"github.com/looplj/axonhub/internal/ent/enttest"
+	"github.com/looplj/axonhub/internal/ent/request"
 	"github.com/looplj/axonhub/internal/objects"
 	"github.com/looplj/axonhub/internal/server/biz"
 )
@@ -117,7 +118,7 @@ func TestLoadBalancer_Sort_WithoutWeightTieBreaker_PreservesInputOrderWhenScores
 	assert.Equal(t, 3, result[2].Channel.ID)
 }
 
-func TestLoadBalancer_Sort_RoundRobinHealthMovesUnhealthyChannelsLast(t *testing.T) {
+func TestLoadBalancer_Sort_RoundRobinHealthKeepsOnlyHealthyPool(t *testing.T) {
 	ctx := context.Background()
 	recentFailure := time.Now().Add(-time.Minute)
 
@@ -151,10 +152,9 @@ func TestLoadBalancer_Sort_RoundRobinHealthMovesUnhealthyChannelsLast(t *testing
 	}
 
 	result := lb.Sort(ctx, candidates, "", false)
-	require.Len(t, result, 3)
+	require.Len(t, result, 2)
 	assert.Equal(t, 2, result[0].Channel.ID)
 	assert.Equal(t, 3, result[1].Channel.ID)
-	assert.Equal(t, 1, result[2].Channel.ID)
 }
 
 func TestLoadBalancer_Sort_RoundRobinHealthSkipsUnhealthyBeforeTopK(t *testing.T) {
@@ -197,7 +197,7 @@ func TestLoadBalancer_Sort_RoundRobinHealthSkipsUnhealthyBeforeTopK(t *testing.T
 	assert.Equal(t, 3, result[1].Channel.ID)
 }
 
-func TestLoadBalancer_Sort_RoundRobinHealthKeepsHardUnavailableLast(t *testing.T) {
+func TestLoadBalancer_Sort_RoundRobinHealthExcludesDegradedWhenHealthyExists(t *testing.T) {
 	ctx := context.Background()
 	recentFailure := time.Now().Add(-time.Minute)
 
@@ -239,10 +239,126 @@ func TestLoadBalancer_Sort_RoundRobinHealthKeepsHardUnavailableLast(t *testing.T
 	}
 
 	result := lb.Sort(ctx, candidates, "", false)
-	require.Len(t, result, 3)
+	require.Len(t, result, 1)
 	assert.Equal(t, 3, result[0].Channel.ID)
-	assert.Equal(t, 1, result[1].Channel.ID)
-	assert.Equal(t, 2, result[2].Channel.ID)
+}
+
+func TestLoadBalancer_Sort_RoundRobinHealthFiltersOpenCircuit(t *testing.T) {
+	ctx := context.Background()
+	breaker := biz.NewModelCircuitBreaker()
+	for range 5 {
+		breaker.RecordError(ctx, 1, "gpt-test", false)
+	}
+
+	metricsProvider := &mockMetricsProvider{
+		metrics: map[int]*biz.AggregatedMetrics{
+			1: {},
+			2: {},
+		},
+	}
+	lb := newTestLoadBalancer(
+		t,
+		&biz.RetryPolicy{Enabled: true, MaxChannelRetries: 1},
+		NewRoundRobinStrategy(metricsProvider),
+	).WithoutWeightTieBreaker().WithRoundRobinHealthFilter(NewRoundRobinHealthStrategy(metricsProvider, breaker))
+
+	result := lb.Sort(ctx, []*ChannelModelsCandidate{
+		{Channel: &biz.Channel{Channel: &ent.Channel{ID: 1, Name: "open"}}},
+		{Channel: &biz.Channel{Channel: &ent.Channel{ID: 2, Name: "healthy"}}},
+	}, "gpt-test", false)
+
+	require.Len(t, result, 1)
+	require.Equal(t, 2, result[0].Channel.ID)
+}
+
+func TestLoadBalancer_Sort_AffinityNeverOverridesHealthyPool(t *testing.T) {
+	ctx := contextWithSessionAffinityChannel(context.Background(), 1)
+	recentFailure := time.Now().Add(-time.Minute)
+	unhealthy := &biz.AggregatedMetrics{}
+	unhealthy.ConsecutiveFailures = roundRobinFailureThreshold
+	unhealthy.LastFailureAt = &recentFailure
+
+	metricsProvider := &mockMetricsProvider{
+		metrics: map[int]*biz.AggregatedMetrics{
+			1: unhealthy,
+			2: {},
+		},
+	}
+	lb := newTestLoadBalancer(
+		t,
+		&biz.RetryPolicy{Enabled: true, MaxChannelRetries: 1},
+		NewSessionAffinityStrategy(),
+		NewRoundRobinStrategy(metricsProvider),
+	).WithoutWeightTieBreaker().WithRoundRobinHealthFilter(NewRoundRobinHealthStrategy(metricsProvider))
+
+	result := lb.Sort(ctx, []*ChannelModelsCandidate{
+		{Channel: &biz.Channel{Channel: &ent.Channel{ID: 1, Name: "sticky-but-unhealthy"}}},
+		{Channel: &biz.Channel{Channel: &ent.Channel{ID: 2, Name: "healthy"}}},
+	}, "gpt-test", false)
+
+	require.Len(t, result, 1)
+	require.Equal(t, 2, result[0].Channel.ID)
+}
+
+func TestLoadBalancer_Sort_RoundRobinHealthReintroducesRecoveredChannel(t *testing.T) {
+	recentFailure := time.Now().Add(-time.Minute)
+	recoveredFailure := time.Now().Add(-(roundRobinHealthCooldown + time.Minute))
+	degraded := &biz.AggregatedMetrics{
+		RequestCount: 0,
+	}
+	degraded.ConsecutiveFailures = roundRobinFailureThreshold
+	degraded.LastFailureAt = &recentFailure
+	stable := &biz.AggregatedMetrics{RequestCount: 10}
+
+	metricsProvider := &mockMetricsProvider{metrics: map[int]*biz.AggregatedMetrics{
+		1: degraded,
+		2: stable,
+	}}
+	lb := newTestLoadBalancer(
+		t,
+		&biz.RetryPolicy{Enabled: false},
+		NewRoundRobinStrategy(metricsProvider),
+	).WithoutWeightTieBreaker().WithRoundRobinHealthFilter(NewRoundRobinHealthStrategy(metricsProvider))
+	candidates := []*ChannelModelsCandidate{
+		{Channel: &biz.Channel{Channel: &ent.Channel{ID: 1, Name: "recovering"}}},
+		{Channel: &biz.Channel{Channel: &ent.Channel{ID: 2, Name: "stable"}}},
+	}
+
+	result := lb.Sort(context.Background(), candidates, "gpt-test", false)
+	require.Len(t, result, 1)
+	require.Equal(t, 2, result[0].Channel.ID,
+		"a recently failing channel must stay out while a healthy channel exists")
+
+	degraded.LastFailureAt = &recoveredFailure
+	result = lb.Sort(context.Background(), candidates, "gpt-test", false)
+	require.Len(t, result, 1)
+	require.Equal(t, 1, result[0].Channel.ID,
+		"a channel must automatically rejoin fair rotation after the transient cooldown")
+}
+
+func TestLoadBalancer_TestSourceDoesNotAdvanceFairSelectionCount(t *testing.T) {
+	selections := &mockSelectionTracker{}
+	lb := NewLoadBalancer(
+		&mockSystemService{retryPolicy: &biz.RetryPolicy{Enabled: false}},
+		selections,
+		&channelBasedStrategy{name: "fixed", scores: map[int]float64{1: 10, 2: 5}},
+	)
+	candidates := []*ChannelModelsCandidate{
+		{Channel: &biz.Channel{Channel: &ent.Channel{ID: 1, Name: "selected"}}},
+		{Channel: &biz.Channel{Channel: &ent.Channel{ID: 2, Name: "other"}}},
+	}
+
+	testCtx := contexts.WithSource(context.Background(), request.SourceTest)
+	result := lb.Sort(testCtx, candidates, "gpt-test", false)
+	require.Len(t, result, 1)
+	require.Equal(t, 1, result[0].Channel.ID)
+	require.Empty(t, selections.selections,
+		"manual health probes must affect health but not production fairness accounting")
+
+	result = lb.Sort(context.Background(), candidates, "gpt-test", false)
+	require.Len(t, result, 1)
+	require.Equal(t, 1, selections.selections[1],
+		"the corresponding production session must advance fairness exactly once")
 }
 
 func TestLoadBalancer_Sort_SingleStrategy(t *testing.T) {

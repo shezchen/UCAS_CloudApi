@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"time"
 
-	"entgo.io/ent/privacy"
 	"github.com/looplj/axonhub/internal/authz"
 	"github.com/looplj/axonhub/internal/build"
 	"github.com/looplj/axonhub/internal/contexts"
@@ -576,7 +575,9 @@ func (r *queryResolver) CampusFriendLinks(ctx context.Context) ([]*biz.CampusFri
 		}
 	}
 
-	links, err := r.systemService.CampusFriendLinks(privacy.DecisionContext(ctx, privacy.Allow))
+	links, err := authz.RunWithSystemBypass(ctx, "campus-friend-links-read", func(readCtx context.Context) ([]biz.CampusFriendLink, error) {
+		return r.systemService.CampusFriendLinks(readCtx)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get campus friend links: %w", err)
 	}

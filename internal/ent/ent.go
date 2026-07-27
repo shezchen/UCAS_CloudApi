@@ -32,11 +32,13 @@ import (
 	"github.com/looplj/axonhub/internal/ent/role"
 	"github.com/looplj/axonhub/internal/ent/system"
 	"github.com/looplj/axonhub/internal/ent/thread"
+	"github.com/looplj/axonhub/internal/ent/tokenwalletledger"
 	"github.com/looplj/axonhub/internal/ent/trace"
 	"github.com/looplj/axonhub/internal/ent/usagelog"
 	"github.com/looplj/axonhub/internal/ent/user"
 	"github.com/looplj/axonhub/internal/ent/userproject"
 	"github.com/looplj/axonhub/internal/ent/userrole"
+	"github.com/looplj/axonhub/internal/ent/usertokenwallet"
 )
 
 // ent aliases to avoid import conflicts in user's code.
@@ -117,11 +119,13 @@ func checkColumn(t, c string) error {
 			role.Table:                       role.ValidColumn,
 			system.Table:                     system.ValidColumn,
 			thread.Table:                     thread.ValidColumn,
+			tokenwalletledger.Table:          tokenwalletledger.ValidColumn,
 			trace.Table:                      trace.ValidColumn,
 			usagelog.Table:                   usagelog.ValidColumn,
 			user.Table:                       user.ValidColumn,
 			userproject.Table:                userproject.ValidColumn,
 			userrole.Table:                   userrole.ValidColumn,
+			usertokenwallet.Table:            usertokenwallet.ValidColumn,
 		})
 	})
 	return columnCheck(t, c)

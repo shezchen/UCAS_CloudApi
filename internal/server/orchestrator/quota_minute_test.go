@@ -157,7 +157,8 @@ func TestEnforceQuota_UserDailyLimitAppliesWithoutAPIKeyQuota(t *testing.T) {
 
 	systemService := biz.NewSystemService(biz.SystemServiceParams{Ent: client})
 	require.NoError(t, systemService.SetUserDailyQuotaSettings(ctx, biz.UserDailyQuotaSettings{
-		DailyTokenLimit: 10,
+		DailyTokenLimit:  10,
+		WeeklyTokenLimit: 100,
 	}))
 	quotaService := biz.NewQuotaService(client, systemService)
 	inbound, _ := NewPersistentTransformers(
@@ -224,7 +225,8 @@ func TestEnforceQuota_APIKeyProfileQuotaPrecedesGlobalUserDailyQuota(t *testing.
 
 	systemService := biz.NewSystemService(biz.SystemServiceParams{Ent: client})
 	require.NoError(t, systemService.SetUserDailyQuotaSettings(ctx, biz.UserDailyQuotaSettings{
-		DailyTokenLimit: 5,
+		DailyTokenLimit:  5,
+		WeeklyTokenLimit: 100,
 	}))
 	quotaService := biz.NewQuotaService(client, systemService)
 	inbound, _ := NewPersistentTransformers(

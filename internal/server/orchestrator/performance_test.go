@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -11,6 +12,7 @@ import (
 	"github.com/looplj/axonhub/internal/server/biz"
 	"github.com/looplj/axonhub/llm"
 	"github.com/looplj/axonhub/llm/httpclient"
+	"github.com/looplj/axonhub/llm/streams"
 )
 
 // mockChannelService is a mock implementation of ChannelService for testing
@@ -332,3 +334,95 @@ func TestPerformanceRecording_StreamFlagBugRegression(t *testing.T) {
 
 // TestRecordPerformanceStream_MarksFirstToken verifies that recordPerformanceStream
 // correctly marks the first token time.
+func TestPerformanceRecording_SemanticSuccessDoesNotDependOnUsage(t *testing.T) {
+	donorID := 42
+	channel := &biz.Channel{Channel: &ent.Channel{
+		ID:     7,
+		Name:   "donated",
+		UserID: &donorID,
+	}}
+	state := &PersistenceState{
+		CurrentCandidate: &ChannelModelsCandidate{Channel: channel},
+		Perf:             &biz.PerformanceRecord{},
+	}
+	middleware := &performanceRecording{
+		outbound: &PersistentOutboundTransformer{state: state},
+	}
+
+	_, err := middleware.OnOutboundRawRequest(context.Background(), &httpclient.Request{})
+	require.NoError(t, err)
+	require.True(t, state.Perf.Donated)
+
+	empty := &llm.Response{Choices: []llm.Choice{{Message: &llm.Message{Role: "assistant"}}}}
+	_, err = middleware.OnOutboundLlmResponse(context.Background(), empty)
+	require.NoError(t, err)
+	require.False(t, state.Perf.RequestCompleted, "empty response must remain retryable")
+
+	toolOnly := &llm.Response{Choices: []llm.Choice{{
+		Message: &llm.Message{
+			Role:      "assistant",
+			ToolCalls: []llm.ToolCall{{ID: "call-1", Type: "function"}},
+		},
+	}}}
+	_, err = middleware.OnOutboundLlmResponse(context.Background(), toolOnly)
+	require.NoError(t, err)
+	require.True(t, state.Perf.Success)
+	require.True(t, state.Perf.RequestCompleted)
+	require.Zero(t, state.Perf.CompletionTokens)
+
+	middleware.OnOutboundRawError(context.Background(), context.DeadlineExceeded)
+	require.True(t, state.Perf.Success, "completed upstream health must not be double-recorded as failed")
+}
+
+func TestRecordPerformanceStream_ToolCallWithoutUsageIsHealthyOnTerminal(t *testing.T) {
+	state := &PersistenceState{
+		Perf: &biz.PerformanceRecord{
+			StartTime: time.Now(),
+			Stream:    true,
+		},
+	}
+	toolEvent := &llm.Response{Choices: []llm.Choice{{
+		Delta: &llm.Message{
+			Role:      "assistant",
+			ToolCalls: []llm.ToolCall{{ID: "call-1", Type: "function"}},
+		},
+	}}}
+	stream := &recordPerformanceStream{
+		ctx:    context.Background(),
+		stream: streams.SliceStream([]*llm.Response{toolEvent, llm.DoneResponse}),
+		state:  state,
+	}
+
+	for stream.Next() {
+		_ = stream.Current()
+	}
+	require.NoError(t, stream.Close())
+	require.True(t, state.Perf.Success)
+	require.True(t, state.Perf.RequestCompleted)
+	require.NotNil(t, state.Perf.FirstTokenTime)
+	require.Zero(t, state.Perf.CompletionTokens)
+}
+
+func TestRecordPerformanceStream_IncompleteCommittedContentIsUnhealthy(t *testing.T) {
+	text := "partial"
+	state := &PersistenceState{
+		Perf: &biz.PerformanceRecord{
+			StartTime: time.Now(),
+			Stream:    true,
+		},
+	}
+	stream := &recordPerformanceStream{
+		ctx: context.Background(),
+		stream: streams.SliceStream([]*llm.Response{{Choices: []llm.Choice{{
+			Delta: &llm.Message{Role: "assistant", Content: llm.MessageContent{Content: &text}},
+		}}}}),
+		state: state,
+	}
+
+	require.True(t, stream.Next())
+	_ = stream.Current()
+	require.NoError(t, stream.Close())
+	require.False(t, state.Perf.Success)
+	require.True(t, state.Perf.RequestCompleted)
+	require.Equal(t, 500, state.Perf.ResponseStatusCode)
+}

@@ -19,7 +19,8 @@ func (r *mutationResolver) UpdateUserDailyQuotaSettings(ctx context.Context, inp
 	}
 
 	if err := r.systemService.SetUserDailyQuotaSettings(ctx, biz.UserDailyQuotaSettings{
-		DailyTokenLimit: int64(input.DailyTokenLimit),
+		DailyTokenLimit:  int64(input.DailyTokenLimit),
+		WeeklyTokenLimit: int64(input.WeeklyTokenLimit),
 	}); err != nil {
 		return false, fmt.Errorf("failed to update user daily quota settings: %w", err)
 	}

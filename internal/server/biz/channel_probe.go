@@ -38,6 +38,33 @@ type ChannelProbeData struct {
 	Points    []*ChannelProbePoint `json:"points"`
 }
 
+// RecordManualProbeResult immediately feeds a user-triggered channel check
+// into the same health history used by production traffic. The caller is
+// responsible for marking the underlying request source as "test" so quota,
+// ranking and donation accounting remain excluded.
+func (svc *ChannelProbeService) RecordManualProbeResult(ctx context.Context, channelID int, success bool) error {
+	if channelID <= 0 {
+		return fmt.Errorf("invalid channel id")
+	}
+
+	successCount := 0
+	if success {
+		successCount = 1
+	}
+
+	_, err := svc.entFromContext(ctx).ChannelProbe.Create().
+		SetChannelID(channelID).
+		SetTotalRequestCount(1).
+		SetSuccessRequestCount(successCount).
+		SetTimestamp(time.Now().Unix()).
+		Save(ctx)
+	if err != nil {
+		return fmt.Errorf("record manual channel probe result: %w", err)
+	}
+
+	return nil
+}
+
 // ChannelProbeServiceParams contains dependencies for ChannelProbeService.
 type ChannelProbeServiceParams struct {
 	fx.In

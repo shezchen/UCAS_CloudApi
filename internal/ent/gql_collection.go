@@ -29,11 +29,13 @@ import (
 	"github.com/looplj/axonhub/internal/ent/role"
 	"github.com/looplj/axonhub/internal/ent/system"
 	"github.com/looplj/axonhub/internal/ent/thread"
+	"github.com/looplj/axonhub/internal/ent/tokenwalletledger"
 	"github.com/looplj/axonhub/internal/ent/trace"
 	"github.com/looplj/axonhub/internal/ent/usagelog"
 	"github.com/looplj/axonhub/internal/ent/user"
 	"github.com/looplj/axonhub/internal/ent/userproject"
 	"github.com/looplj/axonhub/internal/ent/userrole"
+	"github.com/looplj/axonhub/internal/ent/usertokenwallet"
 )
 
 // CollectFields tells the query-builder to eagerly load connected nodes by resolver context.
@@ -4880,6 +4882,140 @@ func newThreadPaginateArgs(rv map[string]any) *threadPaginateArgs {
 }
 
 // CollectFields tells the query-builder to eagerly load connected nodes by resolver context.
+func (_q *TokenWalletLedgerQuery) CollectFields(ctx context.Context, satisfies ...string) (*TokenWalletLedgerQuery, error) {
+	fc := graphql.GetFieldContext(ctx)
+	if fc == nil {
+		return _q, nil
+	}
+	if err := _q.collectField(ctx, false, graphql.GetOperationContext(ctx), fc.Field, nil, satisfies...); err != nil {
+		return nil, err
+	}
+	return _q, nil
+}
+
+func (_q *TokenWalletLedgerQuery) collectField(ctx context.Context, oneNode bool, opCtx *graphql.OperationContext, collected graphql.CollectedField, path []string, satisfies ...string) error {
+	path = append([]string(nil), path...)
+	var (
+		unknownSeen    bool
+		fieldSeen      = make(map[string]struct{}, len(tokenwalletledger.Columns))
+		selectedFields = []string{tokenwalletledger.FieldID}
+	)
+	for _, field := range graphql.CollectFields(opCtx, collected.Selections, satisfies) {
+		switch field.Name {
+		case "createdAt":
+			if _, ok := fieldSeen[tokenwalletledger.FieldCreatedAt]; !ok {
+				selectedFields = append(selectedFields, tokenwalletledger.FieldCreatedAt)
+				fieldSeen[tokenwalletledger.FieldCreatedAt] = struct{}{}
+			}
+		case "updatedAt":
+			if _, ok := fieldSeen[tokenwalletledger.FieldUpdatedAt]; !ok {
+				selectedFields = append(selectedFields, tokenwalletledger.FieldUpdatedAt)
+				fieldSeen[tokenwalletledger.FieldUpdatedAt] = struct{}{}
+			}
+		case "userID":
+			if _, ok := fieldSeen[tokenwalletledger.FieldUserID]; !ok {
+				selectedFields = append(selectedFields, tokenwalletledger.FieldUserID)
+				fieldSeen[tokenwalletledger.FieldUserID] = struct{}{}
+			}
+		case "requestID":
+			if _, ok := fieldSeen[tokenwalletledger.FieldRequestID]; !ok {
+				selectedFields = append(selectedFields, tokenwalletledger.FieldRequestID)
+				fieldSeen[tokenwalletledger.FieldRequestID] = struct{}{}
+			}
+		case "usageLogID":
+			if _, ok := fieldSeen[tokenwalletledger.FieldUsageLogID]; !ok {
+				selectedFields = append(selectedFields, tokenwalletledger.FieldUsageLogID)
+				fieldSeen[tokenwalletledger.FieldUsageLogID] = struct{}{}
+			}
+		case "channelID":
+			if _, ok := fieldSeen[tokenwalletledger.FieldChannelID]; !ok {
+				selectedFields = append(selectedFields, tokenwalletledger.FieldChannelID)
+				fieldSeen[tokenwalletledger.FieldChannelID] = struct{}{}
+			}
+		case "channelNameSnapshot":
+			if _, ok := fieldSeen[tokenwalletledger.FieldChannelNameSnapshot]; !ok {
+				selectedFields = append(selectedFields, tokenwalletledger.FieldChannelNameSnapshot)
+				fieldSeen[tokenwalletledger.FieldChannelNameSnapshot] = struct{}{}
+			}
+		case "kind":
+			if _, ok := fieldSeen[tokenwalletledger.FieldKind]; !ok {
+				selectedFields = append(selectedFields, tokenwalletledger.FieldKind)
+				fieldSeen[tokenwalletledger.FieldKind] = struct{}{}
+			}
+		case "amountTokens":
+			if _, ok := fieldSeen[tokenwalletledger.FieldAmountTokens]; !ok {
+				selectedFields = append(selectedFields, tokenwalletledger.FieldAmountTokens)
+				fieldSeen[tokenwalletledger.FieldAmountTokens] = struct{}{}
+			}
+		case "effectiveTokensSnapshot":
+			if _, ok := fieldSeen[tokenwalletledger.FieldEffectiveTokensSnapshot]; !ok {
+				selectedFields = append(selectedFields, tokenwalletledger.FieldEffectiveTokensSnapshot)
+				fieldSeen[tokenwalletledger.FieldEffectiveTokensSnapshot] = struct{}{}
+			}
+		case "id":
+		case "__typename":
+		default:
+			unknownSeen = true
+		}
+	}
+	if !unknownSeen {
+		_q.Select(selectedFields...)
+	}
+	return nil
+}
+
+type tokenwalletledgerPaginateArgs struct {
+	first, last   *int
+	after, before *Cursor
+	opts          []TokenWalletLedgerPaginateOption
+}
+
+func newTokenWalletLedgerPaginateArgs(rv map[string]any) *tokenwalletledgerPaginateArgs {
+	args := &tokenwalletledgerPaginateArgs{}
+	if rv == nil {
+		return args
+	}
+	if v := rv[firstField]; v != nil {
+		args.first = v.(*int)
+	}
+	if v := rv[lastField]; v != nil {
+		args.last = v.(*int)
+	}
+	if v := rv[afterField]; v != nil {
+		args.after = v.(*Cursor)
+	}
+	if v := rv[beforeField]; v != nil {
+		args.before = v.(*Cursor)
+	}
+	if v, ok := rv[orderByField]; ok {
+		switch v := v.(type) {
+		case map[string]any:
+			var (
+				err1, err2 error
+				order      = &TokenWalletLedgerOrder{Field: &TokenWalletLedgerOrderField{}, Direction: entgql.OrderDirectionAsc}
+			)
+			if d, ok := v[directionField]; ok {
+				err1 = order.Direction.UnmarshalGQL(d)
+			}
+			if f, ok := v[fieldField]; ok {
+				err2 = order.Field.UnmarshalGQL(f)
+			}
+			if err1 == nil && err2 == nil {
+				args.opts = append(args.opts, WithTokenWalletLedgerOrder(order))
+			}
+		case *TokenWalletLedgerOrder:
+			if v != nil {
+				args.opts = append(args.opts, WithTokenWalletLedgerOrder(v))
+			}
+		}
+	}
+	if v, ok := rv[whereField].(*TokenWalletLedgerWhereInput); ok {
+		args.opts = append(args.opts, WithTokenWalletLedgerFilter(v.Filter))
+	}
+	return args
+}
+
+// CollectFields tells the query-builder to eagerly load connected nodes by resolver context.
 func (_q *TraceQuery) CollectFields(ctx context.Context, satisfies ...string) (*TraceQuery, error) {
 	fc := graphql.GetFieldContext(ctx)
 	if fc == nil {
@@ -5222,6 +5358,26 @@ func (_q *UsageLogQuery) collectField(ctx context.Context, oneNode bool, opCtx *
 			if _, ok := fieldSeen[usagelog.FieldTotalTokens]; !ok {
 				selectedFields = append(selectedFields, usagelog.FieldTotalTokens)
 				fieldSeen[usagelog.FieldTotalTokens] = struct{}{}
+			}
+		case "effectiveTokens":
+			if _, ok := fieldSeen[usagelog.FieldEffectiveTokens]; !ok {
+				selectedFields = append(selectedFields, usagelog.FieldEffectiveTokens)
+				fieldSeen[usagelog.FieldEffectiveTokens] = struct{}{}
+			}
+		case "cacheReadTokensKnown":
+			if _, ok := fieldSeen[usagelog.FieldCacheReadTokensKnown]; !ok {
+				selectedFields = append(selectedFields, usagelog.FieldCacheReadTokensKnown)
+				fieldSeen[usagelog.FieldCacheReadTokensKnown] = struct{}{}
+			}
+		case "walletConsumedTokens":
+			if _, ok := fieldSeen[usagelog.FieldWalletConsumedTokens]; !ok {
+				selectedFields = append(selectedFields, usagelog.FieldWalletConsumedTokens)
+				fieldSeen[usagelog.FieldWalletConsumedTokens] = struct{}{}
+			}
+		case "donorCreditTokens":
+			if _, ok := fieldSeen[usagelog.FieldDonorCreditTokens]; !ok {
+				selectedFields = append(selectedFields, usagelog.FieldDonorCreditTokens)
+				fieldSeen[usagelog.FieldDonorCreditTokens] = struct{}{}
 			}
 		case "promptAudioTokens":
 			if _, ok := fieldSeen[usagelog.FieldPromptAudioTokens]; !ok {
@@ -6147,11 +6303,6 @@ func (_q *UserQuery) collectField(ctx context.Context, oneNode bool, opCtx *grap
 				selectedFields = append(selectedFields, user.FieldIsOwner)
 				fieldSeen[user.FieldIsOwner] = struct{}{}
 			}
-		case "dailyTokenLimit":
-			if _, ok := fieldSeen[user.FieldDailyTokenLimit]; !ok {
-				selectedFields = append(selectedFields, user.FieldDailyTokenLimit)
-				fieldSeen[user.FieldDailyTokenLimit] = struct{}{}
-			}
 		case "scopes":
 			if _, ok := fieldSeen[user.FieldScopes]; !ok {
 				selectedFields = append(selectedFields, user.FieldScopes)
@@ -6494,6 +6645,125 @@ func newUserRolePaginateArgs(rv map[string]any) *userrolePaginateArgs {
 	}
 	if v, ok := rv[whereField].(*UserRoleWhereInput); ok {
 		args.opts = append(args.opts, WithUserRoleFilter(v.Filter))
+	}
+	return args
+}
+
+// CollectFields tells the query-builder to eagerly load connected nodes by resolver context.
+func (_q *UserTokenWalletQuery) CollectFields(ctx context.Context, satisfies ...string) (*UserTokenWalletQuery, error) {
+	fc := graphql.GetFieldContext(ctx)
+	if fc == nil {
+		return _q, nil
+	}
+	if err := _q.collectField(ctx, false, graphql.GetOperationContext(ctx), fc.Field, nil, satisfies...); err != nil {
+		return nil, err
+	}
+	return _q, nil
+}
+
+func (_q *UserTokenWalletQuery) collectField(ctx context.Context, oneNode bool, opCtx *graphql.OperationContext, collected graphql.CollectedField, path []string, satisfies ...string) error {
+	path = append([]string(nil), path...)
+	var (
+		unknownSeen    bool
+		fieldSeen      = make(map[string]struct{}, len(usertokenwallet.Columns))
+		selectedFields = []string{usertokenwallet.FieldID}
+	)
+	for _, field := range graphql.CollectFields(opCtx, collected.Selections, satisfies) {
+		switch field.Name {
+		case "createdAt":
+			if _, ok := fieldSeen[usertokenwallet.FieldCreatedAt]; !ok {
+				selectedFields = append(selectedFields, usertokenwallet.FieldCreatedAt)
+				fieldSeen[usertokenwallet.FieldCreatedAt] = struct{}{}
+			}
+		case "updatedAt":
+			if _, ok := fieldSeen[usertokenwallet.FieldUpdatedAt]; !ok {
+				selectedFields = append(selectedFields, usertokenwallet.FieldUpdatedAt)
+				fieldSeen[usertokenwallet.FieldUpdatedAt] = struct{}{}
+			}
+		case "userID":
+			if _, ok := fieldSeen[usertokenwallet.FieldUserID]; !ok {
+				selectedFields = append(selectedFields, usertokenwallet.FieldUserID)
+				fieldSeen[usertokenwallet.FieldUserID] = struct{}{}
+			}
+		case "balanceTokens":
+			if _, ok := fieldSeen[usertokenwallet.FieldBalanceTokens]; !ok {
+				selectedFields = append(selectedFields, usertokenwallet.FieldBalanceTokens)
+				fieldSeen[usertokenwallet.FieldBalanceTokens] = struct{}{}
+			}
+		case "lifetimeCreditedTokens":
+			if _, ok := fieldSeen[usertokenwallet.FieldLifetimeCreditedTokens]; !ok {
+				selectedFields = append(selectedFields, usertokenwallet.FieldLifetimeCreditedTokens)
+				fieldSeen[usertokenwallet.FieldLifetimeCreditedTokens] = struct{}{}
+			}
+		case "lifetimeDebitedTokens":
+			if _, ok := fieldSeen[usertokenwallet.FieldLifetimeDebitedTokens]; !ok {
+				selectedFields = append(selectedFields, usertokenwallet.FieldLifetimeDebitedTokens)
+				fieldSeen[usertokenwallet.FieldLifetimeDebitedTokens] = struct{}{}
+			}
+		case "version":
+			if _, ok := fieldSeen[usertokenwallet.FieldVersion]; !ok {
+				selectedFields = append(selectedFields, usertokenwallet.FieldVersion)
+				fieldSeen[usertokenwallet.FieldVersion] = struct{}{}
+			}
+		case "id":
+		case "__typename":
+		default:
+			unknownSeen = true
+		}
+	}
+	if !unknownSeen {
+		_q.Select(selectedFields...)
+	}
+	return nil
+}
+
+type usertokenwalletPaginateArgs struct {
+	first, last   *int
+	after, before *Cursor
+	opts          []UserTokenWalletPaginateOption
+}
+
+func newUserTokenWalletPaginateArgs(rv map[string]any) *usertokenwalletPaginateArgs {
+	args := &usertokenwalletPaginateArgs{}
+	if rv == nil {
+		return args
+	}
+	if v := rv[firstField]; v != nil {
+		args.first = v.(*int)
+	}
+	if v := rv[lastField]; v != nil {
+		args.last = v.(*int)
+	}
+	if v := rv[afterField]; v != nil {
+		args.after = v.(*Cursor)
+	}
+	if v := rv[beforeField]; v != nil {
+		args.before = v.(*Cursor)
+	}
+	if v, ok := rv[orderByField]; ok {
+		switch v := v.(type) {
+		case map[string]any:
+			var (
+				err1, err2 error
+				order      = &UserTokenWalletOrder{Field: &UserTokenWalletOrderField{}, Direction: entgql.OrderDirectionAsc}
+			)
+			if d, ok := v[directionField]; ok {
+				err1 = order.Direction.UnmarshalGQL(d)
+			}
+			if f, ok := v[fieldField]; ok {
+				err2 = order.Field.UnmarshalGQL(f)
+			}
+			if err1 == nil && err2 == nil {
+				args.opts = append(args.opts, WithUserTokenWalletOrder(order))
+			}
+		case *UserTokenWalletOrder:
+			if v != nil {
+				args.opts = append(args.opts, WithUserTokenWalletOrder(v))
+			}
+		}
+	}
+	if v, ok := rv[whereField].(*UserTokenWalletWhereInput); ok {
+		args.opts = append(args.opts, WithUserTokenWalletFilter(v.Filter))
 	}
 	return args
 }

@@ -52,6 +52,8 @@ type Tx struct {
 	System *SystemClient
 	// Thread is the client for interacting with the Thread builders.
 	Thread *ThreadClient
+	// TokenWalletLedger is the client for interacting with the TokenWalletLedger builders.
+	TokenWalletLedger *TokenWalletLedgerClient
 	// Trace is the client for interacting with the Trace builders.
 	Trace *TraceClient
 	// UsageLog is the client for interacting with the UsageLog builders.
@@ -62,6 +64,8 @@ type Tx struct {
 	UserProject *UserProjectClient
 	// UserRole is the client for interacting with the UserRole builders.
 	UserRole *UserRoleClient
+	// UserTokenWallet is the client for interacting with the UserTokenWallet builders.
+	UserTokenWallet *UserTokenWalletClient
 
 	// lazily loaded.
 	client     *Client
@@ -213,11 +217,13 @@ func (tx *Tx) init() {
 	tx.Role = NewRoleClient(tx.config)
 	tx.System = NewSystemClient(tx.config)
 	tx.Thread = NewThreadClient(tx.config)
+	tx.TokenWalletLedger = NewTokenWalletLedgerClient(tx.config)
 	tx.Trace = NewTraceClient(tx.config)
 	tx.UsageLog = NewUsageLogClient(tx.config)
 	tx.User = NewUserClient(tx.config)
 	tx.UserProject = NewUserProjectClient(tx.config)
 	tx.UserRole = NewUserRoleClient(tx.config)
+	tx.UserTokenWallet = NewUserTokenWalletClient(tx.config)
 }
 
 // txDriver wraps the given dialect.Tx with a nop dialect.Driver implementation.

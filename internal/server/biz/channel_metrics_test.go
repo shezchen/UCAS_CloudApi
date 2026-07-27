@@ -12,6 +12,7 @@ import (
 	"github.com/looplj/axonhub/internal/ent"
 	"github.com/looplj/axonhub/internal/ent/channel"
 	"github.com/looplj/axonhub/internal/ent/enttest"
+	"github.com/looplj/axonhub/internal/ent/requestexecution"
 	"github.com/looplj/axonhub/internal/objects"
 	"github.com/looplj/axonhub/internal/pkg/xcache"
 )
@@ -43,6 +44,47 @@ func TestAggregatedMetrics_Clone(t *testing.T) {
 	require.Equal(t, metrics.StreamingSampleCount, cloned.StreamingSampleCount)
 	require.Equal(t, metrics.NonStreamingLatencyEWMA, cloned.NonStreamingLatencyEWMA)
 	require.Equal(t, metrics.NonStreamingSampleCount, cloned.NonStreamingSampleCount)
+}
+
+func TestChannelService_LoadChannelPerformancesReadsSQLiteAggregateTimesSafely(t *testing.T) {
+	client := enttest.NewEntClient(t, "sqlite3", "file:channel-performance-load?mode=memory&_fk=0")
+	defer client.Close()
+
+	ctx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+	svc := NewChannelServiceForTest(client)
+	now := time.Now().UTC()
+	olderFailure := now.Add(-2 * time.Minute)
+	latestFailure := now.Add(-time.Minute)
+
+	for _, createdAt := range []time.Time{olderFailure, latestFailure} {
+		_, err := client.RequestExecution.Create().
+			SetRequestID(1).
+			SetChannelID(42).
+			SetModelID("test-model").
+			SetRequestBody(objects.JSONRawMessage(`{}`)).
+			SetStatus(requestexecution.StatusFailed).
+			SetCreatedAt(createdAt).
+			SetUpdatedAt(createdAt).
+			Save(ctx)
+		require.NoError(t, err)
+	}
+
+	_, err := client.RequestExecution.Create().
+		SetRequestID(2).
+		SetChannelID(42).
+		SetModelID("test-model").
+		SetRequestBody(objects.JSONRawMessage(`{}`)).
+		SetStatus(requestexecution.StatusCompleted).
+		SetCreatedAt(now).
+		SetUpdatedAt(now).
+		Save(ctx)
+	require.NoError(t, err)
+
+	require.NoError(t, svc.loadChannelPerformances(ctx))
+	metrics, err := svc.GetChannelMetrics(ctx, 42)
+	require.NoError(t, err)
+	require.NotNil(t, metrics.LastFailureAt)
+	require.WithinDuration(t, latestFailure, *metrics.LastFailureAt, time.Nanosecond)
 }
 
 func TestChannelMetrics_RecordSuccess(t *testing.T) {

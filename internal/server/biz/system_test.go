@@ -23,6 +23,24 @@ func TestDefaultRetryPolicy_RetriesSameChannelOnceAndRejectsEmptyResponses(t *te
 	require.True(t, defaultRetryPolicy.EmptyResponseDetection)
 }
 
+func TestSystemService_TimeLocationAllowsBackgroundReads(t *testing.T) {
+	client := enttest.NewEntClient(t, "sqlite3", "file:system-time-location?mode=memory&_fk=0")
+	defer client.Close()
+
+	setupCtx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+	service := NewSystemService(SystemServiceParams{
+		CacheConfig: xcache.Config{Mode: xcache.ModeMemory},
+		Ent:         client,
+	})
+	require.NoError(t, service.SetGeneralSettings(setupCtx, SystemGeneralSettings{
+		CurrencyCode: "USD",
+		Timezone:     "Asia/Shanghai",
+	}))
+
+	backgroundCtx := ent.NewContext(context.Background(), client)
+	require.Equal(t, "Asia/Shanghai", service.TimeLocation(backgroundCtx).String())
+}
+
 func TestSystemService_EnsureCampusSharingPolicyV1MigratesOnce(t *testing.T) {
 	client := enttest.NewEntClient(t, "sqlite3", "file:campus-sharing-policy?mode=memory&_fk=0")
 	defer client.Close()

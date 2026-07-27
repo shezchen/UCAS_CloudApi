@@ -45,9 +45,8 @@ type channelMetrics struct {
 	aggregatedMetrics *AggregatedMetrics
 }
 
-// loadChannelPerformances loads channel performance metrics from request_execution table.
-// It queries the last 6 hours of data to initialize in-memory metrics for load balancing.
-// Uses a single GROUP BY query to fetch all channel metrics at once for better performance.
+// loadChannelPerformances loads recent channel failures from request_execution
+// to initialize the in-memory circuit-breaker state after a restart.
 func (svc *ChannelService) loadChannelPerformances(ctx context.Context) error {
 	client := svc.entFromContext(ctx)
 
@@ -92,48 +91,50 @@ type channelMetricsResult struct {
 	LastFailureAt *time.Time `json:"last_failure_at"`
 }
 
-// loadAllChannelMetricsFromExecutions loads metrics for all channels using a single GROUP BY query.
-// Uses raw SQL via Modify to get request count and last failure time in one query.
+// loadAllChannelMetricsFromExecutions loads the latest failure per channel.
+// Fetching typed entities avoids dialect-specific aggregate timestamp scans
+// (SQLite returns MAX(datetime) as text, while PostgreSQL returns time.Time).
 func (svc *ChannelService) loadAllChannelMetricsFromExecutions(ctx context.Context, client *ent.Client, since time.Time) (map[int]*channelMetricsResult, error) {
-	// Single query to get request count and last failure time for all channels
-	type queryResult struct {
-		ChannelID     int       `json:"channel_id"`
-		LastFailureAt time.Time `json:"last_failure_at"`
+	type channelIDResult struct {
+		ChannelID int `json:"channel_id"`
 	}
 
-	var results []queryResult
+	var channelIDs []channelIDResult
 
 	err := client.RequestExecution.Query().
 		Where(
 			requestexecution.CreatedAtGTE(since),
 			requestexecution.ChannelIDNotNil(),
-			requestexecution.StatusNotIn(requestexecution.StatusPending, requestexecution.StatusProcessing),
+			requestexecution.StatusEQ(requestexecution.StatusFailed),
 		).
-		Modify(func(s *sql.Selector) {
-			// Use a subquery or join to get last failure time per channel
-			// For simplicity, we use MAX(CASE WHEN status = 'failed' THEN created_at END) to get last failure
-			s.Select(
-				s.C(requestexecution.FieldChannelID),
-				sql.As(fmt.Sprintf("MAX(CASE WHEN status = '%s' THEN %s END)", requestexecution.StatusFailed, s.C(requestexecution.FieldCreatedAt)), "last_failure_at"),
-			).
-				GroupBy(s.C(requestexecution.FieldChannelID))
-		}).
-		Scan(ctx, &results)
+		Unique(true).
+		Select(requestexecution.FieldChannelID).
+		Scan(ctx, &channelIDs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query channel metrics: %w", err)
+		return nil, fmt.Errorf("failed to query channels with recent failures: %w", err)
 	}
 
-	metricsMap := make(map[int]*channelMetricsResult)
-
-	for _, r := range results {
-		m := &channelMetricsResult{
-			ChannelID: r.ChannelID,
+	metricsMap := make(map[int]*channelMetricsResult, len(channelIDs))
+	for _, row := range channelIDs {
+		latestFailure, err := client.RequestExecution.Query().
+			Where(
+				requestexecution.CreatedAtGTE(since),
+				requestexecution.ChannelIDEQ(row.ChannelID),
+				requestexecution.StatusEQ(requestexecution.StatusFailed),
+			).
+			Order(requestexecution.ByCreatedAt(sql.OrderDesc())).
+			First(ctx)
+		if ent.IsNotFound(err) {
+			continue
 		}
-		if !r.LastFailureAt.IsZero() {
-			m.LastFailureAt = &r.LastFailureAt
+		if err != nil {
+			return nil, fmt.Errorf("failed to query latest failure for channel %d: %w", row.ChannelID, err)
 		}
 
-		metricsMap[r.ChannelID] = m
+		metricsMap[row.ChannelID] = &channelMetricsResult{
+			ChannelID:     row.ChannelID,
+			LastFailureAt: &latestFailure.CreatedAt,
+		}
 	}
 
 	return metricsMap, nil

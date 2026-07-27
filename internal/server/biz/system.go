@@ -1323,7 +1323,9 @@ func (s *SystemService) TimeLocation(ctx context.Context) *time.Location {
 		return s.timeLocation
 	}
 
-	settings, err := s.GeneralSettings(ctx)
+	settings, err := authz.RunWithSystemBypass(ctx, "system-time-location", func(bypassCtx context.Context) (*SystemGeneralSettings, error) {
+		return s.GeneralSettings(bypassCtx)
+	})
 	if err != nil {
 		if ent.IsNotFound(err) {
 			s.timeLocation = time.UTC

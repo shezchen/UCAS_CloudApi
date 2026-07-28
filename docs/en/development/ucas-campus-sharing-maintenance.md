@@ -101,7 +101,7 @@ The Shared Resources page is the member home page and must keep all of the follo
 1. How to use the service: compatible Base URL, API-key creation, and copyable legal model IDs.
 2. Personal allowance: today's and this week's effective tokens, reset times, and permanent wallet balance.
 3. Available models: model ID, vision, tools, reasoning, context, and maximum output.
-4. Shared channels: name, provider, source, contributor, description, expiry, model count, and detailed health.
+4. Shared channels: name, provider, source, contributor, description, expiry, a complete expandable model list, measurable provider quota or an explicit unavailable state, project-wide cumulative effective tokens, and detailed health.
 5. How to contribute: a prominent Donate Channel action and a short explanation of rewards.
 6. Transparent statistics: user ranking, model ranking, and contributor attribution.
 
@@ -118,6 +118,13 @@ Members see the public channel projection, while only the contributor and Owner 
 ### 6.2 Automatic model catalog
 
 Creating or updating a channel synchronizes its model list and maintains same-name associations and new catalog entries. The Owner should not create every model manually.
+
+A channel model list has two explicit maintenance modes:
+
+1. **Automatic synchronization** dynamically merges provider-discovered models with contributor-added models. Later synchronization may add newly discovered provider models.
+2. **Authoritative custom list** makes the currently saved list the complete set that the channel publishes and routes. When a contributor removes a provider model, clears the list, or keeps only a subset of discovered models, the UI must disable automatic synchronization and save that list. Reopening or saving the editor must not select everything, repopulate removed entries, or rebound to the provider catalog.
+
+The contributor can re-enable automatic synchronization; the next synchronization resumes the dynamic provider-catalog and manual-model merge. Mode selection and list maintenance belong to the contributor and must not become Owner workload.
 
 Resolution order:
 
@@ -309,11 +316,35 @@ Upstream code defaults may still enable request and response body storage. Campu
 
 A sanitized activity panel does not prove that body storage is disabled. Never print other `systems` rows, bodies, API keys, SMTP credentials, or channel credentials to terminals, issues, or GitHub.
 
-## 11. Provider quotas and friend links
+## 11. Channel transparency, model benchmarks, and friend links
+
+### 11.1 Public channel cards
 
 The provider-quota battery is visible to every signed-in project member and is projected from enabled, unexpired channels through a strict provider-specific allowlist. Members are read-only and cannot refresh, reset, or manage quota state; the Owner retains management actions. Provider quota describes an upstream subscription or Coding Plan and is separate from the campus 16M/64M effective-token allowance.
 
-Implementation: `internal/server/api/provider_quota_view.go`, `frontend/src/components/quota-badges.tsx`.
+Each public channel card on Shared Resources must also:
+
+- show the remaining percentage for the tightest provider-reported window and its known reset time when measurable data exists;
+- honestly show unavailable, loading, or read failure when the provider cannot be queried or supplies no measurable field; missing data must never be interpreted as `0%` used or `100%` remaining;
+- preview a small number of models and provide an explicit control that expands the complete model list; model IDs must wrap in full instead of being replaced by an ellipsis;
+- show the channel's cumulative effective tokens within the current project. This follows section 7.2 and excludes manual probes; it is not the upstream account's lifetime consumption.
+
+Implementation: `internal/server/biz/campus_catalog.go`, `internal/server/api/provider_quota_view.go`, `frontend/src/features/campus-resources/`, `frontend/src/features/system/data/quotas.ts`, and `frontend/src/components/quota-badges.tsx`.
+
+### 11.2 Model performance and cost
+
+The Model Performance and Cost page directly embeds the official Artificial Analysis `https://artificialanalysis.ai/embed/llm-leaderboard` iframe and keeps a link to its official model leaderboard. The same original leaderboard helps members compare capability and cost. If the frame fails, the page only presents a failure explanation and the direct official link.
+
+Maintenance boundaries:
+
+- do not scrape, cache, proxy, crop, redraw, or republish leaderboard data;
+- do not read or rewrite the iframe DOM;
+- the external leaderboard is selection guidance only and never participates in channel routing, health, campus allowances, wallet rewards, or billing;
+- actual callable models remain defined by Shared Resources and `/v1/models`; absence from Artificial Analysis does not mean a channel is unavailable.
+
+Implementation: `frontend/src/features/model-benchmarks/`, `frontend/src/routes/_authenticated/project/model-benchmarks/`.
+
+### 11.3 Friend links
 
 Friend links are Owner-managed in General Settings. Name and URL are required; description is optional. Only absolute credential-free `http://` or `https://` URLs are accepted. Names and URLs are unique, and the list is capped at 20. Members see a read-only sidebar group.
 
@@ -325,7 +356,7 @@ Implementation: `internal/server/biz/system.go`, `internal/server/gql/system.res
 |---|---|---|
 | `POST` | `/admin/auth/signup/verification` | Public; request a UCAS email code |
 | `POST` | `/admin/auth/signup` | Public; create a verified member |
-| `GET` | `/admin/campus/resources` | Project member; models, channels, quota, wallet |
+| `GET` | `/admin/campus/resources` | Project member; models, channel models/health/cumulative effective tokens, account allowances, and wallet |
 | `GET` | `/admin/campus/api-activity` | Project member; own six-hour activity only |
 | `POST` | `/admin/campus/channels/:id/probe` | Project member; probe a public channel |
 | `GET` | `/admin/campus/channel-model-capabilities` | Contributor; own channel capabilities |
@@ -343,7 +374,7 @@ Successful `/admin/campus/*` and `/admin/provider-quotas` responses should use `
 | Routes and middleware | `internal/server/routes.go` |
 | Email signup | `internal/server/api/auth.go`, `internal/server/biz/auth.go` |
 | User and UCAS domains | `internal/server/biz/user.go` |
-| Resources, health, activity, overrides | `internal/server/biz/campus_catalog.go` |
+| Resources, channel models/cumulative usage, health, activity, overrides | `internal/server/biz/campus_catalog.go` |
 | Channel probe HTTP | `internal/server/api/campus_catalog.go` |
 | Automatic model catalog | `internal/server/biz/model_catalog.go`, `channel_model_sync.go` |
 | Effective tokens | `internal/server/biz/effective_tokens.go` |
@@ -353,7 +384,9 @@ Successful `/admin/campus/*` and `/admin/provider-quotas` responses should use `
 | Retry and health | `internal/server/orchestrator/retry.go`, `performance.go` |
 | User/model rankings | `internal/server/gql/campus_leaderboard.go` |
 | Provider quota projection | `internal/server/api/provider_quota_view.go` |
-| Shared Resources UI | `frontend/src/features/campus-resources/` |
+| Shared Resources and channel quota UI | `frontend/src/features/campus-resources/`, `frontend/src/features/system/data/quotas.ts` |
+| Channel model-selection UI | `frontend/src/features/channels/components/channels-action-dialog.tsx`, `frontend/src/features/channels/utils/model-selection.ts` |
+| Model performance and cost UI | `frontend/src/features/model-benchmarks/`, `frontend/src/routes/_authenticated/project/model-benchmarks/` |
 | API activity UI | `frontend/src/features/apikeys/` |
 | Owner global allowance UI | `frontend/src/features/users/components/user-daily-quota-settings-card.tsx` |
 | Owner friend links UI | `frontend/src/features/system/components/general-settings.tsx` |
@@ -368,13 +401,14 @@ Compilation alone is not acceptance. At minimum, cover:
 | Signup | Four legal domains, look-alike rejection, expiry/replay, fail-closed SMTP, no Owner creation |
 | API keys | Duplicate names, ownership isolation, last-four distinction |
 | Channels | Contributor CRUD, public projection, no Owner deletion while active, expiry, no credential leak |
-| Model sync | Same-name association, new models, unknown defaults, contributor overrides, reasoning tiers |
+| Model sync | Same-name association, new models, unknown defaults, contributor overrides, reasoning tiers; automatic provider/manual merge; remove, clear, and subset actions enter authoritative mode and survive reopen/save; re-enabling restores dynamic synchronization |
 | Quotas | 16M/64M defaults, immediate global Owner update, Beijing boundaries, key quota first, overshoot boundary |
 | Wallet | Floor 50%, self/Owner/probe exclusions, wallet first, concurrent settlement, backup/restore |
 | Rotation | Healthy best-effort fairness, affinity, recovered re-entry, empty output, tool-only output, status-less errors |
 | Probes | Adaptive model, honest status/error, model-only fallback, cooldown, no accounting |
 | Privacy | Body/chunk storage disabled, sanitization, six-hour scrub, no cross-user activity |
-| UI | Use/donate paths, no lost information, five health states, attribution, both rankings, quota battery |
+| Shared Resources UI | Use/donate paths, no lost information, five health states, attribution, both rankings, quota battery; measurable/unavailable channel quota distinction, complete model expansion, correct cumulative effective tokens, and no desktop or mobile overflow |
+| External model leaderboard UI | The original Artificial Analysis iframe loads, loading/failure fallbacks and the official direct link work, and the page does not affect routing, health, allowances, wallet, or billing |
 
 Add tests for new semantics instead of changing only the visible UI.
 

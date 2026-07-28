@@ -101,7 +101,7 @@ SMTP 密码必须通过 `AXONHUB_SMTP_PASSWORD` 注入，不得写入仓库、Co
 1. 如何使用：兼容 Base URL、创建 API Key 的入口、可直接复制的合法模型名称。
 2. 自己的额度：今日/本周有效 Token、重置时间、永久钱包余额。
 3. 可用模型：模型名、视觉、工具、推理、上下文和最大输出能力。
-4. 共享渠道：名称、提供商、来源、贡献者、描述、有效期、模型数量和健康详情。
+4. 共享渠道：名称、提供商、来源、贡献者、描述、有效期、完整可展开模型列表、可测的提供商配额或明确的不可测状态、项目累计有效 Token 和健康详情。
 5. 如何贡献：醒目的“捐赠渠道”入口和对回馈规则的简明说明。
 6. 透明统计：用户用量排行、模型用量排行和贡献者信息。
 
@@ -118,6 +118,13 @@ SMTP 密码必须通过 `AXONHUB_SMTP_PASSWORD` 注入，不得写入仓库、Co
 ### 6.2 自动模型目录
 
 渠道新增或更新后，系统同步其模型列表，并维护同名模型关联及新模型目录。Owner 不需要为每个渠道手工建模。
+
+渠道模型列表有两种明确的维护模式：
+
+1. **自动同步模式**：提供商发现到的模型与贡献者手工补充的模型动态合并。后续同步可以加入提供商新模型。
+2. **自定义权威模式**：当前保存的列表就是该渠道应公开和参与路由的完整列表。贡献者删除提供商模型、清空列表，或只保留发现列表的一个子集时，前端必须关闭自动同步并保存当前列表，不能在再次编辑或保存后自动全选、回填或反弹。
+
+贡献者可以重新启用自动同步；下一次同步会恢复提供商目录与手工模型的动态合并。切换模式和编辑模型列表都是贡献者自己的维护责任，不转嫁给 Owner。
 
 优先顺序：
 
@@ -309,11 +316,35 @@ Owner 在用户管理页修改的是这两个对所有账户统一生效的默�
 
 不能只看 UI，也不能因为短期活动面板已经脱敏就推断正文存储关闭。禁止在终端、工单或 GitHub 输出其他 `systems` 配置行、正文、API Key、SMTP 授权码或渠道凭证。
 
-## 11. 提供商配额与友链
+## 11. 渠道透明度、模型跑分与友链
+
+### 11.1 公开渠道卡
 
 “提供商配额”电池对所有已登录项目成员可见，数据来自启用且未过期渠道的严格字段白名单。普通成员只读，不能刷新、重置或管理；Owner 保留管理动作。它表示上游供应商/Coding Plan 配额，不是账户的 16M/64M 校内有效 Token 额度。
 
-实现位于 `internal/server/api/provider_quota_view.go` 和 `frontend/src/components/quota-badges.tsx`。
+“共享资源”里的每张公开渠道卡还必须：
+
+- 在提供商返回可量化窗口时，显示最紧张窗口的剩余百分比和已知重置时间；
+- 在提供商不支持查询、未返回可量化字段或加载失败时，诚实显示“不可测量”、加载中或读取失败，不能把缺失数据解释成 `0%` 已用或 `100%` 剩余；
+- 首屏预览少量模型，并提供明确按钮展开完整模型列表；模型名必须完整换行显示，不能用省略号代替用户需要复制的合法名称；
+- 显示该渠道在当前项目内累计产生的有效 Token。口径与 7.2 一致，排除手动测试；该数字不是上游账户的终身总消耗。
+
+实现位于 `internal/server/biz/campus_catalog.go`、`internal/server/api/provider_quota_view.go`、`frontend/src/features/campus-resources/`、`frontend/src/features/system/data/quotas.ts` 和 `frontend/src/components/quota-badges.tsx`。
+
+### 11.2 模型跑分与成本
+
+“模型跑分与成本”页直接嵌入 Artificial Analysis 官方 `https://artificialanalysis.ai/embed/llm-leaderboard` iframe，并保留打开其官方模型榜单的链接。页面用同一原始榜单帮助用户比较模型能力与成本；加载失败时只展示失败说明和官方直达链接。
+
+维护边界：
+
+- 不抓取、缓存、代理、裁剪、重绘或二次发布榜单数据；
+- 不读取或改写 iframe 内部 DOM；
+- 外部榜单只提供选型参考，不参与渠道路由、健康判断、校内额度、钱包回馈或账单计算；
+- 实际可调用模型仍以“共享资源”和 `/v1/models` 为准，Artificial Analysis 没有收录不等于渠道不可用。
+
+实现位于 `frontend/src/features/model-benchmarks/` 和 `frontend/src/routes/_authenticated/project/model-benchmarks/`。
+
+### 11.3 友链
 
 友链由 Owner 在系统常规设置中维护，名称和 URL 必填，描述选填；只允许无凭证的绝对 `http://` 或 `https://` 地址，名称和 URL 不重复，最多 20 条。普通成员在侧栏只读查看。
 
@@ -325,7 +356,7 @@ Owner 在用户管理页修改的是这两个对所有账户统一生效的默�
 |---|---|---|
 | `POST` | `/admin/auth/signup/verification` | 公开，申请国科大邮箱验证码 |
 | `POST` | `/admin/auth/signup` | 公开，验证后创建普通成员 |
-| `GET` | `/admin/campus/resources` | 项目成员，模型/渠道/额度/钱包汇总 |
+| `GET` | `/admin/campus/resources` | 项目成员，模型、渠道模型/健康/累计有效 Token、账户额度和钱包汇总 |
 | `GET` | `/admin/campus/api-activity` | 项目成员，仅自己的 6 小时活动 |
 | `POST` | `/admin/campus/channels/:id/probe` | 项目成员，测试公开渠道 |
 | `GET` | `/admin/campus/channel-model-capabilities` | 贡献者，自己的渠道能力 |
@@ -343,7 +374,7 @@ Owner 在用户管理页修改的是这两个对所有账户统一生效的默�
 | 路由与中间件 | `internal/server/routes.go` |
 | 邮箱注册 | `internal/server/api/auth.go`、`internal/server/biz/auth.go` |
 | 用户与 UCAS 域名 | `internal/server/biz/user.go` |
-| 共享资源、健康、活动、能力覆盖 | `internal/server/biz/campus_catalog.go` |
+| 共享资源、渠道模型/累计用量、健康、活动、能力覆盖 | `internal/server/biz/campus_catalog.go` |
 | 渠道测试 HTTP | `internal/server/api/campus_catalog.go` |
 | 自动模型目录 | `internal/server/biz/model_catalog.go`、`channel_model_sync.go` |
 | 有效 Token | `internal/server/biz/effective_tokens.go` |
@@ -353,7 +384,9 @@ Owner 在用户管理页修改的是这两个对所有账户统一生效的默�
 | 错误重试与健康 | `internal/server/orchestrator/retry.go`、`performance.go` |
 | 用户/模型排行 | `internal/server/gql/campus_leaderboard.go` |
 | 提供商配额 | `internal/server/api/provider_quota_view.go` |
-| 共享资源前端 | `frontend/src/features/campus-resources/` |
+| 共享资源与渠道配额前端 | `frontend/src/features/campus-resources/`、`frontend/src/features/system/data/quotas.ts` |
+| 渠道模型选择前端 | `frontend/src/features/channels/components/channels-action-dialog.tsx`、`frontend/src/features/channels/utils/model-selection.ts` |
+| 模型跑分与成本前端 | `frontend/src/features/model-benchmarks/`、`frontend/src/routes/_authenticated/project/model-benchmarks/` |
 | API 活动前端 | `frontend/src/features/apikeys/` |
 | Owner 全局额度 | `frontend/src/features/users/components/user-daily-quota-settings-card.tsx` |
 | Owner 友链 | `frontend/src/features/system/components/general-settings.tsx` |
@@ -368,13 +401,14 @@ Owner 在用户管理页修改的是这两个对所有账户统一生效的默�
 | 注册 | 四个合法域、相似域拒绝、验证码过期/重放、SMTP 失败关闭、Owner 不被创建 |
 | API Key | 同名 Key 成功、所有权隔离、后四位可区分 |
 | 渠道 | 贡献者 CRUD、他人只读公开投影、有效期内 Owner 不代删、到期、凭证不泄露 |
-| 模型同步 | 同名关联、新模型、未知模型默认、贡献者覆盖、`/v1/models` 推理档位 |
+| 模型同步 | 同名关联、新模型、未知模型默认、贡献者覆盖、`/v1/models` 推理档位；自动模式合并提供商/手工模型；删除、清空和子集选择切换为权威列表且编辑保存不反弹；重新启用后恢复动态同步 |
 | 配额 | 16M/64M 默认、Owner 修改实时全局生效、北京日/周边界、Key 配额先行、并发越界边界 |
 | 钱包 | 50% 向下取整、自用/Owner/测试排除、钱包先扣、并发结算、备份恢复 |
 | 轮换 | 健康候选尽量公平、会话粘连、恢复重入、空响应、纯工具调用、无状态错误 |
 | 渠道测试 | 自适应模型、真实状态码/错误、仅模型不支持才回退、30 秒冷却、不参与计量 |
 | 隐私 | 正文/分块关闭、错误脱敏、6 小时清理、跨用户活动不可见 |
-| UI | 使用与捐赠路径、所有信息未丢失、健康五态、贡献者、两类排行、配额电池 |
+| 共享资源 UI | 使用与捐赠路径、所有信息未丢失、健康五态、贡献者、两类排行、配额电池；渠道配额可测/不可测分明、模型完整展开、累计有效 Token 正确、桌面与移动端无溢出 |
+| 外部模型榜单 UI | Artificial Analysis 原始 iframe 可加载，加载中/失败回退和官方直达链接可用；页面不影响路由、健康、额度、钱包或计费 |
 
 仓库已有对应单元测试；新增语义必须补测试，而不是只改前端展示。
 

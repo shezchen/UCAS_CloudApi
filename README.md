@@ -20,6 +20,10 @@
 
 ---
 
+> **Maintaining the UCAS campus-sharing fork?** Start with the [UCAS Campus Sharing Gateway Maintenance Handbook](docs/en/development/ucas-campus-sharing-maintenance.md). It documents the fork-specific authorization, quotas, donation wallet, routing, privacy, and lossless release constraints.
+
+---
+
 ## ❤️ Sponsor
 
 <div align="center">

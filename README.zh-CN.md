@@ -20,6 +20,10 @@
 
 ---
 
+> **国科大校内共享分支维护者：** 请先阅读[《国科大校内共享网关维护手册》](docs/zh/development/ucas-campus-sharing-maintenance.md)。其中记录了本分支与上游不同的权限、配额、捐赠钱包、渠道轮换、隐私和无损发布约束。
+
+---
+
 ## ❤️ 赞助商
 
 <div align="center">

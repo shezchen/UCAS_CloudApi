@@ -56,6 +56,7 @@ Welcome to the AxonHub documentation center! This index will help you quickly fi
 
 | Document | Description |
 |----------|-------------|
+| [UCAS Campus Sharing Maintenance Handbook](development/ucas-campus-sharing-maintenance.md) | Business rules, authorization, quotas, wallet, routing, privacy, and safe releases for the campus fork |
 | [Development Guide](development/development.md) | Local development setup and contribution guidelines |
 | [Git Workflow](development/git-workflow.md) | Git branching and commit conventions |
 | [Entity Relationship Diagram](development/erd.md) | Database model relationship diagrams |
@@ -72,7 +73,8 @@ Welcome to the AxonHub documentation center! This index will help you quickly fi
 
 ## 🔗 Related Links
 
-- [GitHub Repository](https://github.com/looplj/axonhub)
+- [UCAS Campus Sharing Repository](https://github.com/shezchen/UCAS_CloudApi)
+- [Upstream AxonHub Repository](https://github.com/looplj/axonhub)
 - [DeepWiki Documentation](https://deepwiki.com/looplj/axonhub)
 - [Zread AI](https://zread.ai/looplj/axonhub)
 

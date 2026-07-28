@@ -55,6 +55,7 @@
 
 | 文档 | 描述 |
 |------|------|
+| [国科大校内共享网关维护手册](development/ucas-campus-sharing-maintenance.md) | 校内扩展的业务语义、权限、配额、钱包、轮换、隐私与安全发布 |
 | [开发指南](development/development.md) | 本地开发环境搭建和贡献指南 |
 | [Git 工作流](development/git-workflow.md) | 项目的 Git 分支和提交规范 |
 | [实体关系图](development/erd.md) | 数据库模型关系图 |
@@ -71,7 +72,8 @@
 
 ## 🔗 相关链接
 
-- [GitHub 仓库](https://github.com/looplj/axonhub)
+- [国科大校内共享项目仓库](https://github.com/shezchen/UCAS_CloudApi)
+- [上游 AxonHub 仓库](https://github.com/looplj/axonhub)
 - [DeepWiki 文档](https://deepwiki.com/looplj/axonhub)
 - [Zread AI](https://zread.ai/looplj/axonhub)
 

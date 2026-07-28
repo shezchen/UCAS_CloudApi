@@ -88,6 +88,10 @@ export const routeConfigs: RouteGroup[] = [
         // Every authenticated project member can view the sanitized resource catalog.
       },
       {
+        path: '/project/model-benchmarks',
+        // Every authenticated project member can view the independent public leaderboard.
+      },
+      {
         path: '/project/api-keys',
         requiredScopes: ['read_api_keys'],
         mode: 'hidden',

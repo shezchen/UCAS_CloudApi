@@ -1,0 +1,17 @@
+{
+  "modelBenchmarks.title": "模型跑分与成本排行",
+  "modelBenchmarks.description": "用独立测评对比模型能力、速度与成本，辅助选型。",
+  "modelBenchmarks.performance.title": "综合能力跑分",
+  "modelBenchmarks.performance.description": "查看 Intelligence Index、编程与智能体等独立测评。分数越高代表在对应测评集上的表现越好。",
+  "modelBenchmarks.cost.title": "价格与任务成本",
+  "modelBenchmarks.cost.description": "查看模型价格与 Cost per Task；点击表头即可按成本排序。低价不等于更适合具体任务。",
+  "modelBenchmarks.notice": "榜单由 Artificial Analysis 独立维护，和本项目的渠道健康、可用模型及计费互不绑定。实际能否调用请以“可用资源”页为准。",
+  "modelBenchmarks.embed.title": "Artificial Analysis LLM Leaderboard",
+  "modelBenchmarks.embed.description": "同一张权威榜单同时提供跑分、价格、每任务成本、速度和延迟；可点击列标题排序和筛选。",
+  "modelBenchmarks.embed.loading": "正在加载权威榜单…",
+  "modelBenchmarks.embed.failed": "外部榜单没有成功加载",
+  "modelBenchmarks.embed.failedDescription": "这不会影响共享 API。你仍可在 Artificial Analysis 官方页面查看最新数据。",
+  "modelBenchmarks.embed.frameTitle": "Artificial Analysis 模型跑分与成本排行榜",
+  "modelBenchmarks.openOfficial": "在官方页面打开",
+  "modelBenchmarks.source": "来源：Artificial Analysis 官方实时嵌入页面。本站不抓取、不缓存、不改写榜单数据；指标方法和价格口径以其官方说明为准。"
+}

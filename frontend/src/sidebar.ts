@@ -17,19 +17,21 @@ import {
   IconExternalLink,
   IconHeartHandshake,
 } from '@tabler/icons-react';
-import { Command } from 'lucide-react';
+import { BrainCircuit, Command } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '@/stores/authStore';
+import { useSelectedProjectId } from '@/stores/projectStore';
 import { useRoutePermissions } from '@/hooks/useRoutePermissions';
 import { useMe } from '@/features/auth/data/auth';
 import { useCampusFriendLinks } from '@/features/system/data/system';
-import { useSelectedProjectId } from '@/stores/projectStore';
 import { type SidebarData, type NavGroup, type NavLink } from './components/layout/types';
 
 function isSafeCampusFriendLink(url: string) {
   try {
     const parsed = new URL(url);
-    return (parsed.protocol === 'https:' || parsed.protocol === 'http:') && Boolean(parsed.hostname) && !parsed.username && !parsed.password;
+    return (
+      (parsed.protocol === 'https:' || parsed.protocol === 'http:') && Boolean(parsed.hostname) && !parsed.username && !parsed.password
+    );
   } catch {
     return false;
   }
@@ -138,6 +140,11 @@ export function useSidebarData(): SidebarData {
           icon: IconBooks,
         } as NavLink,
         {
+          title: t('sidebar.items.modelBenchmarks'),
+          url: '/project/model-benchmarks',
+          icon: BrainCircuit,
+        } as NavLink,
+        {
           title: t('sidebar.items.apiKeys'),
           url: '/project/api-keys',
           icon: IconKey,
@@ -229,6 +236,11 @@ export function useSidebarData(): SidebarData {
           title: t('sidebar.items.startUsing'),
           url: '/project/resources',
           icon: IconBooks,
+        } as NavLink,
+        {
+          title: t('sidebar.items.modelBenchmarks'),
+          url: '/project/model-benchmarks',
+          icon: BrainCircuit,
         } as NavLink,
         {
           title: t('sidebar.items.myApiKeys'),

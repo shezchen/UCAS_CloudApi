@@ -22,6 +22,7 @@
   "sidebar.items.usageLeaderboard": "Usage ranking",
   "sidebar.items.donateChannel": "Donate a channel",
   "sidebar.items.resources": "Available Resources",
+  "sidebar.items.modelBenchmarks": "Model performance & cost",
   "sidebar.items.usageStats": "Usage Statistics",
   "usageStats.description": "Token usage and cost distribution across users in the project.",
   "usageStats.leaderboard.title": "Usage ranking",

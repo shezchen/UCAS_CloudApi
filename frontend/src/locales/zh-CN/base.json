@@ -22,6 +22,7 @@
   "sidebar.items.usageLeaderboard": "用量排行",
   "sidebar.items.donateChannel": "捐赠渠道",
   "sidebar.items.resources": "可用资源",
+  "sidebar.items.modelBenchmarks": "模型跑分与成本",
   "sidebar.items.usageStats": "用量统计",
   "usageStats.description": "项目内各用户的 Token 消耗与成本分布。",
   "usageStats.leaderboard.title": "用量排行",

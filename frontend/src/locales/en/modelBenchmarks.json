@@ -1,0 +1,17 @@
+{
+  "modelBenchmarks.title": "Model performance and cost",
+  "modelBenchmarks.description": "Compare independent model benchmarks, speed, and cost before choosing a model.",
+  "modelBenchmarks.performance.title": "Capability benchmarks",
+  "modelBenchmarks.performance.description": "Compare the Intelligence Index, coding, agentic, and other independent evaluations. Higher scores indicate stronger results on that benchmark.",
+  "modelBenchmarks.cost.title": "Price and task cost",
+  "modelBenchmarks.cost.description": "Compare model price and Cost per Task, then select a column header to sort. A lower price does not guarantee a better fit for your task.",
+  "modelBenchmarks.notice": "Artificial Analysis independently maintains this leaderboard. It does not affect project routing, channel health, availability, or billing. See Available Resources for models you can actually call.",
+  "modelBenchmarks.embed.title": "Artificial Analysis LLM Leaderboard",
+  "modelBenchmarks.embed.description": "One official leaderboard covers scores, price, cost per task, speed, and latency. Select a column header to sort or filter.",
+  "modelBenchmarks.embed.loading": "Loading the independent leaderboard…",
+  "modelBenchmarks.embed.failed": "The external leaderboard did not load",
+  "modelBenchmarks.embed.failedDescription": "This does not affect the shared API. You can still view the latest data on the official Artificial Analysis page.",
+  "modelBenchmarks.embed.frameTitle": "Artificial Analysis model performance and cost leaderboard",
+  "modelBenchmarks.openOfficial": "Open official page",
+  "modelBenchmarks.source": "Source: the official live Artificial Analysis embed. This site does not scrape, cache, or modify leaderboard data. See the official methodology for metric and pricing definitions."
+}

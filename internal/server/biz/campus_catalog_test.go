@@ -19,6 +19,7 @@ import (
 	"github.com/looplj/axonhub/internal/ent/project"
 	"github.com/looplj/axonhub/internal/ent/request"
 	"github.com/looplj/axonhub/internal/ent/requestexecution"
+	"github.com/looplj/axonhub/internal/ent/usagelog"
 	"github.com/looplj/axonhub/internal/objects"
 	"github.com/looplj/axonhub/internal/scopes"
 )
@@ -218,12 +219,16 @@ func TestCampusCatalogServiceOwnModelsAndSafeChannels(t *testing.T) {
 	require.Equal(t, "项目维护者", projectChannel.Contributor)
 	require.Empty(t, projectChannel.Description)
 	require.Equal(t, 1, projectChannel.ModelCount)
+	require.Equal(t, []string{"gpt-5"}, projectChannel.Models)
+	require.Zero(t, projectChannel.EffectiveTokens)
 
 	donatedChannel := byName["同学共享"]
 	require.Equal(t, "donated", donatedChannel.Source)
 	require.Equal(t, "目录同学", donatedChannel.Contributor)
 	require.Equal(t, "公益 共享说明", donatedChannel.Description)
 	require.Equal(t, 2, donatedChannel.ModelCount)
+	require.Equal(t, []string{"kimi-k2.5", "kimi-k2.6"}, donatedChannel.Models)
+	require.Zero(t, donatedChannel.EffectiveTokens)
 
 	disabledChannel := byName["暂时停用的共享"]
 	require.Equal(t, "disabled", disabledChannel.Status)
@@ -239,6 +244,100 @@ func TestCampusCatalogServiceOwnModelsAndSafeChannels(t *testing.T) {
 	} {
 		require.NotContains(t, payloadText, forbidden)
 	}
+}
+
+func TestCampusCatalogPublicChannelsExposeRequestModelsAndProjectEffectiveTokens(t *testing.T) {
+	client := enttest.NewEntClient(t, "sqlite3", "file:campus_catalog_channel_transparency?mode=memory&_fk=0")
+	defer client.Close()
+
+	setupCtx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+	campusProject := client.Project.Create().
+		SetName("Campus").
+		SetStatus(project.StatusActive).
+		SaveX(setupCtx)
+	otherProject := client.Project.Create().
+		SetName("Other").
+		SetStatus(project.StatusActive).
+		SaveX(setupCtx)
+
+	mappedChannel := client.Channel.Create().
+		SetType(channel.TypeOpenai).
+		SetName("映射渠道").
+		SetStatus(channel.StatusEnabled).
+		SetCredentials(objects.ChannelCredentials{APIKey: "mapped-secret"}).
+		SetSupportedModels([]string{"upstream-model", "other-model", ""}).
+		SetSettings(&objects.ChannelSettings{
+			ModelMappings: []objects.ModelMapping{
+				{From: "z-model", To: "upstream-model"},
+				{From: "a-model", To: "other-model"},
+			},
+			HideOriginalModels: true,
+		}).
+		SetDefaultTestModel("upstream-model").
+		SaveX(setupCtx)
+	directChannel := client.Channel.Create().
+		SetType(channel.TypeOpenai).
+		SetName("直连渠道").
+		SetStatus(channel.StatusEnabled).
+		SetCredentials(objects.ChannelCredentials{APIKey: "direct-secret"}).
+		SetSupportedModels([]string{"beta", "alpha", "beta", " "}).
+		SetDefaultTestModel("alpha").
+		SaveX(setupCtx)
+
+	createUsage := func(
+		requestID, projectID, channelID int,
+		source usagelog.Source,
+		promptTokens, cachedTokens, completionTokens, totalTokens, effectiveTokens int64,
+		cacheReadKnown bool,
+	) {
+		t.Helper()
+		create := client.UsageLog.Create().
+			SetRequestID(requestID).
+			SetProjectID(projectID).
+			SetChannelID(channelID).
+			SetModelID("public-model").
+			SetSource(source).
+			SetFormat("openai/chat_completions").
+			SetPromptTokens(promptTokens).
+			SetPromptCachedTokens(cachedTokens).
+			SetCompletionTokens(completionTokens).
+			SetTotalTokens(totalTokens).
+			SetEffectiveTokens(effectiveTokens)
+		if cacheReadKnown {
+			create.SetCacheReadTokensKnown(true)
+		}
+		create.SaveX(setupCtx)
+	}
+
+	// The current row contributes its stored cache-excluding value.
+	createUsage(1, campusProject.ID, mappedChannel.ID, usagelog.SourceAPI, 100, 40, 20, 120, 80, true)
+	// A pre-migration total-only row uses the shared conservative fallback.
+	createUsage(2, campusProject.ID, mappedChannel.ID, usagelog.SourcePlayground, 0, 0, 0, 50, 0, false)
+	// Manual channel tests never contribute to the public total.
+	createUsage(3, campusProject.ID, mappedChannel.ID, usagelog.SourceTest, 1_000, 0, 0, 1_000, 1_000, true)
+	// Usage from another project is not disclosed in this project's catalog.
+	createUsage(4, otherProject.ID, mappedChannel.ID, usagelog.SourceAPI, 500, 0, 0, 500, 500, true)
+	createUsage(5, campusProject.ID, directChannel.ID, usagelog.SourceAPI, 10, 0, 5, 15, 15, true)
+
+	resources, err := (&CampusCatalogService{client: client}).listPublicChannels(
+		setupCtx,
+		campusProject.ID,
+		time.Now(),
+	)
+	require.NoError(t, err)
+	require.Len(t, resources, 2)
+
+	byName := make(map[string]CampusChannelResource, len(resources))
+	for _, resource := range resources {
+		byName[resource.Name] = resource
+	}
+
+	require.Equal(t, []string{"a-model", "z-model"}, byName["映射渠道"].Models)
+	require.Equal(t, 2, byName["映射渠道"].ModelCount)
+	require.Equal(t, int64(130), byName["映射渠道"].EffectiveTokens)
+	require.Equal(t, []string{"alpha", "beta"}, byName["直连渠道"].Models)
+	require.Equal(t, 2, byName["直连渠道"].ModelCount)
+	require.Equal(t, int64(15), byName["直连渠道"].EffectiveTokens)
 }
 
 func TestCampusCatalogServiceAuthorizationAndOwnerIsolation(t *testing.T) {

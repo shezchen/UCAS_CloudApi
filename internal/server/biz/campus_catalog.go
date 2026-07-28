@@ -167,17 +167,19 @@ type UpdateCampusChannelModelCapabilitiesInput struct {
 }
 
 type CampusChannelResource struct {
-	ID          string               `json:"id"`
-	Name        string               `json:"name"`
-	Provider    string               `json:"provider"`
-	Source      string               `json:"source"`
-	Description string               `json:"description,omitempty"`
-	Contributor string               `json:"contributor"`
-	Status      string               `json:"status"`
-	ExpiresAt   *time.Time           `json:"expiresAt,omitempty"`
-	ModelCount  int                  `json:"modelCount"`
-	CanProbe    bool                 `json:"canProbe"`
-	Health      *CampusChannelHealth `json:"health,omitempty"`
+	ID              string               `json:"id"`
+	Name            string               `json:"name"`
+	Provider        string               `json:"provider"`
+	Source          string               `json:"source"`
+	Description     string               `json:"description,omitempty"`
+	Contributor     string               `json:"contributor"`
+	Status          string               `json:"status"`
+	ExpiresAt       *time.Time           `json:"expiresAt,omitempty"`
+	Models          []string             `json:"models"`
+	ModelCount      int                  `json:"modelCount"`
+	EffectiveTokens int64                `json:"effectiveTokens"`
+	CanProbe        bool                 `json:"canProbe"`
+	Health          *CampusChannelHealth `json:"health,omitempty"`
 }
 
 type CampusChannelHealth struct {
@@ -787,6 +789,7 @@ func (svc *CampusCatalogService) listPublicChannels(ctx context.Context, project
 			channel.FieldUserID,
 			channel.FieldExpiresAt,
 			channel.FieldSupportedModels,
+			channel.FieldSettings,
 			channel.FieldRemark,
 		).
 		WithUser(func(query *ent.UserQuery) {
@@ -806,20 +809,33 @@ func (svc *CampusCatalogService) listPublicChannels(ctx context.Context, project
 	if err != nil {
 		return nil, err
 	}
+	effectiveTokensByChannel, err := svc.channelEffectiveTokens(ctx, projectID, channelIDs)
+	if err != nil {
+		return nil, err
+	}
 
 	result := make([]CampusChannelResource, 0, len(channels))
 	for _, ch := range channels {
+		modelSet := make(map[string]struct{})
+		for requestModel := range (&Channel{Channel: ch}).GetModelEntries() {
+			if strings.TrimSpace(requestModel) != "" {
+				modelSet[requestModel] = struct{}{}
+			}
+		}
+		models := sortedStringSet(modelSet)
 		resource := CampusChannelResource{
-			ID:          strconv.Itoa(ch.ID),
-			Name:        ch.Name,
-			Provider:    ch.Type.String(),
-			Source:      "project",
-			Contributor: "项目维护者",
-			Status:      ch.Status.String(),
-			ExpiresAt:   ch.ExpiresAt,
-			ModelCount:  uniqueNonEmptyCount(ch.SupportedModels),
-			CanProbe:    ch.Status == channel.StatusEnabled && firstCampusProbeModel(ch) != "",
-			Health:      healthByChannel[ch.ID],
+			ID:              strconv.Itoa(ch.ID),
+			Name:            ch.Name,
+			Provider:        ch.Type.String(),
+			Source:          "project",
+			Contributor:     "项目维护者",
+			Status:          ch.Status.String(),
+			ExpiresAt:       ch.ExpiresAt,
+			Models:          models,
+			ModelCount:      len(models),
+			EffectiveTokens: effectiveTokensByChannel[ch.ID],
+			CanProbe:        ch.Status == channel.StatusEnabled && firstCampusProbeModel(ch) != "",
+			Health:          healthByChannel[ch.ID],
 		}
 		if ch.Status != channel.StatusEnabled {
 			resource.Health = &CampusChannelHealth{
@@ -840,6 +856,46 @@ func (svc *CampusCatalogService) listPublicChannels(ctx context.Context, project
 		}
 
 		result = append(result, resource)
+	}
+
+	return result, nil
+}
+
+func (svc *CampusCatalogService) channelEffectiveTokens(
+	ctx context.Context,
+	projectID int,
+	channelIDs []int,
+) (map[int]int64, error) {
+	result := make(map[int]int64, len(channelIDs))
+	if len(channelIDs) == 0 {
+		return result, nil
+	}
+
+	type aggregateRow struct {
+		ChannelID       int   `json:"channel_id"`
+		EffectiveTokens int64 `json:"effective_tokens"`
+	}
+	var rows []aggregateRow
+	if err := svc.client.UsageLog.Query().
+		Where(
+			usagelog.ProjectIDEQ(projectID),
+			usagelog.ChannelIDIn(channelIDs...),
+			usagelog.SourceNEQ(usagelog.SourceTest),
+		).
+		Modify(func(selector *sql.Selector) {
+			selector.
+				Select(
+					selector.C(usagelog.FieldChannelID),
+					sql.As(fmt.Sprintf("COALESCE(SUM(%s), 0)", effectiveTokensSQL(selector)), "effective_tokens"),
+				).
+				GroupBy(selector.C(usagelog.FieldChannelID))
+		}).
+		Scan(ctx, &rows); err != nil {
+		return nil, fmt.Errorf("aggregate public campus channel tokens: %w", err)
+	}
+
+	for _, row := range rows {
+		result[row.ChannelID] = max(row.EffectiveTokens, int64(0))
 	}
 
 	return result, nil
@@ -1465,16 +1521,6 @@ func conservativeCampusOptionalLimit(left, right *int) *int {
 	}
 	value := min(*left, *right)
 	return &value
-}
-
-func uniqueNonEmptyCount(values []string) int {
-	set := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		if value = strings.TrimSpace(value); value != "" {
-			set[value] = struct{}{}
-		}
-	}
-	return len(set)
 }
 
 func sanitizeCampusChannelDescription(remark *string) string {

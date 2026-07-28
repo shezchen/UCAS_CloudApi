@@ -39,7 +39,9 @@ const campusResourceChannelSchema = z.object({
   contributor: z.string(),
   status: z.enum(['enabled', 'disabled']),
   expiresAt: z.string().optional(),
+  models: z.array(z.string()).default([]),
   modelCount: z.number().int().nonnegative(),
+  effectiveTokens: z.number().int().nonnegative().default(0),
   canProbe: z.boolean().optional().default(false),
   health: campusChannelHealthSchema.optional(),
 });

@@ -346,6 +346,138 @@ export type ProviderQuotaChannel = {
     }
 );
 
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function maxDefined(values: Array<number | undefined>): number | undefined {
+  const defined = values.filter((value): value is number => value !== undefined);
+  return defined.length > 0 ? Math.max(...defined) : undefined;
+}
+
+function clampPercentage(value: number | undefined): number | undefined {
+  return value === undefined ? undefined : Math.min(100, Math.max(0, value));
+}
+
+/**
+ * Returns the most constrained provider-reported quota window as a used
+ * percentage. `undefined` means the provider did not report a measurable
+ * quota; callers must not present that as either 0% used or 100% remaining.
+ */
+export function getProviderQuotaUsagePercentage(channel: ProviderQuotaChannel): number | undefined {
+  if (channel.type === 'claudecode') {
+    const windows = channel.quotaStatus.quotaData.windows;
+    const usage = maxDefined([
+      finiteNumber(windows?.['5h']?.utilization),
+      finiteNumber(windows?.['7d']?.utilization),
+      finiteNumber(windows?.overage?.utilization),
+    ]);
+    return clampPercentage(usage === undefined ? undefined : usage * 100);
+  }
+
+  if (channel.type === 'codex') {
+    const rateLimit = channel.quotaStatus.quotaData.rate_limit;
+    return clampPercentage(
+      maxDefined([finiteNumber(rateLimit?.primary_window?.used_percent), finiteNumber(rateLimit?.secondary_window?.used_percent)])
+    );
+  }
+
+  if (channel.type === 'cline') {
+    const data = channel.quotaStatus.quotaData;
+    if (!isClinePassPoolQuotaData(data)) return undefined;
+    return clampPercentage(
+      maxDefined(
+        [data.windows.last5h, data.windows.last7d, data.windows.last30d].map((window) => {
+          const explicit = finiteNumber(window?.usage_percent);
+          if (explicit !== undefined) return explicit;
+          const ratio = finiteNumber(window?.usage_ratio);
+          return ratio === undefined ? undefined : ratio * 100;
+        })
+      )
+    );
+  }
+
+  if (channel.type === 'github_copilot') {
+    const data = channel.quotaStatus.quotaData;
+    const remainingPercentages: number[] = [];
+
+    if (data.limited_user_quotas) {
+      for (const [key, remaining] of Object.entries(data.limited_user_quotas)) {
+        const remainingValue = finiteNumber(remaining);
+        const total = finiteNumber(data.total_quotas?.[key]);
+        if (remainingValue !== undefined && total !== undefined && total > 0) {
+          remainingPercentages.push((remainingValue / total) * 100);
+        }
+      }
+    }
+
+    if (data.quota_snapshots) {
+      for (const snapshot of Object.values(data.quota_snapshots)) {
+        const remaining = snapshot?.unlimited ? undefined : finiteNumber(snapshot?.percent_remaining);
+        if (remaining !== undefined) remainingPercentages.push(remaining);
+      }
+    }
+
+    return remainingPercentages.length === 0 ? undefined : clampPercentage(100 - Math.min(...remainingPercentages));
+  }
+
+  if (channel.type === 'nanogpt' || channel.type === 'nanogpt_responses') {
+    const windows = channel.quotaStatus.quotaData.windows;
+    const usage = maxDefined([
+      finiteNumber(windows?.weeklyInputTokens?.percentUsed),
+      finiteNumber(windows?.dailyInputTokens?.percentUsed),
+      finiteNumber(windows?.dailyImages?.percentUsed),
+    ]);
+    return clampPercentage(usage === undefined ? undefined : usage * 100);
+  }
+
+  if (channel.type === 'opencode_go' || channel.type === 'opencode_go_anthropic') {
+    const windows = channel.quotaStatus.quotaData.windows;
+    return clampPercentage(
+      maxDefined([
+        finiteNumber(windows?.rolling?.usage_percent),
+        finiteNumber(windows?.weekly?.usage_percent),
+        finiteNumber(windows?.monthly?.usage_percent),
+      ])
+    );
+  }
+
+  if ((channel.type === 'openai' || channel.type === 'openai_responses') && channel.providerType === 'wafer') {
+    return clampPercentage(finiteNumber(channel.quotaStatus.quotaData.current_period_used_percent));
+  }
+
+  if ((channel.type === 'openai' || channel.type === 'openai_responses') && channel.providerType === 'synthetic') {
+    const remaining = finiteNumber(channel.quotaStatus.quotaData.weeklyTokenLimit?.percentRemaining);
+    return clampPercentage(remaining === undefined ? undefined : 100 - remaining);
+  }
+
+  if ((channel.type === 'openai' || channel.type === 'openai_responses') && channel.providerType === 'neuralwatt') {
+    const included = finiteNumber(channel.quotaStatus.quotaData.subscription?.kwh_included);
+    const used = finiteNumber(channel.quotaStatus.quotaData.subscription?.kwh_used);
+    return clampPercentage(included !== undefined && included > 0 && used !== undefined ? (used / included) * 100 : undefined);
+  }
+
+  if ((channel.type === 'openai' || channel.type === 'openai_responses') && channel.providerType === 'apertis') {
+    const data = channel.quotaStatus.quotaData;
+    if (data.is_subscriber) {
+      const limit = finiteNumber(data.subscription?.cycle_quota_limit);
+      const used = finiteNumber(data.subscription?.cycle_quota_used);
+      if (limit !== undefined && limit > 0 && used !== undefined) {
+        return clampPercentage((used / limit) * 100);
+      }
+    }
+    if (!data.payg?.token_is_unlimited) {
+      const total = finiteNumber(data.payg?.token_total);
+      const used = finiteNumber(data.payg?.token_used);
+      if (total !== undefined && total > 0 && used !== undefined) {
+        return clampPercentage((used / total) * 100);
+      }
+    }
+  }
+
+  return undefined;
+}
+
 type ProviderQuotaStatusNode = {
   status: 'available' | 'warning' | 'exhausted' | 'unknown';
   nextResetAt: string | null;

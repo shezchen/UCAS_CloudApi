@@ -22,6 +22,7 @@ import {
   OpenCodeGoQuotaWindow,
   ClineQuotaWindow,
   isClinePassPoolQuotaData,
+  getProviderQuotaUsagePercentage,
   resetChannelQuotaNow,
   checkProviderQuotas,
 } from '@/features/system/data/quotas';
@@ -89,88 +90,7 @@ function getClineUsagePercent(window?: ClineQuotaWindow): number {
 }
 
 function getChannelPercentage(channel: ProviderQuotaChannel): number {
-  let percentage = 0;
-  if (channel.type === 'claudecode') {
-    const qd = channel.quotaStatus.quotaData;
-    const util5h = qd.windows?.['5h']?.utilization || 0;
-    const util7d = qd.windows?.['7d']?.utilization || 0;
-    percentage = Math.max(util5h, util7d) * 100;
-  } else if (channel.type === 'codex') {
-    const qd = channel.quotaStatus.quotaData;
-    percentage = qd.rate_limit?.primary_window?.used_percent || 0;
-  } else if (channel.type === 'cline') {
-    const qd = channel.quotaStatus.quotaData;
-    percentage = isClinePassPoolQuotaData(qd)
-      ? Math.max(getClineUsagePercent(qd.windows.last5h), getClineUsagePercent(qd.windows.last7d), getClineUsagePercent(qd.windows.last30d))
-      : 0;
-  } else if (channel.type === 'github_copilot') {
-    const qd = channel.quotaStatus.quotaData;
-    let lowestRemaining = 100;
-    const limitedQuotas = qd.limited_user_quotas;
-    const totalQuotas = qd.total_quotas;
-
-    if (limitedQuotas) {
-      Object.entries(limitedQuotas).forEach(([key, remaining]) => {
-        if (typeof remaining === 'number') {
-          const total = totalQuotas?.[key] ?? remaining;
-          if (total > 0) {
-            lowestRemaining = Math.min(lowestRemaining, (remaining / total) * 100);
-          }
-        }
-      });
-    }
-
-    if (qd.quota_snapshots) {
-      Object.values(qd.quota_snapshots).forEach((snapshot) => {
-        if (snapshot && !snapshot.unlimited && typeof snapshot.percent_remaining === 'number') {
-          lowestRemaining = Math.min(lowestRemaining, snapshot.percent_remaining);
-        }
-      });
-    }
-
-    percentage = 100 - lowestRemaining;
-  } else if (channel.type === 'nanogpt' || channel.type === 'nanogpt_responses') {
-    const qd = channel.quotaStatus.quotaData;
-    let maxPercent = 0;
-    if (qd.windows?.weeklyInputTokens) maxPercent = Math.max(maxPercent, (qd.windows.weeklyInputTokens.percentUsed ?? 0) * 100);
-    if (qd.windows?.dailyInputTokens) maxPercent = Math.max(maxPercent, (qd.windows.dailyInputTokens.percentUsed ?? 0) * 100);
-    if (qd.windows?.dailyImages) maxPercent = Math.max(maxPercent, (qd.windows.dailyImages.percentUsed ?? 0) * 100);
-    percentage = maxPercent;
-  } else if (isOpenCodeGoType(channel.type)) {
-    const qd = channel.quotaStatus.quotaData as ProviderOpenCodeGoQuotaData | undefined;
-    percentage = Math.max(
-      qd?.windows?.rolling?.usage_percent ?? 0,
-      qd?.windows?.weekly?.usage_percent ?? 0,
-      qd?.windows?.monthly?.usage_percent ?? 0
-    );
-  } else if (isOpenaiType(channel.type) && channel.providerType === 'wafer') {
-    const qd = channel.quotaStatus.quotaData as ProviderWaferQuotaData | undefined;
-    percentage = qd?.current_period_used_percent ?? 0;
-  } else if (isOpenaiType(channel.type) && channel.providerType === 'synthetic') {
-    const qd = channel.quotaStatus.quotaData as ProviderSyntheticQuotaData | undefined;
-    const weeklyPct = qd?.weeklyTokenLimit?.percentRemaining ?? 100;
-    percentage = 100 - weeklyPct;
-  } else if (isOpenaiType(channel.type) && channel.providerType === 'neuralwatt') {
-    const qd = channel.quotaStatus.quotaData as ProviderNeuralWattQuotaData | undefined;
-    const kwhIncluded = qd?.subscription?.kwh_included ?? 0;
-    const kwhUsed = qd?.subscription?.kwh_used ?? 0;
-    if (kwhIncluded > 0) {
-      percentage = (kwhUsed / kwhIncluded) * 100;
-    }
-  } else if (isOpenaiType(channel.type) && channel.providerType === 'apertis') {
-    percentage = getApertisPercentage(channel.quotaStatus.quotaData as ProviderApertisQuotaData | undefined);
-  }
-  return percentage;
-}
-function getApertisPercentage(qd: ProviderApertisQuotaData | undefined): number {
-  if (!qd) return 0;
-  if (qd.is_subscriber && qd.subscription?.cycle_quota_limit) {
-    return (qd.subscription.cycle_quota_used / qd.subscription.cycle_quota_limit) * 100;
-  }
-  if (qd.payg && !qd.payg.token_is_unlimited && typeof qd.payg.token_total === 'number' && typeof qd.payg.token_used === 'number') {
-    return (qd.payg.token_used / qd.payg.token_total) * 100;
-  }
-  return 0;
+  return getProviderQuotaUsagePercentage(channel) ?? 0;
 }
 
 function ProgressBar({

@@ -2,8 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import {
   BookOpenCheck,
+  BatteryMedium,
   CalendarDays,
   Check,
+  ChevronDown,
+  ChevronUp,
   CircleAlert,
   CircleCheckBig,
   CircleHelp,
@@ -39,6 +42,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Header } from '@/components/layout/header';
 import { Main } from '@/components/layout/main';
+import { getProviderQuotaUsagePercentage, type ProviderQuotaChannel, useProviderQuotaStatuses } from '@/features/system/data/quotas';
 import {
   type CampusManagedChannel,
   type CampusChannelProbeResult,
@@ -184,7 +188,138 @@ function getProbeRequestError(error: unknown) {
   return { statusCode, message };
 }
 
-function ChannelCard({ channel }: { channel: CampusResourceChannel }) {
+function normalizeChannelID(value: string) {
+  return value.match(/(?:^|\/)(\d+)$/)?.[1] ?? value;
+}
+
+function ChannelQuota({ quota, loadState }: { quota?: ProviderQuotaChannel; loadState: 'loading' | 'error' | 'ready' }) {
+  const { t, i18n } = useTranslation();
+  const usagePercent = quota ? getProviderQuotaUsagePercentage(quota) : undefined;
+  const remainingPercent = usagePercent === undefined ? undefined : Math.max(0, 100 - usagePercent);
+  const formattedReset = useMemo(() => {
+    if (!quota?.quotaStatus.nextResetAt) return null;
+    const value = new Date(quota.quotaStatus.nextResetAt);
+    if (Number.isNaN(value.getTime())) return quota.quotaStatus.nextResetAt;
+    return new Intl.DateTimeFormat(i18n.language.startsWith('zh') ? 'zh-CN' : 'en-US', {
+      dateStyle: 'short',
+      timeStyle: 'short',
+    }).format(value);
+  }, [i18n.language, quota?.quotaStatus.nextResetAt]);
+
+  const barClass =
+    remainingPercent === undefined
+      ? 'bg-muted-foreground/30'
+      : remainingPercent <= 10
+        ? 'bg-red-500'
+        : remainingPercent <= 30
+          ? 'bg-amber-500'
+          : 'bg-emerald-500';
+
+  let message = t('resources.channels.quota.unavailable');
+  if (loadState === 'loading') message = t('resources.channels.quota.loading');
+  if (loadState === 'error') message = t('resources.channels.quota.error');
+
+  return (
+    <div className='bg-background/70 space-y-2.5 rounded-lg border p-3' data-testid='campus-channel-provider-quota'>
+      <div className='flex items-center justify-between gap-3'>
+        <div className='flex items-center gap-2 text-xs font-semibold'>
+          <BatteryMedium className='text-primary size-4' aria-hidden='true' />
+          {t('resources.channels.quota.title')}
+        </div>
+        {quota && (
+          <Badge variant='outline' className='font-normal'>
+            {t(`resources.channels.quota.status.${quota.quotaStatus.status}`)}
+          </Badge>
+        )}
+      </div>
+
+      {remainingPercent === undefined ? (
+        <p className='text-muted-foreground text-xs leading-5'>{message}</p>
+      ) : (
+        <>
+          <div className='flex items-baseline justify-between gap-3'>
+            <span className='text-lg font-semibold tabular-nums'>
+              {t('resources.channels.quota.remaining', { value: remainingPercent.toFixed(1) })}
+            </span>
+            <span className='text-muted-foreground text-[11px]'>{t('resources.channels.quota.tightestWindow')}</span>
+          </div>
+          <div
+            className='bg-muted h-2 overflow-hidden rounded-full'
+            role='progressbar'
+            aria-label={t('resources.channels.quota.remainingAria')}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(remainingPercent)}
+          >
+            <div className={cn('h-full rounded-full transition-[width]', barClass)} style={{ width: `${remainingPercent}%` }} />
+          </div>
+          {formattedReset && (
+            <p className='text-muted-foreground text-[11px]'>{t('resources.channels.quota.resetAt', { value: formattedReset })}</p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function ChannelModels({ models }: { models: string[] }) {
+  const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(false);
+  const previewLimit = 6;
+  const visibleModels = expanded ? models : models.slice(0, previewLimit);
+  const hasMore = models.length > previewLimit;
+
+  return (
+    <div className='bg-muted/15 space-y-3 rounded-lg border p-3' data-testid='campus-channel-models'>
+      <div className='flex items-center justify-between gap-3'>
+        <div>
+          <div className='text-xs font-semibold'>{t('resources.channels.models.title')}</div>
+          <p className='text-muted-foreground mt-0.5 text-[11px]'>{t('resources.channels.models.count', { count: models.length })}</p>
+        </div>
+        {hasMore && (
+          <Button
+            type='button'
+            variant='ghost'
+            size='sm'
+            className='h-8 shrink-0 gap-1 px-2 text-xs'
+            onClick={() => setExpanded((value) => !value)}
+            aria-expanded={expanded}
+            data-testid='campus-channel-models-toggle'
+          >
+            {expanded ? <ChevronUp className='size-3.5' aria-hidden='true' /> : <ChevronDown className='size-3.5' aria-hidden='true' />}
+            {t(expanded ? 'resources.channels.models.collapse' : 'resources.channels.models.expand', {
+              count: models.length,
+            })}
+          </Button>
+        )}
+      </div>
+
+      {models.length === 0 ? (
+        <p className='text-muted-foreground text-xs'>{t('resources.channels.models.empty')}</p>
+      ) : (
+        <ul className='grid gap-1.5 sm:grid-cols-2' data-testid='campus-channel-model-list'>
+          {visibleModels.map((model) => (
+            <li key={model} className='bg-background min-w-0 rounded border px-2.5 py-2'>
+              <code className='block text-[11px] leading-4 break-words' title={model}>
+                {model}
+              </code>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function ChannelCard({
+  channel,
+  providerQuota,
+  quotaLoadState,
+}: {
+  channel: CampusResourceChannel;
+  providerQuota?: ProviderQuotaChannel;
+  quotaLoadState: 'loading' | 'error' | 'ready';
+}) {
   const { t, i18n } = useTranslation();
   const probeChannel = useProbeCampusChannel();
   const [lastProbeResult, setLastProbeResult] = useState<CampusChannelProbeResult>();
@@ -340,6 +475,9 @@ function ChannelCard({ channel }: { channel: CampusResourceChannel }) {
       <CardContent className='flex flex-1 flex-col gap-4 px-5'>
         <p className='text-muted-foreground min-h-10 text-sm leading-5'>{channel.description || t('resources.channels.noDescription')}</p>
 
+        <ChannelQuota quota={providerQuota} loadState={quotaLoadState} />
+        <ChannelModels models={channel.models} />
+
         <dl className='bg-muted/20 grid gap-2 rounded-lg border p-3 text-xs' data-testid='campus-channel-health-details'>
           <div className='flex items-center justify-between gap-3'>
             <dt className='text-muted-foreground'>{t('resources.channels.health.successRate')}</dt>
@@ -478,6 +616,12 @@ function ChannelCard({ channel }: { channel: CampusResourceChannel }) {
           <div className='flex items-center justify-between gap-3'>
             <dt className='text-muted-foreground'>{t('resources.channels.modelCount')}</dt>
             <dd className='font-mono font-medium tabular-nums'>{channel.modelCount}</dd>
+          </div>
+          <div className='flex items-center justify-between gap-3'>
+            <dt className='text-muted-foreground'>{t('resources.channels.effectiveTokens')}</dt>
+            <dd className='text-right font-mono font-medium tabular-nums'>
+              {new Intl.NumberFormat(locale).format(channel.effectiveTokens)}
+            </dd>
           </div>
         </dl>
       </CardContent>
@@ -1015,6 +1159,13 @@ export default function CampusResourcesPage() {
   const [selectedApiKey, setSelectedApiKey] = useState(ALL_API_KEYS);
   const [modelSearch, setModelSearch] = useState('');
   const { data, isLoading, isFetching, error, refetch } = useCampusResources();
+  const { channels: providerQuotaChannels, isLoading: providerQuotasLoading, isError: providerQuotasError } = useProviderQuotaStatuses();
+
+  const providerQuotaByChannelID = useMemo(
+    () => new Map(providerQuotaChannels.map((channel) => [normalizeChannelID(channel.id), channel])),
+    [providerQuotaChannels]
+  );
+  const quotaLoadState = providerQuotasLoading ? 'loading' : providerQuotasError ? 'error' : 'ready';
 
   useEffect(() => {
     if (!data || selectedApiKey === ALL_API_KEYS) return;
@@ -1121,11 +1272,13 @@ export default function CampusResourcesPage() {
                 </div>
               </div>
 
-              <div className='grid gap-4 md:grid-cols-2 xl:grid-cols-3' data-testid='campus-resource-donated-channel-list'>
+              <div className='grid gap-4 lg:grid-cols-2' data-testid='campus-resource-donated-channel-list'>
                 {donatedChannels.map((channel, index) => (
                   <ChannelCard
                     key={channel.id ?? `${channel.name}-${channel.provider}-${channel.contributor}-${index}`}
                     channel={channel}
+                    providerQuota={channel.id ? providerQuotaByChannelID.get(normalizeChannelID(channel.id)) : undefined}
+                    quotaLoadState={quotaLoadState}
                   />
                 ))}
               </div>
@@ -1230,11 +1383,13 @@ export default function CampusResourcesPage() {
                 {data.channels.length === 0 ? t('resources.channels.empty') : t('resources.channels.noProjectChannels')}
               </div>
             ) : (
-              <div className='grid gap-4 md:grid-cols-2 xl:grid-cols-3' data-testid='campus-resource-channel-list'>
+              <div className='grid gap-4 lg:grid-cols-2' data-testid='campus-resource-channel-list'>
                 {projectChannels.map((channel, index) => (
                   <ChannelCard
                     key={channel.id ?? `${channel.name}-${channel.provider}-${channel.contributor}-${index}`}
                     channel={channel}
+                    providerQuota={channel.id ? providerQuotaByChannelID.get(normalizeChannelID(channel.id)) : undefined}
+                    quotaLoadState={quotaLoadState}
                   />
                 ))}
               </div>

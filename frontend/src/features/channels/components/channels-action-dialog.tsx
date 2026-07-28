@@ -59,6 +59,7 @@ import {
 import { Channel, ChannelType, ApiFormat, RetryableErrorPattern, createChannelInputSchema, updateChannelInputSchema } from '../data/schema';
 import { ProxyConfig, useOAuthFlow } from '../hooks/use-oauth-flow';
 import { mergeChannelSettingsForUpdate } from '../utils/merge';
+import { addManualModels, isProviderCatalogSubset, reconcileFetchedModelSelection, removeChannelModels } from '../utils/model-selection';
 import { isValidModelPattern, matchesModelPattern } from '../utils/pattern';
 import { ProxyType } from './channels-proxy-dialog';
 import { CopilotDeviceFlow } from './copilot-device-flow';
@@ -799,23 +800,6 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
     return false;
   }, [isEdit, currentRow]);
 
-  const wrapUnsupported = useCallback(
-    (enabled: boolean, children: React.ReactNode, wrapperClassName: string) => {
-      if (!enabled) return children;
-      return (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span className={wrapperClassName}>{children}</span>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p>{t('channels.dialogs.fields.unsupported')}</p>
-          </TooltipContent>
-        </Tooltip>
-      );
-    },
-    [t]
-  );
-
   const baseURLPlaceholder = useMemo(() => {
     const currentType = selectedType || derivedChannelType;
     if (selectedApiFormat === OPENAI_RESPONSES && responsesTransport === 'websocket') {
@@ -1358,11 +1342,11 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
   };
 
   const addModel = () => {
-    if (newModel.trim() && !supportedModels.includes(newModel.trim())) {
-      setSupportedModels([...supportedModels, newModel.trim()]);
-      setManualModels([...manualModels, newModel.trim()]);
-      setNewModel('');
-    }
+    if (!newModel.trim()) return;
+    const next = addManualModels(supportedModels, manualModels, [newModel]);
+    setSupportedModels(next.supportedModels);
+    setManualModels(next.manualModels);
+    setNewModel('');
   };
 
   const batchAddModels = useCallback(() => {
@@ -1379,24 +1363,38 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
       return;
     }
 
-    setSupportedModels((prev) => {
-      const combinedModels = new Set([...prev, ...models]);
-      if (combinedModels.size === prev.length) return prev;
-      return [...combinedModels];
-    });
-    setManualModels((prev) => {
-      // Only add models that are NOT already in supportedModels
-      const newModels = models.filter((m) => !supportedModels.includes(m));
-      const combinedModels = new Set([...prev, ...newModels]);
-      if (combinedModels.size === prev.length) return prev;
-      return [...combinedModels];
-    });
+    const next = addManualModels(supportedModels, manualModels, models);
+    setSupportedModels(next.supportedModels);
+    setManualModels(next.manualModels);
     setNewModel('');
-  }, [newModel, supportedModels]);
+  }, [newModel, supportedModels, manualModels]);
+
+  const makeCurrentModelsAuthoritative = useCallback(
+    (models: string[]) => {
+      const wasAutoSyncEnabled = form.getValues('autoSyncSupportedModels') !== false;
+      form.setValue('autoSyncSupportedModels', false, {
+        shouldDirty: true,
+        shouldTouch: true,
+        shouldValidate: true,
+      });
+      setSupportedModels(models);
+      setManualModels(models);
+      if (wasAutoSyncEnabled) {
+        toast.info(t('channels.messages.customModelListEnabled'));
+      }
+    },
+    [form, t]
+  );
 
   const removeModel = (model: string) => {
-    setSupportedModels(supportedModels.filter((m) => m !== model));
-    setManualModels(manualModels.filter((m) => m !== model));
+    const next = removeChannelModels(supportedModels, manualModels, [model]);
+    const removesProviderManagedModel = watchedAutoSync && (!manualModels.includes(model) || fetchedModels.includes(model));
+    if (removesProviderManagedModel) {
+      makeCurrentModelsAuthoritative(next.supportedModels);
+      return;
+    }
+    setSupportedModels(next.supportedModels);
+    setManualModels(next.manualModels);
   };
 
   const isModelManual = (model: string): boolean => {
@@ -1417,12 +1415,18 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
   const addSelectedDefaultModels = () => {
     const newModels = selectedDefaultModels.filter((model) => !supportedModels.includes(model));
     if (newModels.length > 0) {
-      setSupportedModels((prev) => [...prev, ...newModels]);
+      const next = addManualModels(supportedModels, manualModels, newModels);
+      setSupportedModels(next.supportedModels);
+      setManualModels(next.manualModels);
       setSelectedDefaultModels([]);
     }
   };
 
   const handleClearAllSupportedModels = () => {
+    if (watchedAutoSync) {
+      makeCurrentModelsAuthoritative([]);
+      return;
+    }
     setSupportedModels([]);
     setManualModels([]);
   };
@@ -1589,30 +1593,15 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
 
   // Add or remove selected fetched models to supported models
   const addSelectedFetchedModels = useCallback(() => {
-    const modelsToRemove: string[] = [];
-
-    setSupportedModels((prev) => {
-      const modelsToAdd: string[] = [];
-
-      selectedFetchedModels.forEach((model) => {
-        if (prev.includes(model)) {
-          modelsToRemove.push(model);
-        } else {
-          modelsToAdd.push(model);
-        }
-      });
-
-      const afterRemoval = prev.filter((m) => !modelsToRemove.includes(m));
-      return [...afterRemoval, ...modelsToAdd];
-    });
-
-    // Remove toggled-off models from manualModels
-    if (modelsToRemove.length > 0) {
-      setManualModels((prev) => prev.filter((m) => !modelsToRemove.includes(m)));
+    const next = reconcileFetchedModelSelection(supportedModels, manualModels, selectedFetchedModels);
+    if (!watchedAutoSync || isProviderCatalogSubset(next.supportedModels, fetchedModels)) {
+      makeCurrentModelsAuthoritative(next.supportedModels);
+    } else {
+      setSupportedModels(next.supportedModels);
+      setManualModels(next.manualModels);
     }
-
     setSelectedFetchedModels([]);
-  }, [selectedFetchedModels]);
+  }, [fetchedModels, makeCurrentModelsAuthoritative, manualModels, selectedFetchedModels, supportedModels, watchedAutoSync]);
 
   // Close panel handler
   const closeFetchedModelsPanel = useCallback(() => {
@@ -2584,20 +2573,17 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                               control={form.control}
                               name='autoSyncSupportedModels'
                               render={({ field }) => (
-                                <FormItem
-                                  className={`flex items-center gap-2 ${isCodexType || isClaudeCodeType || isCopilotType ? 'opacity-60' : ''}`}
-                                >
-                                  {wrapUnsupported(
-                                    isCodexType || isClaudeCodeType || isCopilotType,
-                                    <Checkbox
-                                      checked={field.value}
-                                      onCheckedChange={field.onChange}
-                                      data-testid='auto-sync-supported-models-checkbox'
-                                      disabled={isCodexType || isClaudeCodeType || isCopilotType}
-                                      className={isCodexType || isClaudeCodeType || isCopilotType ? 'pointer-events-none' : undefined}
-                                    />,
-                                    'inline-flex items-center'
-                                  )}
+                                <FormItem className='flex items-center gap-2'>
+                                  <Checkbox
+                                    checked={field.value}
+                                    onCheckedChange={(checked) => {
+                                      field.onChange(checked);
+                                      if (checked === false) {
+                                        setManualModels([...supportedModels]);
+                                      }
+                                    }}
+                                    data-testid='auto-sync-supported-models-checkbox'
+                                  />
                                   <div className='flex flex-1 items-center justify-between'>
                                     <div className='space-y-0.5'>
                                       <div className='flex items-center gap-1.5'>

@@ -198,6 +198,7 @@
   "channels.messages.fetchModelsSuccess": "Successfully fetched {{count}} models",
   "channels.messages.fetchModelsSuccessLarge": "Successfully fetched {{count}} models. Use search to find specific models.",
   "channels.messages.modelsNotConfirmed": "You have selected models but not confirmed them. Please click the \"Confirm Selection\" button to confirm the selected models, or cancel the selection and then save.",
+  "channels.messages.customModelListEnabled": "Switched to a custom model list. After saving, the current list is authoritative and upstream models will not be added back automatically.",
   "channels.messages.batchCreateSuccess": "Successfully created {{count}} channels",
   "channels.messages.errorResolvedSuccess": "Channel error resolved successfully",
   "channels.messages.savePricesSuccess": "Model prices saved successfully",

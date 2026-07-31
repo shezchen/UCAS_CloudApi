@@ -469,18 +469,24 @@ func applyOverrideRequestHeaders(outbound *PersistentOutboundTransformer) pipeli
 // coupled to the request body required by the Codex upstream. It intentionally
 // runs after channel body and header overrides.
 func enforceCodexResponsesLiteInvariant(outbound *PersistentOutboundTransformer) pipeline.Middleware {
-	const responsesLiteHeader = "X-OpenAI-Internal-Codex-Responses-Lite"
-
 	return pipeline.OnRawRequest("codex-responses-lite-invariant", func(_ context.Context, request *httpclient.Request) (*httpclient.Request, error) {
 		currentChannel := outbound.GetCurrentChannel()
 		if currentChannel == nil || currentChannel.Type != channel.TypeCodex || request == nil ||
-			!strings.EqualFold(strings.TrimSpace(request.Headers.Get(responsesLiteHeader)), "true") {
+			!strings.EqualFold(strings.TrimSpace(request.Headers.Get(codexResponsesLiteHeader)), "true") {
 			return request, nil
 		}
 
 		body, err := sjson.SetBytes(request.Body, "reasoning.context", "all_turns")
 		if err != nil {
 			return nil, fmt.Errorf("enforce Codex Responses Lite reasoning context: %w", err)
+		}
+		body, err = sjson.SetBytes(body, "store", false)
+		if err != nil {
+			return nil, fmt.Errorf("enforce Codex Responses Lite storage policy: %w", err)
+		}
+		body, err = sjson.SetBytes(body, "stream", true)
+		if err != nil {
+			return nil, fmt.Errorf("enforce Codex Responses Lite stream mode: %w", err)
 		}
 
 		request.Body = body

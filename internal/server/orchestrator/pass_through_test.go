@@ -15,6 +15,7 @@ import (
 	"github.com/tidwall/gjson"
 
 	"github.com/looplj/axonhub/internal/ent"
+	"github.com/looplj/axonhub/internal/ent/channel"
 	"github.com/looplj/axonhub/internal/objects"
 	"github.com/looplj/axonhub/internal/server/biz"
 	"github.com/looplj/axonhub/llm"
@@ -329,6 +330,63 @@ func TestIsPassThroughEnabled_AllowsNilAndFalseStreamToAlign(t *testing.T) {
 	outbound := &PersistentOutboundTransformer{state: state}
 
 	assert.True(t, outbound.isPassThroughEnabled(ctx, nil))
+}
+
+func TestIsPassThroughEnabled_AutoEnablesCodexResponsesLite(t *testing.T) {
+	ctx := context.Background()
+	headers := make(http.Header)
+	headers.Set(codexResponsesLiteHeader, "true")
+	stream := true
+	channelSettings := &objects.ChannelSettings{PassThroughBody: lo.ToPtr(false)}
+	outbound := &PersistentOutboundTransformer{state: &PersistenceState{
+		CurrentCandidate: &ChannelModelsCandidate{Channel: &biz.Channel{Channel: &ent.Channel{
+			ID:       1,
+			Name:     "codex-lite",
+			Type:     channel.TypeCodex,
+			Settings: channelSettings,
+		}}},
+		OriginalRequestStream: &stream,
+		LlmRequest: &llm.Request{
+			APIFormat: llm.APIFormatOpenAIResponse,
+			Stream:    &stream,
+			RawRequest: &httpclient.Request{
+				APIFormat: string(llm.APIFormatOpenAIResponse),
+				Headers:   headers,
+				Body:      []byte(`{"model":"gpt-5.6-sol","stream":true}`),
+			},
+		},
+		RawProviderRequest: &httpclient.Request{APIFormat: string(llm.APIFormatOpenAIResponse)},
+	}}
+
+	require.True(t, outbound.isPassThroughEnabled(ctx, nil),
+		"Responses Lite must preserve its wire protocol even when ordinary pass-through is disabled")
+}
+
+func TestIsPassThroughEnabled_DoesNotAutoEnableLiteHeaderForNonCodexChannel(t *testing.T) {
+	ctx := context.Background()
+	headers := make(http.Header)
+	headers.Set(codexResponsesLiteHeader, "true")
+	stream := true
+	outbound := &PersistentOutboundTransformer{state: &PersistenceState{
+		CurrentCandidate: &ChannelModelsCandidate{Channel: &biz.Channel{Channel: &ent.Channel{
+			ID:       1,
+			Name:     "openai",
+			Type:     channel.TypeOpenai,
+			Settings: &objects.ChannelSettings{PassThroughBody: lo.ToPtr(false)},
+		}}},
+		OriginalRequestStream: &stream,
+		LlmRequest: &llm.Request{
+			APIFormat: llm.APIFormatOpenAIResponse,
+			Stream:    &stream,
+			RawRequest: &httpclient.Request{
+				APIFormat: string(llm.APIFormatOpenAIResponse),
+				Headers:   headers,
+			},
+		},
+		RawProviderRequest: &httpclient.Request{APIFormat: string(llm.APIFormatOpenAIResponse)},
+	}}
+
+	require.False(t, outbound.isPassThroughEnabled(ctx, nil))
 }
 
 func TestIsPassThroughEnabled_DisablesWhenRequestStreamSemanticsDoNotMatchCurrentRequirement(t *testing.T) {
@@ -1188,6 +1246,62 @@ func TestApplyPassThroughBodyPreservesMappedModel(t *testing.T) {
 
 	processed.Body[0] = '['
 	require.Equal(t, `{"model":"my-alias","messages":[{"role":"user","content":"hi"}],"temperature":0.4}`, string(outbound.state.LlmRequest.RawRequest.Body))
+}
+
+func TestApplyPassThroughBodyPreservesCodexResponsesLiteEnvelope(t *testing.T) {
+	ctx := context.Background()
+	headers := make(http.Header)
+	headers.Set(codexResponsesLiteHeader, "true")
+	stream := true
+
+	outbound := &PersistentOutboundTransformer{state: &PersistenceState{
+		CurrentCandidate: &ChannelModelsCandidate{Channel: &biz.Channel{Channel: &ent.Channel{
+			ID:       1,
+			Name:     "codex-lite",
+			Type:     channel.TypeCodex,
+			Settings: &objects.ChannelSettings{PassThroughBody: lo.ToPtr(false)},
+		}}},
+		OriginalRequestStream: &stream,
+		LlmRequest: &llm.Request{
+			Model:     "gpt-5.6-sol",
+			APIFormat: llm.APIFormatOpenAIResponse,
+			Stream:    &stream,
+			RawRequest: &httpclient.Request{
+				APIFormat: string(llm.APIFormatOpenAIResponse),
+				Headers:   headers,
+				Body: []byte(`{
+					"model":"student-alias",
+					"stream":true,
+					"store":true,
+					"parallel_tool_calls":false,
+					"input":[{"role":"developer","content":[{"type":"input_text","text":"base"}],"additional_tools":[{"type":"custom","name":"shell"}]}],
+					"client_metadata":{"session_id":"session-1"},
+					"stream_options":{"reasoning_summary_delivery":"summary_text_delta"}
+				}`),
+			},
+		},
+	}}
+
+	request := &httpclient.Request{
+		APIFormat: string(llm.APIFormatOpenAIResponse),
+		Headers:   headers.Clone(),
+		Body:      []byte(`{"model":"gpt-5.6-sol","stream":true,"store":false}`),
+	}
+
+	processed, err := applyPassThroughRequestBody(outbound, nil).OnOutboundRawRequest(ctx, request)
+	require.NoError(t, err)
+	processed, err = enforceCodexResponsesLiteInvariant(outbound).OnOutboundRawRequest(ctx, processed)
+	require.NoError(t, err)
+
+	require.True(t, outbound.state.PassThroughApplied)
+	require.Equal(t, "gpt-5.6-sol", gjson.GetBytes(processed.Body, "model").String())
+	require.False(t, gjson.GetBytes(processed.Body, "parallel_tool_calls").Bool())
+	require.Equal(t, "shell", gjson.GetBytes(processed.Body, "input.0.additional_tools.0.name").String())
+	require.Equal(t, "session-1", gjson.GetBytes(processed.Body, "client_metadata.session_id").String())
+	require.Equal(t, "summary_text_delta", gjson.GetBytes(processed.Body, "stream_options.reasoning_summary_delivery").String())
+	require.Equal(t, "all_turns", gjson.GetBytes(processed.Body, "reasoning.context").String())
+	require.False(t, gjson.GetBytes(processed.Body, "store").Bool())
+	require.True(t, gjson.GetBytes(processed.Body, "stream").Bool())
 }
 
 func TestApplyPassThroughBodyPreservesMappedModelForJinaRerank(t *testing.T) {

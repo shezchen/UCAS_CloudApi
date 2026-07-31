@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/tidwall/sjson"
 
+	"github.com/looplj/axonhub/internal/ent/channel"
 	"github.com/looplj/axonhub/internal/log"
 	"github.com/looplj/axonhub/internal/server/biz"
 	"github.com/looplj/axonhub/llm"
@@ -15,6 +17,8 @@ import (
 	"github.com/looplj/axonhub/llm/pipeline"
 	"github.com/looplj/axonhub/llm/streams"
 )
+
+const codexResponsesLiteHeader = "X-OpenAI-Internal-Codex-Responses-Lite"
 
 // isPassThroughEnabled returns true when the effective pass-through flag for the current
 // channel is enabled and both the inbound and outbound API formats are identical.
@@ -42,6 +46,14 @@ func (p *PersistentOutboundTransformer) isPassThroughEnabled(ctx context.Context
 		return false
 	}
 
+	// Codex Responses Lite is a stricter wire protocol than the generic
+	// Responses representation. Preserve its request and SSE payloads even when
+	// pass-through is disabled globally, while keeping the normal model mapping,
+	// authentication replacement, channel overrides and Lite invariants.
+	if p.isCodexResponsesLiteRequest() {
+		return true
+	}
+
 	var enabled bool
 
 	switch {
@@ -59,6 +71,23 @@ func (p *PersistentOutboundTransformer) isPassThroughEnabled(ctx context.Context
 	}
 
 	return enabled
+}
+
+func (p *PersistentOutboundTransformer) isCodexResponsesLiteRequest() bool {
+	currentChannel := p.GetCurrentChannel()
+	if currentChannel == nil || currentChannel.Type != channel.TypeCodex {
+		return false
+	}
+
+	llmReq := p.state.LlmRequest
+	if llmReq == nil || llmReq.APIFormat != llm.APIFormatOpenAIResponse || llmReq.RawRequest == nil {
+		return false
+	}
+
+	return strings.EqualFold(
+		strings.TrimSpace(llmReq.RawRequest.Headers.Get(codexResponsesLiteHeader)),
+		"true",
+	)
 }
 
 func passThroughStreamAligned(originalStream, effectiveStream *bool) bool {

@@ -103,6 +103,8 @@ func TestEnforceCodexResponsesLiteInvariant(t *testing.T) {
 		processed, err := enforceCodexResponsesLiteInvariant(newCodexOutbound()).OnOutboundRawRequest(t.Context(), request)
 		require.NoError(t, err)
 		require.Equal(t, "all_turns", gjson.GetBytes(processed.Body, "reasoning.context").String())
+		require.False(t, gjson.GetBytes(processed.Body, "store").Bool())
+		require.True(t, gjson.GetBytes(processed.Body, "stream").Bool())
 	})
 
 	t.Run("header absent leaves body unchanged", func(t *testing.T) {

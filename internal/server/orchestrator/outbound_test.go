@@ -1098,6 +1098,23 @@ func TestPersistentOutboundTransformer_CanRetry_429_WithoutRetryAfter(t *testing
 
 		require.False(t, outbound.CanRetry(httpErr))
 	})
+
+	t.Run("transformed 429 response error should skip same-channel retry", func(t *testing.T) {
+		outbound := &PersistentOutboundTransformer{
+			wrapped: &mockTransformer{},
+			state: &PersistenceState{
+				CurrentCandidate: &ChannelModelsCandidate{
+					Channel: channel,
+					Models:  []biz.ChannelModelEntry{{RequestModel: "gpt-4", ActualModel: "gpt-4"}},
+				},
+				CurrentModelIndex: 0,
+			},
+		}
+
+		responseErr := &llm.ResponseError{StatusCode: http.StatusTooManyRequests}
+
+		require.False(t, outbound.CanRetry(responseErr))
+	})
 }
 
 func TestPersistentOutboundTransformer_CanRetry_ChannelRetryableStatusCodes(t *testing.T) {

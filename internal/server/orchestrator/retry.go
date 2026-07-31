@@ -37,7 +37,7 @@ func unsupportedModelErrorEvidence(err error) string {
 		return ""
 	}
 
-	parts := []string{err.Error()}
+	var parts []string
 
 	var httpErr *httpclient.Error
 	if errors.As(err, &httpErr) {
@@ -47,6 +47,9 @@ func unsupportedModelErrorEvidence(err error) string {
 	var llmErr *llm.ResponseError
 	if errors.As(err, &llmErr) {
 		parts = append(parts, llmErr.Detail.Message, llmErr.Detail.Code, llmErr.Detail.Type)
+	}
+	if len(parts) == 0 {
+		parts = append(parts, err.Error())
 	}
 
 	return strings.ToLower(strings.Join(parts, " "))

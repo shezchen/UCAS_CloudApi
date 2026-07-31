@@ -235,6 +235,17 @@ func TestIsExplicitUnsupportedModelError(t *testing.T) {
 			},
 			expected: false,
 		},
+		{
+			name: "model path with generic 404 is not unsupported model",
+			err: &httpclient.Error{
+				Method:     http.MethodGet,
+				URL:        "https://provider.example/v1/models/gpt-5.6-sol",
+				StatusCode: http.StatusNotFound,
+				Status:     "404 Not Found",
+				Body:       []byte(`resource not found`),
+			},
+			expected: false,
+		},
 	}
 
 	for _, tt := range tests {

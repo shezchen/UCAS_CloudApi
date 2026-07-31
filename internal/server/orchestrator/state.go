@@ -62,11 +62,23 @@ type PersistenceState struct {
 	// Perf is the performance record for the current request.
 	Perf *biz.PerformanceRecord
 
-	// StreamCompleted tracks whether the stream has response successfully completed.
-	// This is used to distinguish between a stream that was canceled mid-way
-	// versus a stream that completed successfully but the client disconnected
-	// immediately after receiving the last chunk.
+	// StreamCompleted tracks whether the client-facing stream completed. It is
+	// intentionally separate from OutboundStreamCompleted: provider and client
+	// protocols can have different terminal events (for example, Responses
+	// response.incomplete must never become a successful client request).
 	StreamCompleted bool
+
+	// OutboundStreamCompleted tracks successful provider-protocol termination for
+	// the current attempt. A raw sentinel alone is not sufficient for Responses.
+	OutboundStreamCompleted bool
+
+	// AttemptAccepted is set only after the pipeline has committed the current
+	// streaming attempt (or successfully auto-aggregated it). AttemptSemanticOutput
+	// uses the pipeline's shared content classifier, so normal text and pure tool
+	// calls count while terminal/usage-only streams do not. Together they decide
+	// whether a failed or partial attempt is allowed to settle usage.
+	AttemptAccepted       bool
+	AttemptSemanticOutput bool
 
 	// RawProviderResponse stores the raw provider response for non-stream response pass-through.
 	RawProviderResponse *httpclient.Response

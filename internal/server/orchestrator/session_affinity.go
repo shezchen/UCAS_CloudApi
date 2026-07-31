@@ -396,7 +396,7 @@ func (s *sessionAffinityBindingStream) Current() *llm.Response {
 	}
 	if terminal, successful := llmTerminalOutcome(event); terminal && !successful {
 		s.terminalFailure = true
-	} else if !s.bound && successful && s.semanticOutput {
+	} else if !s.bound && successful && s.semanticOutput && s.state != nil && s.state.AttemptAccepted {
 		s.bindOnce()
 	}
 
@@ -408,7 +408,7 @@ func (s *sessionAffinityBindingStream) Err() error {
 }
 
 func (s *sessionAffinityBindingStream) Close() error {
-	if !s.bound && !s.terminalFailure && s.semanticOutput && s.state != nil && s.state.StreamCompleted {
+	if !s.bound && !s.terminalFailure && s.semanticOutput && s.state != nil && s.state.AttemptAccepted && s.state.OutboundStreamCompleted {
 		s.bindOnce()
 	}
 

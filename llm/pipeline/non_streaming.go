@@ -44,18 +44,21 @@ func (p *pipeline) notStream(
 		return nil, WrapUpstreamError(fmt.Errorf("failed to transform response: %w", err))
 	}
 
-	// Apply LLM response middlewares
+	// Reject empty responses before persistence/accounting middlewares run. A
+	// usage-only response must remain retryable and must not consume the logical
+	// request's one usage-log slot before a later successful candidate.
+	if p.emptyResponseDetection && !hasResponseContent(llmResp) {
+		p.applyRawErrorResponseMiddlewares(ctx, ErrEmptyResponse)
+
+		return nil, ErrEmptyResponse
+	}
+
+	// Apply LLM response middlewares only after the response is accepted.
 	llmResp, err = p.applyLlmResponseMiddlewares(ctx, llmResp)
 	if err != nil {
 		p.applyRawErrorResponseMiddlewares(ctx, err)
 
 		return nil, fmt.Errorf("failed to apply llm response middlewares: %w", err)
-	}
-
-	if p.emptyResponseDetection && !hasResponseContent(llmResp) {
-		p.applyRawErrorResponseMiddlewares(ctx, ErrEmptyResponse)
-
-		return nil, ErrEmptyResponse
 	}
 
 	slog.DebugContext(ctx, "LLM response", slog.Any("response", llmResp))
@@ -83,7 +86,7 @@ func (p *pipeline) autoAggregateStream(
 	executor Executor,
 	request *httpclient.Request,
 ) (*httpclient.Response, error) {
-	inboundStream, err := p.stream(ctx, executor, request, 0)
+	inboundStream, err := p.stream(ctx, executor, request, 0, false)
 	if err != nil {
 		return nil, err
 	}
@@ -98,22 +101,29 @@ func (p *pipeline) autoAggregateStream(
 	}
 
 	if err := inboundStream.Err(); err != nil {
+		// Close persistence first, then let the concrete pipeline error win the
+		// execution diagnostic. Otherwise an unaccepted-but-semantic upstream
+		// stream can overwrite this error with a generic empty-response fallback.
+		_ = inboundStream.Close()
 		p.applyRawErrorResponseMiddlewares(ctx, err)
 		return nil, err
 	}
 
 	if len(chunks) == 0 {
+		_ = inboundStream.Close()
 		p.applyRawErrorResponseMiddlewares(ctx, ErrEmptyStreamChunks)
 		return nil, ErrEmptyStreamChunks
 	}
 
 	body, _, err := p.Inbound.AggregateStreamChunks(ctx, chunks)
 	if err != nil {
+		_ = inboundStream.Close()
 		p.applyRawErrorResponseMiddlewares(ctx, err)
 		return nil, err
 	}
 
 	if len(body) == 0 {
+		_ = inboundStream.Close()
 		p.applyRawErrorResponseMiddlewares(ctx, ErrEmptyAggregatedBody)
 		return nil, ErrEmptyAggregatedBody
 	}
@@ -129,9 +139,12 @@ func (p *pipeline) autoAggregateStream(
 
 	resp, err = p.applyInboundRawResponseMiddlewares(ctx, resp)
 	if err != nil {
+		_ = inboundStream.Close()
 		p.applyRawErrorResponseMiddlewares(ctx, err)
 		return nil, fmt.Errorf("failed to apply inbound raw response middlewares: %w", err)
 	}
+
+	p.acceptStreamAttempt()
 
 	return resp, nil
 }

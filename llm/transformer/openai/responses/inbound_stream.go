@@ -46,6 +46,8 @@ type responsesInboundStream struct {
 	hasFinished             bool
 	responseTerminalEmitted bool
 	finishReason            string
+	protocolStatus          string
+	incompleteReason        string
 	pendingAnnotations      []llm.Annotation
 
 	// Response metadata
@@ -161,6 +163,12 @@ func (s *responsesInboundStream) Next() bool {
 	chunk := s.source.Current()
 	if chunk == nil {
 		return s.Next() // Try next chunk
+	}
+	if status := strings.ToLower(strings.TrimSpace(chunk.ProtocolStatus)); status != "" {
+		s.protocolStatus = status
+	}
+	if reason := strings.TrimSpace(chunk.IncompleteReason); reason != "" {
+		s.incompleteReason = reason
 	}
 
 	// Handle [DONE] marker
@@ -313,18 +321,30 @@ func (s *responsesInboundStream) emitTerminalResponse() error {
 	eventType := StreamEventTypeResponseCompleted
 	status := "completed"
 
-	switch s.finishReason {
-	case "stop", "tool_calls", "function_call":
-		// Successful terminal.
-	case "length", "content_filter":
+	switch s.protocolStatus {
+	case "completed":
+		eventType = StreamEventTypeResponseCompleted
+		status = "completed"
+	case "incomplete":
 		eventType = StreamEventTypeResponseIncomplete
 		status = "incomplete"
-	case "error", "canceled", "cancelled":
+	case "failed", "error", "canceled", "cancelled":
 		eventType = StreamEventTypeResponseFailed
 		status = "failed"
 	default:
-		eventType = StreamEventTypeResponseFailed
-		status = "failed"
+		switch s.finishReason {
+		case "stop", "tool_calls", "function_call":
+			// Successful terminal.
+		case "length", "content_filter":
+			eventType = StreamEventTypeResponseIncomplete
+			status = "incomplete"
+		case "error", "canceled", "cancelled":
+			eventType = StreamEventTypeResponseFailed
+			status = "failed"
+		default:
+			eventType = StreamEventTypeResponseFailed
+			status = "failed"
+		}
 	}
 
 	s.aggregator.status = status
@@ -338,9 +358,12 @@ func (s *responsesInboundStream) emitTerminalResponse() error {
 
 	switch eventType {
 	case StreamEventTypeResponseIncomplete:
-		reason := "max_output_tokens"
-		if s.finishReason == "content_filter" {
+		reason := s.incompleteReason
+		if reason == "" && s.finishReason == "content_filter" {
 			reason = "content_filter"
+		}
+		if reason == "" {
+			reason = "max_output_tokens"
 		}
 		response.IncompleteDetails = &ResponseIncompleteDetails{Reason: reason}
 	case StreamEventTypeResponseFailed:

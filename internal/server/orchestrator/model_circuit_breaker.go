@@ -241,7 +241,7 @@ func (s *probeReleasingStream) Close() error {
 	if !s.recorded && (s.semanticOutput || s.terminalFailure) {
 		if s.terminalFailure {
 			s.modelCircuitBreaker.RecordError(s.ctx, s.channelID, s.modelID, s.wasProbe)
-		} else if s.state != nil && s.state.StreamCompleted {
+		} else if s.state != nil && s.state.OutboundStreamCompleted {
 			s.modelCircuitBreaker.RecordSuccess(s.ctx, s.channelID, s.modelID)
 			if s.onSuccess != nil {
 				s.onSuccess()

@@ -243,6 +243,8 @@ func AggregateStreamChunks(_ context.Context, chunks []*httpclient.StreamEvent) 
 
 //nolint:gocognit,maintidx // Event processing is inherently complex.
 func (a *streamAggregator) processEvent(ev *StreamEvent) {
+	ev.Type = normalizeResponseTerminalEventType(ev.Type, ev.Response)
+
 	//nolint:exhaustive //Only process events we care about.
 	switch ev.Type {
 	case StreamEventTypeResponseCreated, StreamEventTypeResponseInProgress:

@@ -633,6 +633,35 @@ func TestIsTerminalAggregatedOutboundResponse(t *testing.T) {
 	})
 }
 
+func TestIsSuccessfulOutboundTerminalStreamEvent(t *testing.T) {
+	require.True(t, isSuccessfulOutboundTerminalStreamEvent(
+		llm.APIFormatOpenAIChatCompletion,
+		&httpclient.StreamEvent{Data: []byte("  [DONE]\n")},
+	))
+	require.False(t, isSuccessfulOutboundTerminalStreamEvent(
+		llm.APIFormatOpenAIResponse,
+		&httpclient.StreamEvent{Data: []byte("[DONE]")},
+	))
+	require.False(t, isSuccessfulOutboundTerminalStreamEvent(
+		llm.APIFormatOpenAIResponse,
+		&httpclient.StreamEvent{Type: "response.completed"},
+	))
+	require.True(t, isSuccessfulOutboundTerminalStreamEvent(
+		llm.APIFormatOpenAIResponse,
+		&httpclient.StreamEvent{
+			Type: "response.completed",
+			Data: []byte(`{"type":"response.completed","response":{"id":"resp_ok","status":"completed"}}`),
+		},
+	))
+	require.False(t, isSuccessfulOutboundTerminalStreamEvent(
+		llm.APIFormatOpenAIResponse,
+		&httpclient.StreamEvent{
+			Type: "response.completed",
+			Data: []byte(`{"type":"response.completed","response":{"id":"resp_partial","status":"incomplete"}}`),
+		},
+	))
+}
+
 type sliceEventStream struct {
 	events []*httpclient.StreamEvent
 	index  int
@@ -719,8 +748,8 @@ func TestOutboundPersistentStream_Close_AggregatedResponsesCompletionHandling(t 
 		require.NoError(t, err)
 		require.NotEqual(t, requestexecution.StatusCompleted, dbExec.Status)
 		require.Equal(t, requestexecution.StatusFailed, dbExec.Status)
-		require.Contains(t, dbExec.ErrorMessage, "stream ended without terminal event or completed response")
-		require.False(t, state.StreamCompleted)
+		require.Contains(t, dbExec.ErrorMessage, "empty response detected")
+		require.False(t, state.OutboundStreamCompleted)
 	})
 
 	t.Run("response incomplete is terminal but execution remains failed", func(t *testing.T) {
@@ -753,10 +782,16 @@ func TestOutboundPersistentStream_Close_AggregatedResponsesCompletionHandling(t 
 			Save(ctx)
 		require.NoError(t, err)
 
-		stream := &sliceEventStream{events: []*httpclient.StreamEvent{{
-			Type: "response.incomplete",
-			Data: []byte(`{"type":"response.incomplete","response":{"id":"resp_partial","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}`),
-		}}}
+		stream := &sliceEventStream{events: []*httpclient.StreamEvent{
+			{
+				Type: "response.output_text.delta",
+				Data: []byte(`{"type":"response.output_text.delta","delta":"partial"}`),
+			},
+			{
+				Type: "response.incomplete",
+				Data: []byte(`{"type":"response.incomplete","response":{"id":"resp_partial","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}`),
+			},
+		}}
 		transformer := &mockTransformer{
 			apiFormat:          llm.APIFormatOpenAIResponse,
 			aggregatedResponse: []byte(`{"id":"resp_partial","status":"incomplete"}`),
@@ -766,9 +801,14 @@ func TestOutboundPersistentStream_Close_AggregatedResponsesCompletionHandling(t 
 				Completed:        false,
 				ProtocolStatus:   "incomplete",
 				IncompleteReason: "max_output_tokens",
+				Usage: &llm.Usage{
+					PromptTokens:     10,
+					CompletionTokens: 2,
+					TotalTokens:      12,
+				},
 			},
 		}
-		state := &PersistenceState{}
+		state := &PersistenceState{AttemptAccepted: true, AttemptSemanticOutput: true}
 		persistent := NewOutboundPersistentStream(ctx, stream, req, exec, requestService, usageLogService, transformer, nil, state)
 		for persistent.Next() {
 			_ = persistent.Current()
@@ -780,7 +820,117 @@ func TestOutboundPersistentStream_Close_AggregatedResponsesCompletionHandling(t 
 		require.Equal(t, requestexecution.StatusFailed, stored.Status)
 		require.Contains(t, stored.ErrorMessage, "upstream response incomplete: max_output_tokens")
 		require.Contains(t, stored.ErrorMessage, "response_incomplete")
-		require.False(t, state.StreamCompleted)
+		require.False(t, state.OutboundStreamCompleted)
+		usageCount, err := client.UsageLog.Query().Count(ctx)
+		require.NoError(t, err)
+		require.Equal(t, 1, usageCount, "accepted partial output must still settle its real upstream usage")
+	})
+
+	t.Run("responses transport done without protocol terminal remains failed", func(t *testing.T) {
+		client := enttest.NewEntClient(t, "sqlite3", "file:ent?mode=memory&_fk=0")
+		defer client.Close()
+
+		ctx := ent.NewContext(ctx, client)
+		project := createTestProject(t, ctx, client)
+		ch := createTestChannel(t, ctx, client)
+		_, requestService, _, usageLogService := setupTestServices(t, client)
+
+		req, err := client.Request.Create().
+			SetProjectID(project.ID).
+			SetChannelID(ch.ID).
+			SetModelID("gpt-5.6-sol").
+			SetStatus(request.StatusPending).
+			SetRequestBody([]byte(`{"stream":true}`)).
+			Save(ctx)
+		require.NoError(t, err)
+		exec, err := client.RequestExecution.Create().
+			SetRequestID(req.ID).
+			SetProjectID(project.ID).
+			SetChannelID(ch.ID).
+			SetModelID("gpt-5.6-sol").
+			SetRequestBody([]byte(`{"stream":true}`)).
+			SetFormat("openai/responses").
+			SetStatus(requestexecution.StatusPending).
+			SetStream(true).
+			Save(ctx)
+		require.NoError(t, err)
+
+		stream := &sliceEventStream{events: []*httpclient.StreamEvent{
+			{Type: "response.created", Data: []byte(`{"type":"response.created","response":{"id":"resp_cut","status":"in_progress"}}`)},
+			{Type: "response.output_text.delta", Data: []byte(`{"type":"response.output_text.delta","delta":"partial"}`)},
+			{Data: []byte("[DONE]")},
+		}}
+		transformer := &mockTransformer{
+			apiFormat:          llm.APIFormatOpenAIResponse,
+			aggregatedResponse: []byte(`{"id":"resp_cut","status":"in_progress"}`),
+			aggregatedMeta: llm.ResponseMeta{
+				ID:             "resp_cut",
+				ProtocolStatus: "in_progress",
+				Usage: &llm.Usage{
+					PromptTokens:     20,
+					CompletionTokens: 1,
+					TotalTokens:      21,
+				},
+			},
+		}
+		state := &PersistenceState{AttemptAccepted: true, AttemptSemanticOutput: true}
+		persistent := NewOutboundPersistentStream(ctx, stream, req, exec, requestService, usageLogService, transformer, nil, state)
+		for persistent.Next() {
+			_ = persistent.Current()
+		}
+		require.NoError(t, persistent.Close())
+
+		stored, err := client.RequestExecution.Get(ctx, exec.ID)
+		require.NoError(t, err)
+		require.Equal(t, requestexecution.StatusFailed, stored.Status)
+		require.Contains(t, stored.ErrorMessage, llm.ErrStreamIncomplete.Error())
+		require.False(t, state.OutboundStreamCompleted)
+		usageCount, err := client.UsageLog.Query().Count(ctx)
+		require.NoError(t, err)
+		require.Equal(t, 1, usageCount, "already-delivered partial output remains metered")
+	})
+
+	t.Run("terminal and usage without semantic output do not settle", func(t *testing.T) {
+		client := enttest.NewEntClient(t, "sqlite3", "file:ent?mode=memory&_fk=0")
+		defer client.Close()
+
+		ctx := ent.NewContext(ctx, client)
+		project := createTestProject(t, ctx, client)
+		ch := createTestChannel(t, ctx, client)
+		_, requestService, _, usageLogService := setupTestServices(t, client)
+
+		req, err := client.Request.Create().SetProjectID(project.ID).SetChannelID(ch.ID).
+			SetModelID("gpt-4.1").SetStatus(request.StatusPending).SetRequestBody([]byte(`{"stream":true}`)).Save(ctx)
+		require.NoError(t, err)
+		exec, err := client.RequestExecution.Create().SetRequestID(req.ID).SetProjectID(project.ID).
+			SetChannelID(ch.ID).SetModelID("gpt-4.1").SetRequestBody([]byte(`{"stream":true}`)).
+			SetFormat("openai/chat_completions").SetStatus(requestexecution.StatusPending).SetStream(true).Save(ctx)
+		require.NoError(t, err)
+
+		stream := &sliceEventStream{events: []*httpclient.StreamEvent{{Data: []byte("[DONE]")}}}
+		transformer := &mockTransformer{
+			apiFormat:          llm.APIFormatOpenAIChatCompletion,
+			aggregatedResponse: []byte(`{"id":"chat_empty","choices":[]}`),
+			aggregatedMeta: llm.ResponseMeta{
+				ID:        "chat_empty",
+				Completed: true,
+				Usage:     &llm.Usage{PromptTokens: 10, TotalTokens: 10},
+			},
+		}
+		state := &PersistenceState{AttemptAccepted: true}
+		persistent := NewOutboundPersistentStream(ctx, stream, req, exec, requestService, usageLogService, transformer, nil, state)
+		for persistent.Next() {
+			_ = persistent.Current()
+		}
+		require.NoError(t, persistent.Close())
+
+		stored, err := client.RequestExecution.Get(ctx, exec.ID)
+		require.NoError(t, err)
+		require.Equal(t, requestexecution.StatusFailed, stored.Status)
+		require.Contains(t, stored.ErrorMessage, pipeline.ErrEmptyResponse.Error())
+		usageCount, err := client.UsageLog.Query().Count(ctx)
+		require.NoError(t, err)
+		require.Zero(t, usageCount, "empty pre-commit attempt must leave usage settlement to failover")
 	})
 
 	t.Run("aggregated completed response without terminal event is completed", func(t *testing.T) {
@@ -831,7 +981,7 @@ func TestOutboundPersistentStream_Close_AggregatedResponsesCompletionHandling(t 
 				},
 			},
 		}
-		state := &PersistenceState{}
+		state := &PersistenceState{AttemptAccepted: true, AttemptSemanticOutput: true}
 
 		persistentStream := NewOutboundPersistentStream(ctx, stream, req, exec, requestService, usageLogService, transformer, nil, state)
 		for persistentStream.Next() {
@@ -844,7 +994,7 @@ func TestOutboundPersistentStream_Close_AggregatedResponsesCompletionHandling(t 
 		require.Equal(t, requestexecution.StatusCompleted, dbExec.Status)
 		require.JSONEq(t, string(aggregated), string(dbExec.ResponseBody))
 		require.Equal(t, "resp_456", dbExec.ExternalID)
-		require.True(t, state.StreamCompleted)
+		require.True(t, state.OutboundStreamCompleted)
 	})
 
 	t.Run("canceled client with aggregated completed response is still completed", func(t *testing.T) {
@@ -896,7 +1046,7 @@ func TestOutboundPersistentStream_Close_AggregatedResponsesCompletionHandling(t 
 				},
 			},
 		}
-		state := &PersistenceState{}
+		state := &PersistenceState{AttemptAccepted: true, AttemptSemanticOutput: true}
 
 		requestCtx, cancel := context.WithCancel(baseCtx)
 		cancel()
@@ -912,7 +1062,7 @@ func TestOutboundPersistentStream_Close_AggregatedResponsesCompletionHandling(t 
 		require.Equal(t, requestexecution.StatusCompleted, dbExec.Status)
 		require.JSONEq(t, string(aggregated), string(dbExec.ResponseBody))
 		require.Equal(t, "resp_codex_like", dbExec.ExternalID)
-		require.True(t, state.StreamCompleted)
+		require.True(t, state.OutboundStreamCompleted)
 	})
 }
 

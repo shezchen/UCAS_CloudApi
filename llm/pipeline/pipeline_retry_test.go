@@ -3,7 +3,9 @@ package pipeline
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -91,6 +93,11 @@ type mockOutbound struct {
 	transformStream       func(context.Context, *httpclient.Request, streams.Stream[*httpclient.StreamEvent]) (streams.Stream[*llm.Response], error)
 	transformError        func(context.Context, *httpclient.Error) *llm.ResponseError
 	aggregateStreamChunks func(context.Context, []*httpclient.StreamEvent) ([]byte, llm.ResponseMeta, error)
+	acceptedChanges       []bool
+}
+
+func (m *mockOutbound) SetStreamAttemptAccepted(accepted bool) {
+	m.acceptedChanges = append(m.acceptedChanges, accepted)
 }
 
 func (m *mockOutbound) APIFormat() llm.APIFormat { return m.apiFormat }
@@ -212,7 +219,9 @@ func (s *llmErrorAfterStream) Close() error {
 type mockMiddleware struct {
 	Middleware
 
-	errorCalls int
+	errorCalls       int
+	llmResponseCalls int
+	onError          func(error)
 }
 
 func (m *mockMiddleware) OnInboundLlmRequest(ctx context.Context, request *llm.Request) (*llm.Request, error) {
@@ -233,6 +242,9 @@ func (m *mockMiddleware) OnOutboundRawRequest(ctx context.Context, request *http
 
 func (m *mockMiddleware) OnOutboundRawError(ctx context.Context, err error) {
 	m.errorCalls++
+	if m.onError != nil {
+		m.onError(err)
+	}
 }
 
 func (m *mockMiddleware) OnOutboundRawResponse(ctx context.Context, response *httpclient.Response) (*httpclient.Response, error) {
@@ -240,7 +252,122 @@ func (m *mockMiddleware) OnOutboundRawResponse(ctx context.Context, response *ht
 }
 
 func (m *mockMiddleware) OnOutboundLlmResponse(ctx context.Context, response *llm.Response) (*llm.Response, error) {
+	m.llmResponseCalls++
 	return response, nil
+}
+
+func TestPipeline_EmptyNonStreamSkipsPersistenceMiddlewares(t *testing.T) {
+	attempts := 0
+	executor := &mockExecutor{do: func(context.Context, *httpclient.Request) (*httpclient.Response, error) {
+		attempts++
+		return &httpclient.Response{StatusCode: http.StatusOK}, nil
+	}}
+	outbound := &mockOutbound{
+		transformResponse: func(context.Context, *httpclient.Response) (*llm.Response, error) {
+			if attempts == 1 {
+				return &llm.Response{Usage: &llm.Usage{PromptTokens: 20, TotalTokens: 20}}, nil
+			}
+			return &llm.Response{Choices: []llm.Choice{{Message: &llm.Message{
+				Content: llm.MessageContent{Content: lo.ToPtr("ok")},
+			}}}}, nil
+		},
+		canRetry: func(err error) bool { return errors.Is(err, ErrEmptyResponse) },
+	}
+	middleware := &mockMiddleware{}
+	p := &pipeline{
+		Executor:               executor,
+		Inbound:                &mockInbound{},
+		Outbound:               outbound,
+		middlewares:            []Middleware{middleware},
+		maxSameChannelRetries:  1,
+		emptyResponseDetection: true,
+	}
+
+	result, err := p.Process(context.Background(), &httpclient.Request{})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, 2, attempts)
+	require.Equal(t, 1, middleware.llmResponseCalls, "usage-only rejected attempt must not reach persistence/accounting middleware")
+}
+
+func TestPipeline_ForcedStreamAcceptanceWaitsForSuccessfulAggregation(t *testing.T) {
+	streamCalls := 0
+	aggregateCalls := 0
+	var order []string
+	executor := &mockExecutor{doStream: func(context.Context, *httpclient.Request) (streams.Stream[*httpclient.StreamEvent], error) {
+		streamCalls++
+		return streams.SliceStream([]*httpclient.StreamEvent{{Data: []byte("provider")}}), nil
+	}}
+	streamFlag := false
+	inbound := &mockInbound{
+		transformRequest: func(context.Context, *httpclient.Request) (*llm.Request, error) {
+			return &llm.Request{Stream: &streamFlag}, nil
+		},
+		transformStream: func(_ context.Context, stream streams.Stream[*llm.Response]) (streams.Stream[*httpclient.StreamEvent], error) {
+			mapped := streams.Map(stream, func(*llm.Response) *httpclient.StreamEvent {
+				return &httpclient.StreamEvent{Data: []byte("client")}
+			})
+			return &closeHookHTTPStream{
+				Stream: mapped,
+				onClose: func() {
+					order = append(order, fmt.Sprintf("close-%d", streamCalls))
+				},
+			}, nil
+		},
+		aggregateStreamChunks: func(context.Context, []*httpclient.StreamEvent) ([]byte, llm.ResponseMeta, error) {
+			aggregateCalls++
+			if aggregateCalls == 1 {
+				return nil, llm.ResponseMeta{}, errors.New("downstream aggregate failed")
+			}
+			return []byte(`{"ok":true}`), llm.ResponseMeta{}, nil
+		},
+	}
+	outbound := &mockOutbound{
+		transformRequest: func(_ context.Context, request *llm.Request) (*httpclient.Request, error) {
+			request.Stream = lo.ToPtr(true)
+			return &httpclient.Request{}, nil
+		},
+		transformStream: func(_ context.Context, _ *httpclient.Request, _ streams.Stream[*httpclient.StreamEvent]) (streams.Stream[*llm.Response], error) {
+			return streams.SliceStream([]*llm.Response{
+				{Choices: []llm.Choice{{Delta: &llm.Message{Content: llm.MessageContent{Content: lo.ToPtr("ok")}}}}},
+				llm.DoneResponse,
+			}), nil
+		},
+		canRetry: func(err error) bool { return strings.Contains(err.Error(), "downstream aggregate failed") },
+	}
+	middleware := &mockMiddleware{onError: func(error) { order = append(order, "error") }}
+	p := &pipeline{
+		Executor:              executor,
+		Inbound:               inbound,
+		Outbound:              outbound,
+		middlewares:           []Middleware{middleware},
+		maxSameChannelRetries: 1,
+	}
+
+	result, err := p.Process(context.Background(), &httpclient.Request{})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.False(t, result.Stream)
+	require.Equal(t, 2, streamCalls)
+	require.Equal(t, []bool{true}, outbound.acceptedChanges, "failed auto-aggregation must remain unaccepted so failover can own settlement")
+	require.Equal(t, []string{"close-1", "error", "close-2"}, order, "specific downstream error must be persisted after the failed stream closes")
+}
+
+type closeHookHTTPStream struct {
+	streams.Stream[*httpclient.StreamEvent]
+	onClose func()
+	closed  bool
+}
+
+func (s *closeHookHTTPStream) Close() error {
+	if s.closed {
+		return nil
+	}
+	s.closed = true
+	if s.onClose != nil {
+		s.onClose()
+	}
+	return s.Stream.Close()
 }
 
 func (m *mockMiddleware) OnOutboundRawStream(ctx context.Context, stream streams.Stream[*httpclient.StreamEvent]) (streams.Stream[*httpclient.StreamEvent], error) {

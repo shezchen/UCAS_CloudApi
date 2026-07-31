@@ -256,15 +256,46 @@ func responseTerminalError(resp *Response) *llm.ResponseError {
 		status = strings.ToLower(strings.TrimSpace(*resp.Status))
 	}
 
+	if resp.Error != nil {
+		return newUpstreamResponseError("failed", resp.Error)
+	}
+
 	switch status {
+	case "", "completed", "incomplete":
+		return nil
 	case "failed", "canceled", "cancelled":
 		return newUpstreamResponseError(status, resp.Error)
 	default:
-		if resp.Error != nil {
-			return newUpstreamResponseError("failed", resp.Error)
-		}
+		return newUpstreamResponseError("failed", &Error{
+			Type:    "api_error",
+			Code:    "invalid_response_status",
+			Message: "upstream returned a non-terminal response status: " + status,
+		})
+	}
+}
 
-		return nil
+func normalizeResponseTerminalEventType(eventType StreamEventType, resp *Response) StreamEventType {
+	if eventType != StreamEventTypeResponseCompleted || resp == nil {
+		return eventType
+	}
+	if resp.Error != nil {
+		return StreamEventTypeResponseFailed
+	}
+
+	status := ""
+	if resp.Status != nil {
+		status = strings.ToLower(strings.TrimSpace(*resp.Status))
+	}
+
+	switch status {
+	case "incomplete":
+		return StreamEventTypeResponseIncomplete
+	case "failed", "error":
+		return StreamEventTypeResponseFailed
+	case "canceled", "cancelled":
+		return StreamEventTypeResponseCancelled
+	default:
+		return eventType
 	}
 }
 

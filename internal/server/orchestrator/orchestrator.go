@@ -266,7 +266,6 @@ func (processor *ChatCompletionOrchestrator) Process(ctx context.Context, reques
 		// Response pass-through middlewares run before persistRequest so the raw provider
 		// response is saved when pass-through is enabled.
 		applyPassThroughResponse(outbound, processor.SystemService),
-		applyPassThroughStream(outbound, processor.SystemService),
 		persistRequest(inbound),
 	)
 
@@ -308,6 +307,10 @@ func (processor *ChatCompletionOrchestrator) Process(ctx context.Context, reques
 		// so they run first in reverse order (before any other OnOutboundRawResponse/OnOutboundRawStream handlers).
 		captureRawProviderResponse(outbound, processor.SystemService),
 		captureRawProviderStream(outbound, processor.SystemService),
+		// Must remain last: once direct streaming is accepted this middleware may
+		// start a drain goroutine immediately. No later inbound stream middleware
+		// may fail and roll the accepted attempt back underneath that goroutine.
+		applyPassThroughStream(outbound, processor.SystemService),
 	)
 
 	pipelineOpts = append(pipelineOpts, pipeline.WithMiddlewares(middlewares...))

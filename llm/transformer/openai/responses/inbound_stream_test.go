@@ -483,6 +483,45 @@ func TestInboundTransformer_TransformStream_PreservesTerminalSemantics(t *testin
 	}
 }
 
+func TestInboundTransformer_TransformStream_PreservesProviderIncompleteReason(t *testing.T) {
+	source := streams.SliceStream([]*llm.Response{
+		{
+			Object: "chat.completion.chunk",
+			ID:     "resp_terminal_reason",
+			Model:  "gpt-5",
+			Choices: []llm.Choice{{
+				Delta: &llm.Message{Content: llm.MessageContent{Content: lo.ToPtr("partial")}},
+			}},
+		},
+		{
+			Object:           "chat.completion.chunk",
+			ID:               "resp_terminal_reason",
+			Model:            "gpt-5",
+			ProtocolStatus:   "incomplete",
+			IncompleteReason: "content_filter",
+			Choices: []llm.Choice{{
+				FinishReason: lo.ToPtr("length"),
+			}},
+		},
+	})
+
+	stream, err := NewInboundTransformer().TransformStream(t.Context(), source)
+	require.NoError(t, err)
+
+	var terminal StreamEvent
+	for stream.Next() {
+		var event StreamEvent
+		require.NoError(t, json.Unmarshal(stream.Current().Data, &event))
+		if event.Type == StreamEventTypeResponseIncomplete {
+			terminal = event
+		}
+	}
+	require.NoError(t, stream.Err())
+	require.NotNil(t, terminal.Response)
+	require.NotNil(t, terminal.Response.IncompleteDetails)
+	require.Equal(t, "content_filter", terminal.Response.IncompleteDetails.Reason)
+}
+
 func TestInboundTransformer_TransformStream_PreservesStructuredResponseError(t *testing.T) {
 	upstreamErr := &llm.ResponseError{
 		StatusCode: 502,

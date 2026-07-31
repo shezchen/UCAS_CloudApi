@@ -42,6 +42,14 @@ type ChannelCustomizedExecutor interface {
 	CustomizeExecutor(Executor) Executor
 }
 
+// StreamAttemptAcceptor is implemented by an outbound transformer that needs
+// to know when a streaming attempt is no longer eligible for transparent
+// failover. The pipeline calls it only after the client-facing stream path is
+// ready, or after forced streaming was successfully auto-aggregated.
+type StreamAttemptAcceptor interface {
+	SetStreamAttemptAccepted(bool)
+}
+
 // Option defines a pipeline configuration option.
 type Option func(*pipeline)
 
@@ -416,11 +424,10 @@ func (p *pipeline) processRequest(ctx context.Context, request *llm.Request) (*R
 			Stream: true,
 		}
 
-		stream, err := p.stream(ctx, executor, httpReq, p.streamFirstEventTimeout)
+		stream, err := p.stream(ctx, executor, httpReq, p.streamFirstEventTimeout, true)
 		if err != nil {
 			return nil, fmt.Errorf("failed to stream request: %w", err)
 		}
-
 		result.EventStream = stream
 	case effectiveWantStream:
 		result = &Result{
@@ -459,6 +466,18 @@ func (p *pipeline) processRequest(ctx context.Context, request *llm.Request) (*R
 	}
 
 	return result, nil
+}
+
+func (p *pipeline) acceptStreamAttempt() {
+	if acceptor, ok := p.Outbound.(StreamAttemptAcceptor); ok {
+		acceptor.SetStreamAttemptAccepted(true)
+	}
+}
+
+func (p *pipeline) rejectStreamAttempt() {
+	if acceptor, ok := p.Outbound.(StreamAttemptAcceptor); ok {
+		acceptor.SetStreamAttemptAccepted(false)
+	}
 }
 
 // getMaxSameChannelRetries returns the maximum number of same-channel retries.

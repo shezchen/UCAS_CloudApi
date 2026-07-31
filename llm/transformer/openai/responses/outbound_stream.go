@@ -153,6 +153,7 @@ func (s *responsesOutboundStream) transformStreamChunk(event *httpclient.StreamE
 	if err != nil {
 		return fmt.Errorf("failed to unmarshal responses api stream event: %w", err)
 	}
+	streamEvent.Type = normalizeResponseTerminalEventType(streamEvent.Type, streamEvent.Response)
 
 	if slog.Default().Enabled(context.Background(), slog.LevelDebug) {
 		slog.DebugContext(context.Background(), "received response stream event", slog.Any("event", streamEvent))

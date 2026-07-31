@@ -1413,3 +1413,25 @@ func TestOutboundTransformer_TransformResponse_WithTestData(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalizeResponseTerminalEventTypeUsesSnapshotStatus(t *testing.T) {
+	tests := []struct {
+		status   string
+		expected StreamEventType
+	}{
+		{status: "completed", expected: StreamEventTypeResponseCompleted},
+		{status: "incomplete", expected: StreamEventTypeResponseIncomplete},
+		{status: "failed", expected: StreamEventTypeResponseFailed},
+		{status: "cancelled", expected: StreamEventTypeResponseCancelled},
+	}
+
+	for _, test := range tests {
+		t.Run(test.status, func(t *testing.T) {
+			actual := normalizeResponseTerminalEventType(
+				StreamEventTypeResponseCompleted,
+				&Response{Status: lo.ToPtr(test.status)},
+			)
+			require.Equal(t, test.expected, actual)
+		})
+	}
+}

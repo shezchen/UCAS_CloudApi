@@ -189,12 +189,13 @@ type recordPerformanceStream struct {
 	stream streams.Stream[*llm.Response]
 	state  *PersistenceState
 
-	firstTokenSet     bool
-	reasoningStartSet bool
-	reasoningEndSet   bool
-	semanticOutput    bool
-	recorded          bool
-	terminalFailure   bool
+	firstTokenSet      bool
+	reasoningStartSet  bool
+	reasoningEndSet    bool
+	semanticOutput     bool
+	recorded           bool
+	terminalFailure    bool
+	protocolIncomplete bool
 }
 
 func (s *recordPerformanceStream) Current() *llm.Response {
@@ -209,10 +210,21 @@ func (s *recordPerformanceStream) Current() *llm.Response {
 
 	if pipeline.HasResponseContent(event) {
 		s.semanticOutput = true
+		if s.state != nil {
+			s.state.AttemptSemanticOutput = true
+		}
 		if !s.firstTokenSet && s.state.Perf != nil {
 			s.state.Perf.MarkFirstToken()
 			s.firstTokenSet = true
 		}
+	}
+
+	status := strings.ToLower(strings.TrimSpace(event.ProtocolStatus))
+	if status == "incomplete" || status == "failed" || status == "error" || status == "canceled" || status == "cancelled" {
+		s.protocolIncomplete = true
+	}
+	if !s.protocolIncomplete && isSuccessfulUnifiedStreamTerminal(event) && s.state != nil {
+		s.state.OutboundStreamCompleted = true
 	}
 
 	if s.state.Perf != nil && len(event.Choices) > 0 {
@@ -242,6 +254,30 @@ func (s *recordPerformanceStream) Current() *llm.Response {
 	return event
 }
 
+func isSuccessfulUnifiedStreamTerminal(response *llm.Response) bool {
+	if response == nil || response.Error != nil {
+		return false
+	}
+
+	switch strings.ToLower(strings.TrimSpace(response.ProtocolStatus)) {
+	case "completed":
+		return true
+	case "incomplete", "failed", "error", "canceled", "cancelled":
+		return false
+	}
+
+	if response == llm.DoneResponse || response.Object == "[DONE]" {
+		return true
+	}
+	for _, choice := range response.Choices {
+		if choice.FinishReason != nil && strings.TrimSpace(*choice.FinishReason) != "" {
+			return true
+		}
+	}
+
+	return false
+}
+
 func (s *recordPerformanceStream) Next() bool {
 	return s.stream.Next()
 }
@@ -250,7 +286,7 @@ func (s *recordPerformanceStream) Close() error {
 	if !s.recorded && s.state != nil && s.state.Perf != nil {
 		if s.terminalFailure {
 			s.recordFailure()
-		} else if s.semanticOutput && s.state.StreamCompleted {
+		} else if s.semanticOutput && s.state.OutboundStreamCompleted {
 			s.recordSuccess()
 		} else if s.semanticOutput && s.ctx.Err() != nil {
 			s.state.Perf.MarkCanceled()

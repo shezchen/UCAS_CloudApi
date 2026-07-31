@@ -228,6 +228,33 @@ func TestOutboundTransformer_TransformStream_IncompleteStaysTerminalPartial(t *t
 	require.True(t, sawUsage)
 }
 
+func TestOutboundTransformer_TransformStream_CompletedEventWithIncompleteSnapshotStaysIncomplete(t *testing.T) {
+	trans, err := NewOutboundTransformer("https://api.openai.com", "test-api-key")
+	require.NoError(t, err)
+
+	events := []*httpclient.StreamEvent{
+		{Type: "response.created", Data: []byte(`{"type":"response.created","response":{"id":"resp_mismatch","object":"response","created_at":1700000000,"model":"gpt-5","status":"in_progress","output":[]}}`)},
+		{Type: "response.output_text.delta", Data: []byte(`{"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"partial"}`)},
+		{Type: "response.completed", Data: []byte(`{"type":"response.completed","response":{"id":"resp_mismatch","object":"response","created_at":1700000000,"model":"gpt-5","status":"incomplete","output":[],"incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":5,"output_tokens":1,"total_tokens":6}}}`)},
+	}
+
+	stream, err := trans.TransformStream(t.Context(), nil, streams.SliceStream(events))
+	require.NoError(t, err)
+	responses, err := streams.All(stream)
+	require.NoError(t, err)
+
+	var terminal *llm.Response
+	for _, response := range responses {
+		if response.ProtocolStatus == "incomplete" {
+			terminal = response
+			break
+		}
+	}
+	require.NotNil(t, terminal)
+	require.Equal(t, "length", lo.FromPtr(terminal.Choices[0].FinishReason))
+	require.Equal(t, "max_output_tokens", terminal.IncompleteReason)
+}
+
 func TestOutboundTransformer_TransformStream_IncompleteWithoutTerminal(t *testing.T) {
 	trans, err := NewOutboundTransformer("https://api.openai.com", "test-api-key")
 	require.NoError(t, err)

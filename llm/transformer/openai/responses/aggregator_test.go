@@ -118,6 +118,21 @@ func TestAggregateStreamChunks_IncompleteIsTerminalButNotCompleted(t *testing.T)
 	require.Equal(t, "max_output_tokens", body.IncompleteDetails.Reason)
 }
 
+func TestAggregateStreamChunks_CompletedEventCannotOverrideIncompleteSnapshot(t *testing.T) {
+	resultBytes, meta, err := AggregateStreamChunks(t.Context(), []*httpclient.StreamEvent{
+		{Type: "response.completed", Data: []byte(`{"type":"response.completed","response":{"id":"resp_mismatch","object":"response","created_at":1700000000,"model":"gpt-5","status":"incomplete","output":[],"usage":{"input_tokens":20,"output_tokens":7,"total_tokens":27},"incomplete_details":{"reason":"max_output_tokens"}}}`)},
+	})
+	require.NoError(t, err)
+	require.True(t, meta.Terminal)
+	require.False(t, meta.Completed)
+	require.Equal(t, "incomplete", meta.ProtocolStatus)
+	require.Equal(t, "max_output_tokens", meta.IncompleteReason)
+
+	var body Response
+	require.NoError(t, json.Unmarshal(resultBytes, &body))
+	require.Equal(t, "incomplete", lo.FromPtr(body.Status))
+}
+
 func TestAggregateStreamChunks_WithTestData(t *testing.T) {
 	tests := []struct {
 		name             string

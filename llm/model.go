@@ -184,6 +184,9 @@ type Request struct {
 	// Help fields, will not be sent to the llm service.
 	ReasoningSummary *string `json:"reasoning_summary,omitempty"`
 
+	// Context scope for reasoning state in Responses API requests.
+	ReasoningContext string `json:"reasoning_context,omitempty"`
+
 	// Specifies the processing type used for serving the request.
 	ServiceTier *string `json:"service_tier,omitempty"`
 

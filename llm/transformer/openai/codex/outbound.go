@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/google/uuid"
@@ -107,6 +108,7 @@ func (t *OutboundTransformer) TransformRequest(ctx context.Context, llmReq *llm.
 	rawOriginator := ""
 	rawUserAgent := ""
 	rawTurnMetadata := ""
+	rawResponsesLite := ""
 
 	var rawHeaders http.Header
 
@@ -121,6 +123,7 @@ func (t *OutboundTransformer) TransformRequest(ctx context.Context, llmReq *llm.
 		rawOriginator = llmReq.RawRequest.Headers.Get("Originator")
 		rawUserAgent = llmReq.RawRequest.Headers.Get("User-Agent")
 		rawTurnMetadata = llmReq.RawRequest.Headers.Get(TurnMetadataHeader)
+		rawResponsesLite = llmReq.RawRequest.Headers.Get(ResponsesLiteHeader)
 	}
 
 	creds, err := t.tokens.Get(ctx)
@@ -154,6 +157,10 @@ func (t *OutboundTransformer) TransformRequest(ctx context.Context, llmReq *llm.
 
 	if reqCopy.TransformerMetadata == nil {
 		reqCopy.TransformerMetadata = map[string]any{}
+	}
+
+	if strings.EqualFold(strings.TrimSpace(rawResponsesLite), "true") {
+		reqCopy.ReasoningContext = "all_turns"
 	}
 
 	if isImageRequest {

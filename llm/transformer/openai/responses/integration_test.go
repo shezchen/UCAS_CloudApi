@@ -9,6 +9,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 
 	"github.com/looplj/axonhub/llm/httpclient"
 	"github.com/looplj/axonhub/llm/internal/pkg/xtest"
@@ -83,4 +84,25 @@ func TestTransformRequest_Integration(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTransformRequest_PreservesReasoningContext(t *testing.T) {
+	inboundTransformer := NewInboundTransformer()
+	outboundTransformer, err := NewOutboundTransformer("https://api.openai.com", "test-api-key")
+	require.NoError(t, err)
+
+	input := []byte(`{
+		"model":"gpt-5.6-sol",
+		"input":"hello",
+		"reasoning":{"effort":"high","context":"all_turns"}
+	}`)
+	chatReq, err := inboundTransformer.TransformRequest(t.Context(), &httpclient.Request{
+		Headers: http.Header{"Content-Type": []string{"application/json"}},
+		Body:    input,
+	})
+	require.NoError(t, err)
+
+	outboundReq, err := outboundTransformer.TransformRequest(t.Context(), chatReq)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"effort":"high","context":"all_turns"}`, gjson.GetBytes(outboundReq.Body, "reasoning").Raw)
 }

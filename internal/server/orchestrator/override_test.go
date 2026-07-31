@@ -10,6 +10,7 @@ import (
 	"github.com/tidwall/gjson"
 
 	"github.com/looplj/axonhub/internal/ent"
+	"github.com/looplj/axonhub/internal/ent/channel"
 	"github.com/looplj/axonhub/internal/objects"
 	"github.com/looplj/axonhub/internal/server/biz"
 	"github.com/looplj/axonhub/llm"
@@ -82,6 +83,50 @@ func TestOverrideParametersWithTemplate(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, "header-gpt-4", processedRequestWithHeaders.Headers.Get("X-Custom-Model"))
+}
+
+func TestEnforceCodexResponsesLiteInvariant(t *testing.T) {
+	newCodexOutbound := func() *PersistentOutboundTransformer {
+		return &PersistentOutboundTransformer{state: &PersistenceState{
+			CurrentCandidate: &ChannelModelsCandidate{Channel: &biz.Channel{Channel: &ent.Channel{Type: channel.TypeCodex}}},
+		}}
+	}
+
+	t.Run("header true forces all turns after body overrides", func(t *testing.T) {
+		headers := make(http.Header)
+		headers.Set("X-OpenAI-Internal-Codex-Responses-Lite", "true")
+		request := &httpclient.Request{
+			Headers: headers,
+			Body:    []byte(`{"model":"gpt-5.6-sol","reasoning":{"context":"current_turn"}}`),
+		}
+
+		processed, err := enforceCodexResponsesLiteInvariant(newCodexOutbound()).OnOutboundRawRequest(t.Context(), request)
+		require.NoError(t, err)
+		require.Equal(t, "all_turns", gjson.GetBytes(processed.Body, "reasoning.context").String())
+	})
+
+	t.Run("header absent leaves body unchanged", func(t *testing.T) {
+		body := []byte(`{"model":"gpt-5.6-sol","reasoning":{"context":"current_turn"}}`)
+		request := &httpclient.Request{Headers: make(http.Header), Body: body}
+
+		processed, err := enforceCodexResponsesLiteInvariant(newCodexOutbound()).OnOutboundRawRequest(t.Context(), request)
+		require.NoError(t, err)
+		require.Equal(t, string(body), string(processed.Body))
+	})
+
+	t.Run("non Codex channel is untouched", func(t *testing.T) {
+		headers := make(http.Header)
+		headers.Set("X-OpenAI-Internal-Codex-Responses-Lite", "true")
+		body := []byte(`{"model":"gpt-5.6-sol","reasoning":{"context":"current_turn"}}`)
+		request := &httpclient.Request{Headers: headers, Body: body}
+		outbound := &PersistentOutboundTransformer{state: &PersistenceState{
+			CurrentCandidate: &ChannelModelsCandidate{Channel: &biz.Channel{Channel: &ent.Channel{Type: channel.TypeOpenai}}},
+		}}
+
+		processed, err := enforceCodexResponsesLiteInvariant(outbound).OnOutboundRawRequest(t.Context(), request)
+		require.NoError(t, err)
+		require.Equal(t, string(body), string(processed.Body))
+	})
 }
 
 func TestOverrideParametersWithRequestHeaderTemplate(t *testing.T) {

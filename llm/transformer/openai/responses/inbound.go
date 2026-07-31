@@ -211,6 +211,10 @@ func convertToLLMRequest(req *Request, rawBody ...[]byte) (*llm.Request, error) 
 			chatReq.ReasoningEffort = req.Reasoning.Effort
 		}
 
+		if req.Reasoning.Context != "" {
+			chatReq.ReasoningContext = req.Reasoning.Context
+		}
+
 		if req.Reasoning.MaxTokens != nil {
 			chatReq.ReasoningBudget = req.Reasoning.MaxTokens
 		}

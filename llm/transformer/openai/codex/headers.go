@@ -13,6 +13,7 @@ const (
 	WindowIDHeader        = "X-Codex-Window-Id"
 	ClientRequestIDHeader = "X-Client-Request-Id"
 	BetaFeaturesHeader    = "X-Codex-Beta-Features"
+	ResponsesLiteHeader   = "X-OpenAI-Internal-Codex-Responses-Lite"
 )
 
 type TurnMetadata struct {
@@ -24,6 +25,7 @@ var PassthroughHeaders = []string{
 	WindowIDHeader,
 	ClientRequestIDHeader,
 	BetaFeaturesHeader,
+	ResponsesLiteHeader,
 }
 
 func ExtractSessionIDFromTurnMetadata(raw string) string {

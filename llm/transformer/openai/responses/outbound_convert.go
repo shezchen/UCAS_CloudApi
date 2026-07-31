@@ -506,6 +506,7 @@ func convertStreamOptions(src *llm.StreamOptions, metadata map[string]any) *Stre
 func convertReasoning(req *llm.Request) *Reasoning {
 	// Check if any reasoning-related fields are present
 	hasReasoningFields := req.ReasoningEffort != "" ||
+		req.ReasoningContext != "" ||
 		req.ReasoningBudget != nil ||
 		req.ReasoningSummary != nil
 	if !hasReasoningFields {
@@ -514,6 +515,7 @@ func convertReasoning(req *llm.Request) *Reasoning {
 
 	reasoning := &Reasoning{
 		Effort:    req.ReasoningEffort,
+		Context:   req.ReasoningContext,
 		MaxTokens: req.ReasoningBudget,
 	}
 

@@ -166,6 +166,8 @@ type Prompt struct {
 type Reasoning struct {
 	// The effort level for reasoning. Any of "low", "medium", "high".
 	Effort string `json:"effort,omitempty"`
+	// The context scope for reasoning state. Any of "current_turn", "all_turns".
+	Context string `json:"context,omitempty"`
 	// Whether to generate a summary of the reasoning. Any of "auto", "concise", "detailed".
 	GenerateSummary string `json:"generate_summary,omitempty"`
 	// The summary type. Any of "auto", "concise", "detailed".

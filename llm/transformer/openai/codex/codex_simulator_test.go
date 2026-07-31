@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 
 	"github.com/looplj/axonhub/llm/oauth"
 	"github.com/looplj/axonhub/llm/simulator"
@@ -101,6 +103,22 @@ func TestCodexOutbound_PassthroughModernCodexHeaders(t *testing.T) {
 	assert.Equal(t, "window-123", finalReq.Header.Get("X-Codex-Window-Id"))
 	assert.Equal(t, "request-123", finalReq.Header.Get("X-Client-Request-Id"))
 	assert.Equal(t, "js_repl", finalReq.Header.Get("X-Codex-Beta-Features"))
+}
+
+func TestCodexOutbound_ResponsesLiteHeaderRequiresAllTurnsContext(t *testing.T) {
+	ctx := context.Background()
+	sim := newCodexSimulator(t)
+	req := newCodexChatCompletionRequest(t)
+	req.Header.Set("X-OpenAI-Internal-Codex-Responses-Lite", "true")
+
+	finalReq, err := sim.Simulate(ctx, req)
+	require.NoError(t, err)
+	defer finalReq.Body.Close()
+
+	body, err := io.ReadAll(finalReq.Body)
+	require.NoError(t, err)
+	assert.Equal(t, "true", finalReq.Header.Get("X-OpenAI-Internal-Codex-Responses-Lite"))
+	assert.Equal(t, "all_turns", gjson.GetBytes(body, "reasoning.context").String())
 }
 
 func TestCodexOutbound_SessionIDPrecedence(t *testing.T) {

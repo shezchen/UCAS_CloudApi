@@ -12,6 +12,7 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 
+	"github.com/looplj/axonhub/internal/ent/channel"
 	"github.com/looplj/axonhub/internal/log"
 	"github.com/looplj/axonhub/internal/objects"
 	"github.com/looplj/axonhub/llm"
@@ -459,6 +460,30 @@ func applyOverrideRequestHeaders(outbound *PersistentOutboundTransformer) pipeli
 		for _, op := range overrideHeaders {
 			applyOverrideOperationToHeaders(ctx, request.Headers, op, renderCtx)
 		}
+
+		return request, nil
+	})
+}
+
+// enforceCodexResponsesLiteInvariant keeps the internal Responses Lite header
+// coupled to the request body required by the Codex upstream. It intentionally
+// runs after channel body and header overrides.
+func enforceCodexResponsesLiteInvariant(outbound *PersistentOutboundTransformer) pipeline.Middleware {
+	const responsesLiteHeader = "X-OpenAI-Internal-Codex-Responses-Lite"
+
+	return pipeline.OnRawRequest("codex-responses-lite-invariant", func(_ context.Context, request *httpclient.Request) (*httpclient.Request, error) {
+		currentChannel := outbound.GetCurrentChannel()
+		if currentChannel == nil || currentChannel.Type != channel.TypeCodex || request == nil ||
+			!strings.EqualFold(strings.TrimSpace(request.Headers.Get(responsesLiteHeader)), "true") {
+			return request, nil
+		}
+
+		body, err := sjson.SetBytes(request.Body, "reasoning.context", "all_turns")
+		if err != nil {
+			return nil, fmt.Errorf("enforce Codex Responses Lite reasoning context: %w", err)
+		}
+
+		request.Body = body
 
 		return request, nil
 	})

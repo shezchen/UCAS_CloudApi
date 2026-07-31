@@ -1157,11 +1157,13 @@ func campusFailureCategory(statusCode *int, message string) string {
 }
 
 // PrepareChannelProbe authorizes a project member against the privacy-safe
-// catalog and prepares an ordered server-side fallback chain. The caller never
-// supplies a model, URL, proxy or credential.
+// catalog and prepares either the explicitly selected synchronized model or an
+// ordered server-side fallback chain. The caller never supplies a URL, proxy or
+// credential.
 func (svc *CampusCatalogService) PrepareChannelProbe(
 	ctx context.Context,
 	channelID int,
+	requestedModel *string,
 ) (objects.GUID, []string, error) {
 	currentUser, projectID, err := campusCatalogIdentity(ctx)
 	if err != nil {
@@ -1169,6 +1171,13 @@ func (svc *CampusCatalogService) PrepareChannelProbe(
 	}
 	if channelID <= 0 {
 		return objects.GUID{}, nil, ErrCampusCatalogInvalidInput
+	}
+	var selectedModel string
+	if requestedModel != nil {
+		selectedModel = strings.TrimSpace(*requestedModel)
+		if selectedModel == "" || utf8.RuneCountInString(selectedModel) > campusModelIDMaxRunes {
+			return objects.GUID{}, nil, ErrCampusCatalogInvalidInput
+		}
 	}
 
 	type preparedProbe struct {
@@ -1193,6 +1202,17 @@ func (svc *CampusCatalogService) PrepareChannelProbe(
 				return preparedProbe{}, ErrCampusChannelNotFound
 			}
 			return preparedProbe{}, fmt.Errorf("load channel for public probe: %w", err)
+		}
+
+		if selectedModel != "" {
+			if _, supported := (&Channel{Channel: ch}).GetModelEntries()[selectedModel]; !supported {
+				return preparedProbe{}, ErrCampusCatalogInvalidInput
+			}
+
+			return preparedProbe{
+				guid:   objects.GUID{Type: ent.TypeChannel, ID: ch.ID},
+				models: []string{selectedModel},
+			}, nil
 		}
 
 		recentExecutions, err := svc.client.RequestExecution.Query().

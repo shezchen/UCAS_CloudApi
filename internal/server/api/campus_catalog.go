@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -36,7 +37,7 @@ type campusAPIActivityReader interface {
 }
 
 type campusChannelProbeReader interface {
-	PrepareChannelProbe(context.Context, int) (objects.GUID, []string, error)
+	PrepareChannelProbe(context.Context, int, *string) (objects.GUID, []string, error)
 	GetChannelHealth(context.Context, int) (*biz.CampusChannelHealth, error)
 }
 
@@ -161,7 +162,17 @@ func (h *CampusCatalogHandlers) PostChannelProbe(c *gin.Context) {
 		return
 	}
 
-	channelGUID, modelIDs, err := reader.PrepareChannelProbe(c.Request.Context(), channelID)
+	var requestedModel *string
+	if rawModel, supplied := c.GetQuery("model"); supplied {
+		modelID := strings.TrimSpace(rawModel)
+		if modelID == "" {
+			JSONError(c, http.StatusBadRequest, biz.ErrCampusCatalogInvalidInput)
+			return
+		}
+		requestedModel = &modelID
+	}
+
+	channelGUID, modelIDs, err := reader.PrepareChannelProbe(c.Request.Context(), channelID, requestedModel)
 	if err != nil {
 		h.writeCampusCatalogError(c, err, "failed to prepare campus channel probe")
 		return

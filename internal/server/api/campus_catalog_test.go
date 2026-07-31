@@ -30,6 +30,7 @@ type stubCampusCatalogReader struct {
 	probeGUID       objects.GUID
 	probeModels     []string
 	probeErr        error
+	probeModel      *string
 	health          *biz.CampusChannelHealth
 	healthErr       error
 }
@@ -47,7 +48,11 @@ func (s *stubCampusCatalogReader) UpdateChannelModelCapabilities(_ context.Conte
 	return s.updateErr
 }
 
-func (s *stubCampusCatalogReader) PrepareChannelProbe(context.Context, int) (objects.GUID, []string, error) {
+func (s *stubCampusCatalogReader) PrepareChannelProbe(_ context.Context, _ int, modelID *string) (objects.GUID, []string, error) {
+	if modelID != nil {
+		selected := *modelID
+		s.probeModel = &selected
+	}
 	return s.probeGUID, s.probeModels, s.probeErr
 }
 
@@ -383,4 +388,79 @@ func TestCampusChannelProbeDoesNotHideAuthenticationFailureBehindFallback(t *tes
 	require.Contains(t, response.Body.String(), `"statusCode":401`)
 	require.Contains(t, response.Body.String(), upstreamError)
 	require.Contains(t, response.Body.String(), `"errorCategory":"probe_failed"`)
+}
+
+func TestCampusChannelProbeUsesExplicitModelWithoutFallback(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	status := http.StatusBadRequest
+	upstreamError := "The requested model is not supported."
+	tester := &stubCampusChannelTester{
+		results: map[string]*orchestrator.TestChannelResult{
+			"gpt-5.6-terra": {
+				Success:          false,
+				Latency:          0.18,
+				StatusCode:       &status,
+				Error:            &upstreamError,
+				ModelUnsupported: true,
+			},
+		},
+		errs: map[string]error{},
+	}
+	recorder := &stubCampusChannelProbeRecorder{}
+	catalog := &stubCampusCatalogReader{
+		probeGUID:   objects.GUID{Type: ent.TypeChannel, ID: 7},
+		probeModels: []string{"gpt-5.6-terra"},
+		health:      &biz.CampusChannelHealth{State: "unhealthy"},
+	}
+	handler := &CampusCatalogHandlers{
+		catalog:       catalog,
+		probe:         tester,
+		channelProbes: recorder,
+		probeLast:     make(map[string]time.Time),
+	}
+
+	response := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(response)
+	ctx.Params = gin.Params{{Key: "id", Value: "7"}}
+	requestCtx := contexts.WithUser(context.Background(), &ent.User{ID: 44})
+	ctx.Request = httptest.NewRequest(
+		http.MethodPost,
+		"/admin/campus/channels/7/probe?model=gpt-5.6-terra",
+		nil,
+	).WithContext(requestCtx)
+	handler.PostChannelProbe(ctx)
+
+	require.Equal(t, http.StatusOK, response.Code)
+	require.NotNil(t, catalog.probeModel)
+	require.Equal(t, "gpt-5.6-terra", *catalog.probeModel)
+	require.Equal(t, []string{"gpt-5.6-terra"}, tester.calls)
+	require.Equal(t, []bool{false}, recorder.results)
+	require.JSONEq(t, `{
+		"success":false,
+		"channelID":"7",
+		"modelID":"gpt-5.6-terra",
+		"latency":0.18,
+		"statusCode":400,
+		"error":"The requested model is not supported.",
+		"errorCategory":"probe_failed",
+		"attempts":[{"modelID":"gpt-5.6-terra","success":false,"latency":0.18,"statusCode":400,"error":"The requested model is not supported."}],
+		"health":{"state":"unhealthy","recentSuccessRate":0,"recentRequestCount":0}
+	}`, response.Body.String())
+}
+
+func TestCampusChannelProbeRejectsBlankExplicitModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	response := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(response)
+	ctx.Params = gin.Params{{Key: "id", Value: "7"}}
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/admin/campus/channels/7/probe?model=%20", nil)
+	handler := &CampusCatalogHandlers{
+		catalog:       &stubCampusCatalogReader{},
+		probe:         &stubCampusChannelTester{},
+		channelProbes: &stubCampusChannelProbeRecorder{},
+	}
+
+	handler.PostChannelProbe(ctx)
+
+	require.Equal(t, http.StatusBadRequest, response.Code)
 }

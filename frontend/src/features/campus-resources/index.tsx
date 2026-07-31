@@ -57,6 +57,7 @@ import {
 } from './data/resources';
 
 const ALL_API_KEYS = 'all';
+const AUTO_PROBE_MODEL = '__auto_probe_model__';
 const MAX_CAPABILITY_TOKENS = 10_000_000;
 const DEFAULT_DAILY_EFFECTIVE_TOKEN_LIMIT = 16_000_000;
 const DEFAULT_WEEKLY_EFFECTIVE_TOKEN_LIMIT = 64_000_000;
@@ -324,6 +325,7 @@ function ChannelCard({
   const probeChannel = useProbeCampusChannel();
   const [lastProbeResult, setLastProbeResult] = useState<CampusChannelProbeResult>();
   const [probeRequestError, setProbeRequestError] = useState<{ statusCode?: number; message: string }>();
+  const [probeModel, setProbeModel] = useState(AUTO_PROBE_MODEL);
   const locale = i18n.language.startsWith('zh') ? 'zh-CN' : 'en-US';
   const providerLabel = t(`channels.providers.${channel.provider}`, {
     defaultValue: t(`channels.types.${channel.provider}`, { defaultValue: channel.provider }),
@@ -343,6 +345,7 @@ function ChannelCard({
   const finalAttempt = lastProbeResult?.attempts.at(-1);
   const finalModelID = lastProbeResult?.modelID || finalAttempt?.modelID;
   const finalStatusCode = lastProbeResult?.statusCode ?? finalAttempt?.statusCode;
+  const effectiveProbeModel = probeModel === AUTO_PROBE_MODEL || channel.models.includes(probeModel) ? probeModel : AUTO_PROBE_MODEL;
 
   const formattedExpiry = useMemo(() => {
     if (!channel.expiresAt) return null;
@@ -370,34 +373,40 @@ function ChannelCard({
     if (!channel.id) return;
 
     setProbeRequestError(undefined);
-    probeChannel.mutate(channel.id, {
-      onSuccess: (result) => {
-        setLastProbeResult(result);
-        const description = t('resources.channels.probe.toastDetails', {
-          model: result.modelID || result.attempts.at(-1)?.modelID || t('resources.channels.probe.notReported'),
-          status: formatProbeStatus(result.statusCode ?? result.attempts.at(-1)?.statusCode),
-          latency: formatProbeLatency(result.latency, locale),
-          error: result.error || t('resources.channels.probe.noError'),
-        });
+    probeChannel.mutate(
+      {
+        channelID: channel.id,
+        modelID: effectiveProbeModel === AUTO_PROBE_MODEL ? undefined : effectiveProbeModel,
+      },
+      {
+        onSuccess: (result) => {
+          setLastProbeResult(result);
+          const description = t('resources.channels.probe.toastDetails', {
+            model: result.modelID || result.attempts.at(-1)?.modelID || t('resources.channels.probe.notReported'),
+            status: formatProbeStatus(result.statusCode ?? result.attempts.at(-1)?.statusCode),
+            latency: formatProbeLatency(result.latency, locale),
+            error: result.error || t('resources.channels.probe.noError'),
+          });
 
-        if (result.success) {
-          toast.success(t('resources.channels.probe.success'), { description });
-        } else {
-          toast.error(t('resources.channels.probe.failed'), { description });
-        }
-      },
-      onError: (error) => {
-        const details = getProbeRequestError(error);
-        setLastProbeResult(undefined);
-        setProbeRequestError(details);
-        toast.error(t('resources.channels.probe.error'), {
-          description: t('resources.channels.probe.requestErrorDetails', {
-            status: formatProbeStatus(details.statusCode),
-            error: details.message || t('resources.channels.probe.notReported'),
-          }),
-        });
-      },
-    });
+          if (result.success) {
+            toast.success(t('resources.channels.probe.success'), { description });
+          } else {
+            toast.error(t('resources.channels.probe.failed'), { description });
+          }
+        },
+        onError: (error) => {
+          const details = getProbeRequestError(error);
+          setLastProbeResult(undefined);
+          setProbeRequestError(details);
+          toast.error(t('resources.channels.probe.error'), {
+            description: t('resources.channels.probe.requestErrorDetails', {
+              status: formatProbeStatus(details.statusCode),
+              error: details.message || t('resources.channels.probe.notReported'),
+            }),
+          });
+        },
+      }
+    );
   };
 
   return (
@@ -446,30 +455,53 @@ function ChannelCard({
           </div>
         </div>
 
-        <div className='flex items-center justify-between gap-3'>
-          <Badge variant='secondary'>{t(`resources.channels.source.${channel.source}`)}</Badge>
+        <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
+          <Badge variant='secondary' className='self-start'>
+            {t(`resources.channels.source.${channel.source}`)}
+          </Badge>
           {channel.canProbe && channel.id && (
-            <Button
-              type='button'
-              variant='outline'
-              size='sm'
-              className='h-8 gap-1.5'
-              onClick={probe}
-              disabled={probeChannel.isPending}
-              aria-label={t('resources.channels.probe.action', { channel: channel.name })}
-              title={t('resources.channels.probe.hint')}
-              data-testid='campus-channel-probe'
-              data-channel-id={channel.id}
-            >
-              {probeChannel.isPending ? (
-                <Loader2 className='size-3.5 animate-spin' aria-hidden='true' />
-              ) : (
-                <Play className='size-3.5 fill-current' aria-hidden='true' />
-              )}
-              {t(probeChannel.isPending ? 'resources.channels.probe.testing' : 'resources.channels.probe.test')}
-            </Button>
+            <div className='flex min-w-0 items-center gap-2 sm:justify-end'>
+              <Select value={effectiveProbeModel} onValueChange={setProbeModel} disabled={probeChannel.isPending}>
+                <SelectTrigger
+                  className='h-8 min-w-0 flex-1 text-xs sm:w-48 sm:flex-none'
+                  aria-label={t('resources.channels.probe.modelSelectLabel')}
+                  title={t('resources.channels.probe.modelSelectLabel')}
+                  data-testid='campus-channel-probe-model'
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={AUTO_PROBE_MODEL}>{t('resources.channels.probe.modelAuto')}</SelectItem>
+                  {channel.models.map((model) => (
+                    <SelectItem key={model} value={model}>
+                      {model}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                type='button'
+                variant='outline'
+                size='sm'
+                className='h-8 shrink-0 gap-1.5'
+                onClick={probe}
+                disabled={probeChannel.isPending}
+                aria-label={t('resources.channels.probe.action', { channel: channel.name })}
+                title={t('resources.channels.probe.hint')}
+                data-testid='campus-channel-probe'
+                data-channel-id={channel.id}
+              >
+                {probeChannel.isPending ? (
+                  <Loader2 className='size-3.5 animate-spin' aria-hidden='true' />
+                ) : (
+                  <Play className='size-3.5 fill-current' aria-hidden='true' />
+                )}
+                {t(probeChannel.isPending ? 'resources.channels.probe.testing' : 'resources.channels.probe.test')}
+              </Button>
+            </div>
           )}
         </div>
+        {channel.canProbe && channel.id && <p className='text-muted-foreground text-xs leading-4'>{t('resources.channels.probe.hint')}</p>}
       </CardHeader>
 
       <CardContent className='flex flex-1 flex-col gap-4 px-5'>
@@ -554,14 +586,18 @@ function ChannelCard({
                   </div>
                 </dl>
 
-                {lastProbeResult.error && (
-                  <div>
-                    <div className='text-muted-foreground'>{t('resources.channels.probe.upstreamError')}</div>
-                    <code className='bg-background/70 mt-1 block rounded border p-2 text-[11px] leading-4 break-all whitespace-pre-wrap'>
-                      {lastProbeResult.error}
-                    </code>
-                  </div>
-                )}
+                <p className='text-muted-foreground rounded border border-dashed px-2.5 py-2 leading-4'>
+                  {t('resources.channels.probe.modelScope', {
+                    model: finalModelID || t('resources.channels.probe.notReported'),
+                  })}
+                </p>
+
+                <div>
+                  <div className='text-muted-foreground'>{t('resources.channels.probe.upstreamError')}</div>
+                  <code className='bg-background/70 mt-1 block rounded border p-2 text-[11px] leading-4 break-all whitespace-pre-wrap'>
+                    {lastProbeResult.error || t('resources.channels.probe.noError')}
+                  </code>
+                </div>
 
                 <div className='space-y-2'>
                   <div className='text-muted-foreground font-medium'>{t('resources.channels.probe.attemptsTitle')}</div>

@@ -33,6 +33,7 @@ func TestProtectPromptsMaskContent(t *testing.T) {
 			{Role: "user", Content: llm.MessageContent{Content: &protectedContent}},
 		},
 	}
+	state.PromptProtecter.(*stubPromptProtecter).mutated = true
 
 	result, err := middleware.OnInboundLlmRequest(context.Background(), request)
 	require.NoError(t, err)
@@ -40,6 +41,7 @@ func TestProtectPromptsMaskContent(t *testing.T) {
 	require.NotNil(t, result.Messages[0].Content.Content)
 	assert.Equal(t, "token is [MASKED]", *result.Messages[0].Content.Content)
 	assert.Equal(t, "token is secret-123", *request.Messages[0].Content.Content)
+	assert.True(t, state.PromptPayloadMutated)
 }
 
 func TestProtectPromptsRejectContent(t *testing.T) {
@@ -121,6 +123,7 @@ func TestProtectPromptsMaskMultipleContent(t *testing.T) {
 			},
 		},
 	}
+	state.PromptProtecter.(*stubPromptProtecter).mutated = true
 
 	result, err := middleware.OnInboundLlmRequest(context.Background(), request)
 	require.NoError(t, err)
@@ -128,13 +131,15 @@ func TestProtectPromptsMaskMultipleContent(t *testing.T) {
 	require.NotNil(t, result.Messages[0].Content.MultipleContent[0].Text)
 	assert.Equal(t, "[MASKED] text", *result.Messages[0].Content.MultipleContent[0].Text)
 	assert.Equal(t, "secret text", *request.Messages[0].Content.MultipleContent[0].Text)
+	assert.True(t, state.PromptPayloadMutated)
 }
 
 type stubPromptProtecter struct {
-	result *llm.Request
-	err    error
+	result  *llm.Request
+	mutated bool
+	err     error
 }
 
-func (s *stubPromptProtecter) Protect(context.Context, *llm.Request) (*llm.Request, error) {
-	return s.result, s.err
+func (s *stubPromptProtecter) ProtectWithMutation(context.Context, *llm.Request) (*llm.Request, bool, error) {
+	return s.result, s.mutated, s.err
 }

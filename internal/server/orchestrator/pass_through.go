@@ -20,8 +20,8 @@ import (
 
 const codexResponsesLiteHeader = "X-OpenAI-Internal-Codex-Responses-Lite"
 
-// isPassThroughEnabled returns true when the effective pass-through flag for the current
-// channel is enabled and both the inbound and outbound API formats are identical.
+// isPassThroughEnabled returns true when the configured pass-through flag for the
+// current channel is enabled and both API formats and stream semantics align.
 //
 // The effective flag is the channel-level PassThroughBody when set, otherwise it falls back
 // to the global system setting. systemService may be nil; in that case only the channel-level
@@ -46,14 +46,6 @@ func (p *PersistentOutboundTransformer) isPassThroughEnabled(ctx context.Context
 		return false
 	}
 
-	// Codex Responses Lite is a stricter wire protocol than the generic
-	// Responses representation. Preserve its request and SSE payloads even when
-	// pass-through is disabled globally, while keeping the normal model mapping,
-	// authentication replacement, channel overrides and Lite invariants.
-	if p.isCodexResponsesLiteRequest() {
-		return true
-	}
-
 	var enabled bool
 
 	switch {
@@ -71,6 +63,22 @@ func (p *PersistentOutboundTransformer) isPassThroughEnabled(ctx context.Context
 	}
 
 	return enabled
+}
+
+// isRequestBodyPassThroughEnabled keeps automatic compatibility for the Codex
+// Responses Lite request envelope only. Responses still use AxonHub's normal
+// transformer so terminal events are validated and persistence has one owner.
+// Gateway prompt mutations always take precedence over the original raw body.
+func (p *PersistentOutboundTransformer) isRequestBodyPassThroughEnabled(ctx context.Context, systemService *biz.SystemService) bool {
+	if p.state.PromptPayloadMutated {
+		return false
+	}
+
+	if p.isPassThroughEnabled(ctx, systemService) {
+		return true
+	}
+
+	return p.isCodexResponsesLiteRequest()
 }
 
 func (p *PersistentOutboundTransformer) isCodexResponsesLiteRequest() bool {
@@ -106,7 +114,7 @@ func applyPassThroughRequestBody(outbound *PersistentOutboundTransformer, system
 	return pipeline.OnRawRequest("pass-through-request-body", func(ctx context.Context, request *httpclient.Request) (*httpclient.Request, error) {
 		outbound.state.RawProviderRequest = request
 
-		if !outbound.isPassThroughEnabled(ctx, systemService) {
+		if !outbound.isRequestBodyPassThroughEnabled(ctx, systemService) {
 			return request, nil
 		}
 
@@ -125,7 +133,12 @@ func applyPassThroughRequestBody(outbound *PersistentOutboundTransformer, system
 			log.String("api_format", request.APIFormat),
 		)
 
-		body, err := mergePassThroughRequestBody(llmReq.RawRequest.Body, llmReq.APIFormat, llmReq.Model)
+		body, err := mergePassThroughRequestBody(
+			llmReq.RawRequest.Body,
+			llmReq.APIFormat,
+			llmReq.Model,
+			llmReq.ReasoningEffort,
+		)
 		if err != nil {
 			log.Warn(ctx, "failed to merge pass-through body, keeping outbound body",
 				log.String("channel", channel.Name),
@@ -143,23 +156,32 @@ func applyPassThroughRequestBody(outbound *PersistentOutboundTransformer, system
 	})
 }
 
-func mergePassThroughRequestBody(rawBody []byte, apiFormat llm.APIFormat, model string) ([]byte, error) {
+func mergePassThroughRequestBody(rawBody []byte, apiFormat llm.APIFormat, model, reasoningEffort string) ([]byte, error) {
 	body := append([]byte(nil), rawBody...)
 
 	if !passThroughBodyNeedsModelPatch(apiFormat) {
 		return body, nil
 	}
 
-	if model == "" {
-		return body, nil
+	if model != "" {
+		nextBody, err := sjson.SetBytes(body, "model", model)
+		if err != nil {
+			return nil, fmt.Errorf("set model in pass-through body: %w", err)
+		}
+
+		body = nextBody
 	}
 
-	nextBody, err := sjson.SetBytes(body, "model", model)
-	if err != nil {
-		return nil, fmt.Errorf("set model in pass-through body: %w", err)
+	if reasoningEffort != "" && (apiFormat == llm.APIFormatOpenAIResponse || apiFormat == llm.APIFormatOpenAIResponseCompact) {
+		nextBody, err := sjson.SetBytes(body, "reasoning.effort", reasoningEffort)
+		if err != nil {
+			return nil, fmt.Errorf("set reasoning effort in pass-through body: %w", err)
+		}
+
+		body = nextBody
 	}
 
-	return nextBody, nil
+	return body, nil
 }
 
 // passThroughBodySupported reports whether the raw inbound body can safely replace the
@@ -398,6 +420,15 @@ func applyPassThroughStream(outbound *PersistentOutboundTransformer, systemServi
 		)
 
 		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Warn(ctx, "pass-through stream drain panicked, recovering",
+						log.Any("panic", r),
+						log.String("channel", channel.Name),
+					)
+				}
+			}()
+
 			for stream.Next() {
 				_ = stream.Current()
 			}

@@ -244,8 +244,9 @@ func TestPromptProtectionRuleService_ProtectMask(t *testing.T) {
 		},
 	}
 
-	result, err := svc.Protect(ctx, request)
+	result, mutated, err := svc.ProtectWithMutation(ctx, request)
 	require.NoError(t, err)
+	require.True(t, mutated)
 	require.NotNil(t, result)
 	require.NotNil(t, result.Messages[0].Content.Content)
 	assert.Equal(t, "token is [MASKED]", *result.Messages[0].Content.Content)
@@ -275,8 +276,9 @@ func TestPromptProtectionRuleService_ProtectReject(t *testing.T) {
 		},
 	}
 
-	result, err := svc.Protect(ctx, request)
+	result, mutated, err := svc.ProtectWithMutation(ctx, request)
 	require.ErrorIs(t, err, ErrPromptProtectionRejected)
+	require.True(t, mutated)
 	assert.Nil(t, result)
 }
 
@@ -287,7 +289,8 @@ func TestPromptProtectionRuleService_ProtectLoadError(t *testing.T) {
 
 	require.NoError(t, client.Close())
 
-	result, err := svc.Protect(context.Background(), &llm.Request{})
+	result, mutated, err := svc.ProtectWithMutation(context.Background(), &llm.Request{})
 	require.Error(t, err)
+	require.False(t, mutated)
 	assert.Nil(t, result)
 }

@@ -41,6 +41,11 @@ type PersistenceState struct {
 	// candidate-specific forcing to provider-side streaming happens.
 	OriginalRequestStream *bool
 
+	// PromptPayloadMutated records that gateway prompt injection or protection
+	// changed the normalized prompt. Raw request-body reuse must then stay off so
+	// the transformed prompt, rather than the original client bytes, reaches upstream.
+	PromptPayloadMutated bool
+
 	// Persistence state
 	Request     *ent.Request
 	RequestExec *ent.RequestExecution

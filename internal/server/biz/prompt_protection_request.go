@@ -72,17 +72,23 @@ func ApplyPromptProtectionRules(req *llm.Request, rules []*ent.PromptProtectionR
 }
 
 func (svc *PromptProtectionRuleService) Protect(ctx context.Context, req *llm.Request) (*llm.Request, error) {
+	protected, _, err := svc.ProtectWithMutation(ctx, req)
+
+	return protected, err
+}
+
+func (svc *PromptProtectionRuleService) ProtectWithMutation(ctx context.Context, req *llm.Request) (*llm.Request, bool, error) {
 	rules, err := svc.ListEnabledRules(ctx)
 	if err != nil {
 		log.Warn(ctx, "failed to load enabled prompt protection rules", log.Cause(err))
-		return nil, err
+		return nil, false, err
 	}
 
 	if len(rules) == 0 {
 		if log.DebugEnabled(ctx) {
 			log.Debug(ctx, "no enabled prompt protection rules")
 		}
-		return req, nil
+		return req, false, nil
 	}
 
 	result := ApplyPromptProtectionRules(req, rules)
@@ -90,7 +96,7 @@ func (svc *PromptProtectionRuleService) Protect(ctx context.Context, req *llm.Re
 		if log.DebugEnabled(ctx) {
 			log.Debug(ctx, "prompt protection passed without rule match", log.Int("rule_count", len(rules)))
 		}
-		return req, nil
+		return req, false, nil
 	}
 
 	if result.Rejected {
@@ -98,14 +104,14 @@ func (svc *PromptProtectionRuleService) Protect(ctx context.Context, req *llm.Re
 			log.String("rule_name", result.MatchedRules[0].Name),
 		)
 
-		return result.Request, ErrPromptProtectionRejected
+		return result.Request, true, ErrPromptProtectionRejected
 	}
 
 	if log.DebugEnabled(ctx) {
 		log.Debug(ctx, "prompt protection masked request", log.Any("rules", result.MatchedRules))
 	}
 
-	return result.Request, nil
+	return result.Request, true, nil
 }
 
 func applyPromptProtectionRuleToMessage(msg llm.Message, rule *ent.PromptProtectionRule) (llm.Message, bool) {

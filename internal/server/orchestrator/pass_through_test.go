@@ -332,7 +332,7 @@ func TestIsPassThroughEnabled_AllowsNilAndFalseStreamToAlign(t *testing.T) {
 	assert.True(t, outbound.isPassThroughEnabled(ctx, nil))
 }
 
-func TestIsPassThroughEnabled_AutoEnablesCodexResponsesLite(t *testing.T) {
+func TestRequestBodyPassThrough_AutoEnablesCodexResponsesLiteOnlyForRequest(t *testing.T) {
 	ctx := context.Background()
 	headers := make(http.Header)
 	headers.Set(codexResponsesLiteHeader, "true")
@@ -358,8 +358,18 @@ func TestIsPassThroughEnabled_AutoEnablesCodexResponsesLite(t *testing.T) {
 		RawProviderRequest: &httpclient.Request{APIFormat: string(llm.APIFormatOpenAIResponse)},
 	}}
 
-	require.True(t, outbound.isPassThroughEnabled(ctx, nil),
-		"Responses Lite must preserve its wire protocol even when ordinary pass-through is disabled")
+	require.False(t, outbound.isPassThroughEnabled(ctx, nil),
+		"Responses Lite must not auto-enable raw response or SSE pass-through")
+	require.True(t, outbound.isRequestBodyPassThroughEnabled(ctx, nil),
+		"Responses Lite must preserve its request envelope")
+
+	outbound.state.PromptPayloadMutated = true
+	require.False(t, outbound.isRequestBodyPassThroughEnabled(ctx, nil),
+		"gateway prompt mutations must not be bypassed by raw request reuse")
+
+	channelSettings.PassThroughBody = lo.ToPtr(true)
+	require.False(t, outbound.isRequestBodyPassThroughEnabled(ctx, nil),
+		"explicit pass-through must still preserve gateway prompt mutations")
 }
 
 func TestIsPassThroughEnabled_DoesNotAutoEnableLiteHeaderForNonCodexChannel(t *testing.T) {
@@ -1263,9 +1273,10 @@ func TestApplyPassThroughBodyPreservesCodexResponsesLiteEnvelope(t *testing.T) {
 		}}},
 		OriginalRequestStream: &stream,
 		LlmRequest: &llm.Request{
-			Model:     "gpt-5.6-sol",
-			APIFormat: llm.APIFormatOpenAIResponse,
-			Stream:    &stream,
+			Model:           "gpt-5.6-sol",
+			ReasoningEffort: "high",
+			APIFormat:       llm.APIFormatOpenAIResponse,
+			Stream:          &stream,
 			RawRequest: &httpclient.Request{
 				APIFormat: string(llm.APIFormatOpenAIResponse),
 				Headers:   headers,
@@ -1300,6 +1311,7 @@ func TestApplyPassThroughBodyPreservesCodexResponsesLiteEnvelope(t *testing.T) {
 	require.Equal(t, "session-1", gjson.GetBytes(processed.Body, "client_metadata.session_id").String())
 	require.Equal(t, "summary_text_delta", gjson.GetBytes(processed.Body, "stream_options.reasoning_summary_delivery").String())
 	require.Equal(t, "all_turns", gjson.GetBytes(processed.Body, "reasoning.context").String())
+	require.Equal(t, "high", gjson.GetBytes(processed.Body, "reasoning.effort").String())
 	require.False(t, gjson.GetBytes(processed.Body, "store").Bool())
 	require.True(t, gjson.GetBytes(processed.Body, "stream").Bool())
 }
@@ -1467,7 +1479,7 @@ func TestApplyPassThroughBodyPreservesAlignedStreamWithoutPatchingIt(t *testing.
 func TestMergePassThroughBodySkipsFormatsWithoutTopLevelModel(t *testing.T) {
 	rawBody := []byte(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`)
 
-	merged, err := mergePassThroughRequestBody(rawBody, llm.APIFormatGeminiContents, "gemini-2.5-pro")
+	merged, err := mergePassThroughRequestBody(rawBody, llm.APIFormatGeminiContents, "gemini-2.5-pro", "")
 	require.NoError(t, err)
 	require.Equal(t, string(rawBody), string(merged))
 }

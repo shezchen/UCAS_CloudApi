@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/require"
@@ -14,6 +15,29 @@ import (
 	"github.com/looplj/axonhub/llm/streams"
 	"github.com/looplj/axonhub/llm/transformer"
 )
+
+func TestPipeline_RetryDelayStopsWhenContextIsCanceled(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	attempts := 0
+	p := NewFactory(&mockExecutor{
+		do: func(context.Context, *httpclient.Request) (*httpclient.Response, error) {
+			attempts++
+			return nil, errors.New("temporary upstream error")
+		},
+	}).Pipeline(
+		&mockInbound{},
+		&mockOutbound{canRetry: func(error) bool { return true }},
+		WithRetry(0, 1, 10*time.Second),
+	)
+
+	started := time.Now()
+	_, err := p.Process(ctx, &httpclient.Request{})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Less(t, time.Since(started), time.Second)
+	require.Equal(t, 1, attempts)
+}
 
 type mockInbound struct {
 	transformer.Inbound

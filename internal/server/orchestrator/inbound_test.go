@@ -271,7 +271,15 @@ func TestIsSuccessfulTerminalStreamEvent(t *testing.T) {
 	require.True(t, isSuccessfulTerminalStreamEvent(&httpclient.StreamEvent{Type: "transcript.text.done"}))
 	require.True(t, isSuccessfulTerminalStreamEvent(&httpclient.StreamEvent{Type: httpclient.BinaryStreamDoneEventType}))
 	require.True(t, isSuccessfulTerminalStreamEvent(&httpclient.StreamEvent{Type: "response.completed"}))
+	require.True(t, isSuccessfulTerminalStreamEvent(&httpclient.StreamEvent{
+		Data: []byte(`{"type":"response.completed","response":{"status":"completed","error":null}}`),
+	}))
+	require.True(t, isSuccessfulTerminalStreamEvent(&httpclient.StreamEvent{Data: []byte("  [DONE]\n")}))
+	require.False(t, isSuccessfulTerminalStreamEvent(nil))
 	require.False(t, isSuccessfulTerminalStreamEvent(&httpclient.StreamEvent{Type: "response.incomplete"}))
+	require.False(t, isSuccessfulTerminalStreamEvent(&httpclient.StreamEvent{
+		Data: []byte(`{"type":"response.completed","response":{"status":"incomplete"}}`),
+	}))
 	require.False(t, isSuccessfulTerminalStreamEvent(&httpclient.StreamEvent{
 		Type: "response.completed",
 		Data: []byte(`{"type":"response.completed","response":{"status":"failed","error":{"message":"boom"}}}`),

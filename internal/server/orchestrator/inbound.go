@@ -88,21 +88,28 @@ func isSuccessfulTerminalStreamEvent(event *httpclient.StreamEvent) bool {
 	if event == nil {
 		return false
 	}
-	if event.Type == "response.completed" {
+
+	eventType := event.Type
+	var payload struct {
+		Type     string `json:"type"`
+		Response struct {
+			Status *string         `json:"status"`
+			Error  json.RawMessage `json:"error"`
+		} `json:"response"`
+	}
+	payloadDecoded := len(event.Data) > 0 && json.Unmarshal(event.Data, &payload) == nil
+	if eventType == "" && payloadDecoded {
+		eventType = payload.Type
+	}
+
+	if eventType == "response.completed" {
 		if len(event.Data) == 0 {
 			return true
 		}
-
-		var payload struct {
-			Response struct {
-				Status *string         `json:"status"`
-				Error  json.RawMessage `json:"error"`
-			} `json:"response"`
-		}
-		if err := json.Unmarshal(event.Data, &payload); err != nil {
+		if !payloadDecoded {
 			return false
 		}
-		if len(payload.Response.Error) > 0 && string(payload.Response.Error) != "null" {
+		if rawErr := bytes.TrimSpace(payload.Response.Error); len(rawErr) > 0 && !bytes.Equal(rawErr, []byte("null")) {
 			return false
 		}
 		if payload.Response.Status == nil {
@@ -114,14 +121,14 @@ func isSuccessfulTerminalStreamEvent(event *httpclient.StreamEvent) bool {
 	}
 
 	// For chat completions, check for [DONE] event
-	return bytes.Equal(event.Data, llm.DoneStreamEvent.Data) ||
+	return bytes.Equal(bytes.TrimSpace(event.Data), llm.DoneStreamEvent.Data) ||
 		// For Anthropic Messages API, check for message_stop event
-		event.Type == "message_stop" ||
+		eventType == "message_stop" ||
 		// For OpenAI audio APIs (TTS sse / STT stream) which have no [DONE] sentinel:
 		// rely on the terminal *.done event surfaced as StreamEvent.Type.
-		event.Type == "speech.audio.done" ||
-		event.Type == "transcript.text.done" ||
-		event.Type == httpclient.BinaryStreamDoneEventType
+		eventType == "speech.audio.done" ||
+		eventType == "transcript.text.done" ||
+		eventType == httpclient.BinaryStreamDoneEventType
 }
 
 // aggregatedTerminalFailure returns an actionable error for an explicit

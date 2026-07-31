@@ -359,6 +359,7 @@ func TestRankCampusUsageReturnsTop50PlusSelf(t *testing.T) {
 	require.Equal(t, 52, entries[50].Rank)
 	require.Equal(t, biz.CampusPublicAlias(7, 999), entries[50].PublicAlias)
 	require.Equal(t, "末位同学", entries[50].DisplayName)
+	require.Equal(t, biz.CampusAvatarPath(biz.CampusPublicAlias(7, 999)), *entries[50].Avatar)
 	require.NotEqual(t, biz.CampusPublicAlias(7, 999), biz.CampusPublicAlias(8, 999))
 	require.Equal(t, "末位同学", biz.CampusDisplayName(" 末位同学 ", "fallback"))
 	require.Equal(t, "fallback", biz.CampusDisplayName("Owner", "fallback"))
@@ -419,6 +420,7 @@ func TestQueryResolverCampusUsageLeaderboardPrivacyAndDeletedKeys(t *testing.T) 
 	member, err := client.User.Create().
 		SetEmail("member@mails.ucas.ac.cn").
 		SetNickname("普通同学").
+		SetAvatar("data:image/png;base64,member").
 		SetPassword("password").
 		SetStatus(user.StatusActivated).
 		SetDailyTokenLimit(10).
@@ -433,6 +435,7 @@ func TestQueryResolverCampusUsageLeaderboardPrivacyAndDeletedKeys(t *testing.T) 
 	leader, err := client.User.Create().
 		SetEmail("leader@mails.ucas.ac.cn").
 		SetNickname("今日榜首").
+		SetAvatar("data:image/png;base64,leader").
 		SetPassword("password").
 		SetStatus(user.StatusActivated).
 		SetDailyTokenLimit(200).
@@ -497,6 +500,7 @@ func TestQueryResolverCampusUsageLeaderboardPrivacyAndDeletedKeys(t *testing.T) 
 	require.Equal(t, 1, entries[0].Rank)
 	require.Equal(t, biz.CampusPublicAlias(projectRow.ID, leader.ID), entries[0].PublicAlias)
 	require.Equal(t, "今日榜首", entries[0].DisplayName)
+	require.Equal(t, biz.CampusAvatarPath(biz.CampusPublicAlias(projectRow.ID, leader.ID)), *entries[0].Avatar)
 	require.False(t, entries[0].IsMe)
 	require.Equal(t, float64(100), entries[0].RecordedTokens)
 	require.Equal(t, 1, entries[0].MeteredRequestCount)
@@ -507,6 +511,7 @@ func TestQueryResolverCampusUsageLeaderboardPrivacyAndDeletedKeys(t *testing.T) 
 	require.Equal(t, 2, entries[1].Rank)
 	require.Equal(t, biz.CampusPublicAlias(projectRow.ID, member.ID), entries[1].PublicAlias)
 	require.Equal(t, "普通同学", entries[1].DisplayName)
+	require.Equal(t, biz.CampusAvatarPath(biz.CampusPublicAlias(projectRow.ID, member.ID)), *entries[1].Avatar)
 	require.True(t, entries[1].IsMe)
 	require.Equal(t, float64(25), entries[1].RecordedTokens)
 	require.Equal(t, 1, entries[1].MeteredRequestCount)
@@ -551,13 +556,18 @@ func TestQueryResolverCampusUsageLeaderboardPrivacyAndDeletedKeys(t *testing.T) 
 	require.True(t, ownerEntries[2].IsMe)
 	require.Equal(t, float64(0), ownerEntries[2].RecordedTokens)
 
+	ownerStats, err := resolver.UsageStatsByUser(ownerCtx, nil)
+	require.NoError(t, err)
+	require.Len(t, ownerStats, 1)
+	require.Equal(t, biz.UserAvatarPath(leader.ID), *ownerStats[0].Avatar)
+
 	entryType := reflect.TypeOf(CampusUsageLeaderboardEntry{})
 	fieldNames := make([]string, 0, entryType.NumField())
 	for i := range entryType.NumField() {
 		fieldNames = append(fieldNames, entryType.Field(i).Name)
 	}
 	require.Equal(t, []string{
-		"Rank", "DisplayName", "PublicAlias", "IsMe", "RecordedTokens", "MeteredRequestCount", "LimitPercent",
+		"Rank", "DisplayName", "PublicAlias", "Avatar", "IsMe", "RecordedTokens", "MeteredRequestCount", "LimitPercent",
 	}, fieldNames)
 }
 

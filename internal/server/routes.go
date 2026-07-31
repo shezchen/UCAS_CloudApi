@@ -37,6 +37,7 @@ type Handlers struct {
 	OIDC           *api.OIDCHandlers
 	RequestPreview *api.RequestPreviewHandlers
 	CampusCatalog  *api.CampusCatalogHandlers
+	Avatar         *api.AvatarHandlers
 }
 
 type Services struct {
@@ -143,6 +144,16 @@ func SetupRoutes(server *Server, handlers Handlers, client *ent.Client, services
 			"/campus/channel-model-capabilities",
 			middleware.WithTimeout(server.Config.RequestTimeout),
 			handlers.CampusCatalog.PatchChannelModelCapabilities,
+		)
+		adminGroup.GET(
+			"/users/:user_id/avatar",
+			middleware.WithTimeout(server.Config.RequestTimeout),
+			handlers.Avatar.GetUserAvatar,
+		)
+		adminGroup.GET(
+			"/avatars/campus/:publicAlias",
+			middleware.WithTimeout(server.Config.RequestTimeout),
+			handlers.Avatar.GetCampusAvatar,
 		)
 
 		adminGroup.POST("/codex/oauth/start", handlers.Codex.StartOAuth)

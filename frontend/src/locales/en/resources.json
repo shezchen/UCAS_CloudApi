@@ -130,6 +130,7 @@
   "resources.channels.health.failure.authentication": "Credential authentication failed",
   "resources.channels.health.failure.timeout": "Upstream timeout",
   "resources.channels.health.failure.rate_limited": "Upstream rate limit",
+  "resources.channels.health.failure.upstream_quota": "Shared upstream quota exhausted",
   "resources.channels.health.failure.upstream_unavailable": "Upstream service unavailable",
   "resources.channels.health.failure.request_rejected": "Request rejected upstream",
   "resources.channels.health.failure.network": "Network or TLS error",

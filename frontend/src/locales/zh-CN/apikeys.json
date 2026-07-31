@@ -55,6 +55,7 @@
   "apikeys.activity.detail": "排障详情",
   "apikeys.activity.success": "成功",
   "apikeys.activity.error": "错误",
+  "apikeys.activity.upstreamQuota": "共享上游渠道额度已耗尽（不是你的校内日/周额度，也不是你的个人账单）",
   "apikeys.activity.latency": "{{value}} ms",
   "apikeys.dialogs.create.title": "创建 API Key",
   "apikeys.dialogs.create.description": "创建一个新的 API Key 用于访问系统。",

@@ -304,6 +304,30 @@ func TestFinalizeUpstreamCandidatesExhaustedError_TerraChainEndingIn402(t *testi
 	assert.Equal(t, upstreamCandidatesExhausted, gjson.GetBytes(httpErr.Body, "error.code").String())
 }
 
+func TestFinalizeUpstreamCandidatesExhaustedError_Single402ClarifiesQuotaScope(t *testing.T) {
+	upstreamErr := &llm.ResponseError{
+		StatusCode: http.StatusPaymentRequired,
+		Detail: llm.ErrorDetail{
+			Message: "You have exceeded your monthly quota; access_token=sk-sensitive-token-123456",
+		},
+	}
+
+	clientErr, lastExecutionErr := finalizeUpstreamCandidatesExhaustedError(upstreamErr)
+	require.ErrorIs(t, lastExecutionErr, upstreamErr)
+	assert.Equal(t, http.StatusPaymentRequired, ExtractStatusCodeFromError(lastExecutionErr))
+
+	var responseErr *llm.ResponseError
+	require.ErrorAs(t, clientErr, &responseErr)
+	assert.Equal(t, http.StatusServiceUnavailable, responseErr.StatusCode)
+	assert.Equal(t, upstreamSharedQuotaExhausted, responseErr.Detail.Type)
+	assert.Equal(t, upstreamSharedQuotaExhausted, responseErr.Detail.Code)
+	assert.Contains(t, responseErr.Detail.Message, "shared upstream provider channel")
+	assert.Contains(t, responseErr.Detail.Message, "not your campus daily/weekly quota or billing")
+	assert.Contains(t, responseErr.Detail.Message, "You have exceeded your monthly quota")
+	assert.NotContains(t, responseErr.Detail.Message, "sk-sensitive-token-123456")
+	assert.Contains(t, responseErr.Detail.Message, "[REDACTED]")
+}
+
 func TestIsRetryableError(t *testing.T) {
 	tests := []struct {
 		name     string

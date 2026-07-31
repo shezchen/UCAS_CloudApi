@@ -1123,6 +1123,8 @@ func campusFailureCategory(statusCode *int, message string) string {
 		switch {
 		case *statusCode == 401 || *statusCode == 403:
 			return "authentication"
+		case *statusCode == 402:
+			return "upstream_quota"
 		case *statusCode == 408:
 			return "timeout"
 		case *statusCode == 429:

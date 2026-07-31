@@ -17,7 +17,10 @@ import (
 	"github.com/looplj/axonhub/llm/pipeline"
 )
 
-const upstreamCandidatesExhausted = "upstream_candidates_exhausted"
+const (
+	upstreamCandidatesExhausted  = "upstream_candidates_exhausted"
+	upstreamSharedQuotaExhausted = "upstream_shared_quota_exhausted"
+)
 
 func isRetryableError(err error) bool {
 	if err == nil {
@@ -172,6 +175,22 @@ func ExtractStatusCodeFromError(err error) int {
 func finalizeUpstreamCandidatesExhaustedError(err error) (clientErr, lastExecutionErr error) {
 	var exhausted *pipeline.UpstreamCandidatesExhaustedError
 	if !errors.As(err, &exhausted) {
+		if ExtractStatusCodeFromError(err) == http.StatusPaymentRequired {
+			message := "The shared upstream provider channel has exhausted its quota (upstream HTTP 402). This is not your campus daily/weekly quota or billing."
+			if detail := biz.SanitizeCampusDiagnosticError(upstreamFailureDetail(err)); detail != "" {
+				message += " Upstream provider message: " + detail
+			}
+
+			return &llm.ResponseError{
+				StatusCode: http.StatusServiceUnavailable,
+				Detail: llm.ErrorDetail{
+					Message: message,
+					Type:    upstreamSharedQuotaExhausted,
+					Code:    upstreamSharedQuotaExhausted,
+				},
+			}, err
+		}
+
 		return err, err
 	}
 
@@ -207,7 +226,7 @@ func finalizeUpstreamCandidatesExhaustedError(err error) (clientErr, lastExecuti
 	}
 
 	message := fmt.Sprintf(
-		"All upstream candidates failed after %d attempts: %s.",
+		"Upstream routing failed after %d attempted routes: %s.",
 		exhausted.AttemptCount,
 		strings.Join(parts, ", "),
 	)

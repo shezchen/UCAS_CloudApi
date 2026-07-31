@@ -130,6 +130,7 @@
   "resources.channels.health.failure.authentication": "凭据认证失败",
   "resources.channels.health.failure.timeout": "上游超时",
   "resources.channels.health.failure.rate_limited": "上游限流",
+  "resources.channels.health.failure.upstream_quota": "共享上游渠道额度已耗尽",
   "resources.channels.health.failure.upstream_unavailable": "上游服务不可用",
   "resources.channels.health.failure.request_rejected": "请求被上游拒绝",
   "resources.channels.health.failure.network": "网络或 TLS 错误",

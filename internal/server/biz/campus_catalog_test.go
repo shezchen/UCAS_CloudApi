@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -732,6 +733,12 @@ func TestSanitizeCampusDiagnosticErrorRedactsHeadersAndQueriesWithoutHidingDiagn
 			require.Contains(t, got, "[REDACTED]")
 		})
 	}
+}
+
+func TestCampusFailureCategoryDistinguishesSharedUpstreamQuota(t *testing.T) {
+	statusCode := http.StatusPaymentRequired
+
+	require.Equal(t, "upstream_quota", campusFailureCategory(&statusCode, "You have exceeded your monthly quota"))
 }
 
 func TestCampusProbeModelCandidatesPreferEvidenceOverArrayPosition(t *testing.T) {

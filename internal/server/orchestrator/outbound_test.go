@@ -1141,8 +1141,61 @@ func TestPersistentOutboundTransformer_CanRetry_ChannelRetryableStatusCodes(t *t
 	}
 
 	require.True(t, outbound.CanRetry(&httpclient.Error{StatusCode: http.StatusBadRequest}))
-	require.True(t, outbound.CanRetry(&httpclient.Error{StatusCode: http.StatusForbidden}))
+	require.False(t, outbound.CanRetry(&httpclient.Error{StatusCode: http.StatusForbidden}))
 	require.False(t, outbound.CanRetry(&httpclient.Error{StatusCode: http.StatusUnauthorized}))
+}
+
+func TestPersistentOutboundTransformer_CanRetry_ChannelGlobalErrorsSkipModelFallback(t *testing.T) {
+	channel := &biz.Channel{
+		Channel: &ent.Channel{
+			ID:   1,
+			Name: "shared-codex-channel",
+			Settings: &objects.ChannelSettings{
+				RetryableStatusCodes: []int{
+					http.StatusUnauthorized,
+					http.StatusPaymentRequired,
+					http.StatusForbidden,
+					http.StatusTooManyRequests,
+				},
+			},
+		},
+		Outbound: &mockTransformer{},
+	}
+
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "http 401", err: &httpclient.Error{StatusCode: http.StatusUnauthorized}},
+		{name: "http 402", err: &httpclient.Error{StatusCode: http.StatusPaymentRequired}},
+		{name: "http 403", err: &httpclient.Error{StatusCode: http.StatusForbidden}},
+		{name: "http 429", err: &httpclient.Error{StatusCode: http.StatusTooManyRequests}},
+		{name: "transformed 401", err: &llm.ResponseError{StatusCode: http.StatusUnauthorized}},
+		{name: "transformed 402", err: &llm.ResponseError{StatusCode: http.StatusPaymentRequired}},
+		{name: "transformed 403", err: &llm.ResponseError{StatusCode: http.StatusForbidden}},
+		{name: "transformed 429", err: &llm.ResponseError{StatusCode: http.StatusTooManyRequests}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			outbound := &PersistentOutboundTransformer{
+				wrapped: &mockTransformer{},
+				state: &PersistenceState{
+					CurrentCandidate: &ChannelModelsCandidate{
+						Channel: channel,
+						Models: []biz.ChannelModelEntry{
+							{RequestModel: "gpt-5.6-sol", ActualModel: "gpt-5.6-sol"},
+							{RequestModel: "gpt-5.6-sol", ActualModel: "gpt-5.6-sol-fallback"},
+						},
+					},
+					CurrentModelIndex: 0,
+				},
+			}
+
+			require.False(t, outbound.CanRetry(tt.err))
+			require.Zero(t, outbound.state.CurrentModelIndex)
+		})
+	}
 }
 
 func TestPersistentOutboundTransformer_CanRetry_429_WithMultipleModels(t *testing.T) {

@@ -489,6 +489,16 @@ func TestClassifyUpstreamAttemptFailure_ModelNotSupportedCode(t *testing.T) {
 	require.Equal(t, UpstreamAttemptModelNotSupported, classifyUpstreamAttemptFailure(err))
 }
 
+func TestClassifyUpstreamAttemptFailure_AuthenticationStatuses(t *testing.T) {
+	for _, statusCode := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		t.Run(http.StatusText(statusCode), func(t *testing.T) {
+			err := WrapUpstreamError(&llm.ResponseError{StatusCode: statusCode})
+
+			require.Equal(t, UpstreamAttemptAuthentication, classifyUpstreamAttemptFailure(err))
+		})
+	}
+}
+
 func TestPipeline_Process_RetryPreservesOriginalStreamIntent(t *testing.T) {
 	ctx := context.Background()
 

@@ -105,7 +105,7 @@ func classifyUpstreamAttemptFailure(err error) UpstreamAttemptFailureCategory {
 
 	statusCode := upstreamAttemptStatusCode(err)
 	switch statusCode {
-	case http.StatusUnauthorized:
+	case http.StatusUnauthorized, http.StatusForbidden:
 		return UpstreamAttemptAuthentication
 	case http.StatusPaymentRequired:
 		return UpstreamAttemptQuota

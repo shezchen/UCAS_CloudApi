@@ -589,16 +589,19 @@ func (p *PersistentOutboundTransformer) CanRetry(err error) bool {
 		return true
 	}
 
-	// 429 Too Many Requests: always skip same-channel retry.
-	// The upstream is explicitly rate-limiting this channel, so retrying the same
-	// channel would just burn a retry attempt without any chance of success.
-	// Instead, force a channel switch so the next candidate (e.g. a backup channel)
-	// is tried immediately. The load balancer (e.g. ErrorAware strategy) will
-	// deprioritize this channel for subsequent requests and it will naturally
-	// recover as the rate-limit window resets.
-	if ExtractStatusCodeFromError(err) == http.StatusTooManyRequests {
-		log.Debug(context.Background(), "429 rate limit, skipping same-channel retry to switch to next channel",
+	// Credential, account quota, permission, and rate-limit failures apply to the
+	// channel rather than one model mapping. Do not consume the same-channel
+	// retry budget by trying another model with the same unusable credential;
+	// let the pipeline move directly to the next channel candidate.
+	statusCode := ExtractStatusCodeFromError(err)
+	switch statusCode {
+	case http.StatusUnauthorized,
+		http.StatusPaymentRequired,
+		http.StatusForbidden,
+		http.StatusTooManyRequests:
+		log.Debug(context.Background(), "channel-global upstream error, skipping same-channel retry",
 			log.Int("channel_id", p.state.CurrentCandidate.Channel.ID),
+			log.Int("status_code", statusCode),
 		)
 
 		return false

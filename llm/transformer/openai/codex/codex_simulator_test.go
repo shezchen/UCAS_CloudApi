@@ -72,6 +72,21 @@ func TestCodexOutbound_MinimalIdentityHeaders(t *testing.T) {
 	assert.Equal(t, "9.9.9", finalReq.Header.Get("Version"))
 }
 
+func TestCodexOutbound_ClientCannotOverrideChannelAccountID(t *testing.T) {
+	ctx := context.Background()
+	accessToken := testAccessTokenWithAccountID(t)
+	sim := newCodexSimulatorWithToken(t, accessToken)
+	req := newCodexChatCompletionRequest(t)
+	req.Header.Set("Chatgpt-Account-Id", "acct_client_spoof")
+
+	finalReq, err := sim.Simulate(ctx, req)
+	require.NoError(t, err)
+	require.NotNil(t, finalReq)
+
+	assert.Equal(t, testChatAccountID, finalReq.Header.Get("Chatgpt-Account-Id"))
+	assert.Equal(t, "Bearer "+accessToken, finalReq.Header.Get("Authorization"))
+}
+
 func TestCodexOutbound_AllowsInboundIdentityOverrides(t *testing.T) {
 	ctx := context.Background()
 	sim := newCodexSimulator(t)

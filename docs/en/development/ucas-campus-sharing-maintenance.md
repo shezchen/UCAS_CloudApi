@@ -475,6 +475,12 @@ All must pass:
 
 `/health` does not inspect the database and cannot prove that the SPA assets are complete.
 
+### 15.6 Sticky production egress
+
+The server-local sing-box URLTest group uses `tolerance: 30000` ms, `interval: 61s`, and `interrupt_exist_connections: false`. It keeps the current outbound while its health probe succeeds and fails over only after that probe fails. A recovered or lower-latency node must not preempt a healthy current outbound.
+
+The live proxy configuration and all credentials remain server-local and are never committed. After a proxy configuration reload, verify that the sing-box PID, restart count, and listeners are unchanged, and that protected FRP/HY2 services and AxonHub remain unaffected.
+
 ## 16. Rollback
 
 1. Stop only the failed new AxonHub container.

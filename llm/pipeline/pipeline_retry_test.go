@@ -427,7 +427,9 @@ func TestPipeline_Process_RetryPreservesOriginalStreamIntent(t *testing.T) {
 			return &httpclient.Request{}, nil
 		},
 		transformStream: func(ctx context.Context, req *httpclient.Request, stream streams.Stream[*httpclient.StreamEvent]) (streams.Stream[*llm.Response], error) {
-			return streams.SliceStream([]*llm.Response{{}}), nil
+			// A recovered auto-upgraded stream must still end with a terminal event.
+			// Incomplete EOF without [DONE]/finish_reason is now a pre-commit failure.
+			return streams.SliceStream([]*llm.Response{{}, llm.DoneResponse}), nil
 		},
 	}
 

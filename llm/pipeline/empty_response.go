@@ -10,6 +10,11 @@ import (
 // This error triggers channel retry when empty response detection is enabled.
 var ErrEmptyResponse = errors.New("empty response detected")
 
+// ErrStreamIncomplete is the pipeline-facing alias for llm.ErrStreamIncomplete.
+// Pre-commit stream probing returns this when a provider stream ends without
+// content and without a terminal event, so channel failover can still run.
+var ErrStreamIncomplete = llm.ErrStreamIncomplete
+
 // ErrStreamFirstEventTimeout indicates a streaming response did not produce the first event in time.
 var ErrStreamFirstEventTimeout = errors.New("stream first event timeout")
 

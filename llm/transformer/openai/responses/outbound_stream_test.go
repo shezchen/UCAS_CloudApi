@@ -196,6 +196,27 @@ func TestOutboundTransformer_TransformStream_ResponseCancelledCompletes(t *testi
 	require.Equal(t, "cancelled", *responses[1].Choices[0].FinishReason)
 }
 
+func TestOutboundTransformer_TransformStream_IncompleteWithoutTerminal(t *testing.T) {
+	trans, err := NewOutboundTransformer("https://api.openai.com", "test-api-key")
+	require.NoError(t, err)
+
+	// Upstream starts a Responses stream then drops without response.completed.
+	// The synthetic AppendStream [DONE] must not look like a successful terminal.
+	events := []*httpclient.StreamEvent{
+		{Type: "response.created", Data: []byte(`{"type":"response.created","response":{"id":"resp_incomplete_eof","object":"response","created_at":1700000000,"model":"gpt-5","status":"in_progress","output":[]}}`)},
+		{Type: "response.in_progress", Data: []byte(`{"type":"response.in_progress","response":{"id":"resp_incomplete_eof","object":"response","created_at":1700000000,"model":"gpt-5","status":"in_progress","output":[]}}`)},
+	}
+
+	stream, err := trans.TransformStream(t.Context(), nil, streams.SliceStream(events))
+	require.NoError(t, err)
+
+	for stream.Next() {
+		_ = stream.Current()
+	}
+	require.ErrorIs(t, stream.Err(), ErrStreamIncomplete)
+	require.ErrorIs(t, stream.Err(), llm.ErrStreamIncomplete)
+}
+
 func TestOutboundTransformer_TransformStream_PreservesFinalItemAnnotations(t *testing.T) {
 	trans, err := NewOutboundTransformer("https://api.openai.com", "test-api-key")
 	require.NoError(t, err)

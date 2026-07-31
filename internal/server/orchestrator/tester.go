@@ -361,31 +361,7 @@ func testChannelModelErrorEvidence(rawErr *httpclient.Error, message string) str
 }
 
 func isExplicitUnsupportedTestModel(statusCode int, message string) bool {
-	switch statusCode {
-	case http.StatusBadRequest, http.StatusNotFound, http.StatusUnprocessableEntity:
-	default:
-		return false
-	}
-
-	message = strings.ToLower(message)
-	if !strings.Contains(message, "model") {
-		return false
-	}
-	for _, signal := range []string{
-		"not supported",
-		"unsupported",
-		"not found",
-		"does not exist",
-		"unknown model",
-		"invalid model",
-		"model_not_found",
-	} {
-		if strings.Contains(message, signal) {
-			return true
-		}
-	}
-
-	return false
+	return isExplicitUnsupportedModel(statusCode, message)
 }
 
 // handleStreamResponse processes a streaming response and accumulates the content.

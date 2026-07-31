@@ -165,6 +165,7 @@ func (p *pipeline) hasStreamRetryBudget() bool {
 func shouldWrapPreReadStreamError(err error) bool {
 	return !errors.Is(err, ErrStreamFirstEventTimeout) &&
 		!errors.Is(err, ErrEmptyResponse) &&
+		!errors.Is(err, ErrStreamIncomplete) &&
 		!errors.Is(err, context.Canceled) &&
 		!errors.Is(err, context.DeadlineExceeded)
 }
@@ -186,6 +187,7 @@ func (p *pipeline) preReadLlmStream(
 	}
 
 	var buffered []*llm.Response
+	streamEnded := false
 
 	for i := 0; ; i++ {
 		hasNext, err := nextLlmStreamEvent(ctx, llmStream, i == 0, firstEventGuard)
@@ -195,6 +197,7 @@ func (p *pipeline) preReadLlmStream(
 			return nil, err
 		}
 		if !hasNext {
+			streamEnded = true
 			break
 		}
 
@@ -238,6 +241,28 @@ func (p *pipeline) preReadLlmStream(
 		llmStream.Close()
 
 		return nil, err
+	}
+
+	// Provider closed the stream before any content or terminal event. Keep the
+	// failure inside the pipeline so channel/model failover can still run before
+	// any bytes are committed to the client. Hitting the probe bound is different:
+	// content may still arrive later, so those streams remain committed.
+	if streamEnded && (preReadUntilContent || p.emptyResponseDetection) {
+		llmStream.Close()
+
+		if len(buffered) == 0 && p.emptyResponseDetection {
+			slog.WarnContext(ctx, "empty response detected",
+				slog.Int("events_read", 0),
+			)
+
+			return nil, ErrEmptyResponse
+		}
+
+		slog.WarnContext(ctx, "incomplete stream detected before content",
+			slog.Int("events_read", len(buffered)),
+		)
+
+		return nil, ErrStreamIncomplete
 	}
 
 	// Didn't find content or finish in the bounded empty-response probe - treat

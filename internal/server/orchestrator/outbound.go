@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/samber/lo"
@@ -574,12 +575,14 @@ func (p *PersistentOutboundTransformer) CanRetry(err error) bool {
 		return false
 	}
 
-	// Empty response detection: allow same-channel retry so the pipeline can
-	// re-execute the request against the same (or next model in the) channel.
+	// Empty / incomplete stream detection: allow same-channel retry so the
+	// pipeline can re-execute before any client-visible content was committed.
 	if errors.Is(err, pipeline.ErrEmptyResponse) ||
 		errors.Is(err, pipeline.ErrEmptyStreamChunks) ||
-		errors.Is(err, pipeline.ErrEmptyAggregatedBody) {
-		log.Debug(context.Background(), "empty response detected",
+		errors.Is(err, pipeline.ErrEmptyAggregatedBody) ||
+		errors.Is(err, pipeline.ErrStreamIncomplete) ||
+		errors.Is(err, llm.ErrStreamIncomplete) {
+		log.Debug(context.Background(), "empty or incomplete stream detected",
 			log.Int("channel_id", p.state.CurrentCandidate.Channel.ID),
 		)
 
@@ -593,12 +596,19 @@ func (p *PersistentOutboundTransformer) CanRetry(err error) bool {
 	// is tried immediately. The load balancer (e.g. ErrorAware strategy) will
 	// deprioritize this channel for subsequent requests and it will naturally
 	// recover as the rate-limit window resets.
-	if httpclient.IsRateLimitErr(err) {
+	if ExtractStatusCodeFromError(err) == http.StatusTooManyRequests {
 		log.Debug(context.Background(), "429 rate limit, skipping same-channel retry to switch to next channel",
 			log.Int("channel_id", p.state.CurrentCandidate.Channel.ID),
 		)
 
 		return false
+	}
+
+	// Explicit "model not supported" from upstream: only continue on this channel
+	// when a different ActualModel remains. Retrying the same rejected model just
+	// burns the same-channel budget before failover.
+	if isExplicitUnsupportedModelError(err) {
+		return p.hasDifferentActualModelRemaining()
 	}
 
 	// if there are more models available in the current candidate, try the next model.
@@ -608,6 +618,22 @@ func (p *PersistentOutboundTransformer) CanRetry(err error) bool {
 
 	// otherwise check if the error is retryable for the current channel.
 	return isRetryableErrorForChannel(err, p.state.CurrentCandidate.Channel)
+}
+
+func (p *PersistentOutboundTransformer) hasDifferentActualModelRemaining() bool {
+	candidate := p.state.CurrentCandidate
+	if candidate == nil || p.state.CurrentModelIndex < 0 || p.state.CurrentModelIndex >= len(candidate.Models) {
+		return false
+	}
+
+	current := candidate.Models[p.state.CurrentModelIndex].ActualModel
+	for i := p.state.CurrentModelIndex + 1; i < len(candidate.Models); i++ {
+		if candidate.Models[i].ActualModel != current {
+			return true
+		}
+	}
+
+	return false
 }
 
 // PrepareForRetry implements the pipeline.ChannelRetryable interface.
@@ -624,10 +650,19 @@ func (p *PersistentOutboundTransformer) PrepareForRetry(ctx context.Context) err
 	// so it exits promptly and releases its upstream HTTP connection.
 	p.resetPassThroughStreamState()
 
-	// If there's another model in the list, advance to it.
+	// If there's another model in the list, advance to it. Prefer a different
+	// ActualModel when available so an upstream "model not supported" rejection
+	// does not immediately retry the same rejected model.
 	if p.state.CurrentModelIndex+1 < len(candidate.Models) {
-		// Increase the model index to the next model.
-		p.state.CurrentModelIndex++
+		nextIndex := p.state.CurrentModelIndex + 1
+		currentModel := candidate.Models[p.state.CurrentModelIndex].ActualModel
+		for i := nextIndex; i < len(candidate.Models); i++ {
+			if candidate.Models[i].ActualModel != currentModel {
+				nextIndex = i
+				break
+			}
+		}
+		p.state.CurrentModelIndex = nextIndex
 		p.wrapped = selectOutboundForCandidate(candidate)
 
 		if log.DebugEnabled(ctx) {

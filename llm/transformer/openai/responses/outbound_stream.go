@@ -3,7 +3,6 @@ package responses
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -19,7 +18,7 @@ import (
 
 // ErrStreamIncomplete is returned when the stream ends without a terminal event
 // (response.completed, response.failed, response.cancelled, or response.incomplete).
-var ErrStreamIncomplete = errors.New("stream ended without terminal event")
+var ErrStreamIncomplete = llm.ErrStreamIncomplete
 
 // TransformStream transforms OpenAI Responses API SSE events to unified llm.Response stream.
 func (t *OutboundTransformer) TransformStream(
@@ -135,8 +134,14 @@ func (s *responsesOutboundStream) transformStreamChunk(event *httpclient.StreamE
 		return nil
 	}
 
-	// Handle [DONE] marker
+	// Handle [DONE] marker. AppendStream always adds a synthetic [DONE] after the
+	// upstream SSE ends. A real Responses terminal event must already have set
+	// responseCompleted; otherwise this is an incomplete stream and must fail
+	// before the pipeline commits output to the client.
 	if string(event.Data) == "[DONE]" {
+		if !s.responseCompleted && s.state.responseID != "" {
+			return ErrStreamIncomplete
+		}
 		s.enqueue(llm.DoneResponse)
 		return nil
 	}

@@ -3,7 +3,10 @@ package orchestrator
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"strings"
 
 	"github.com/looplj/axonhub/internal/dumper"
 	"github.com/looplj/axonhub/internal/ent"
@@ -70,7 +73,7 @@ func (ts *InboundPersistentStream) Current() *httpclient.StreamEvent {
 		// For raw binary audio chunks (TTS stream_format=audio), persist only a size
 		// summary to avoid buffering the full audio payload in memory.
 		ts.responseChunks = append(ts.responseChunks, httpclient.SummarizeBinaryChunk(event))
-		if isTerminalStreamEvent(event) {
+		if isSuccessfulTerminalStreamEvent(event) {
 			ts.state.StreamCompleted = true
 		}
 	}
@@ -78,13 +81,40 @@ func (ts *InboundPersistentStream) Current() *httpclient.StreamEvent {
 	return event
 }
 
-// isTerminalStreamEvent checks if the event represents the end of a successfully completed stream.
-// For Chat Completions API this is the raw [DONE] event; for Responses API this is response.completed.
-func isTerminalStreamEvent(event *httpclient.StreamEvent) bool {
+// isSuccessfulTerminalStreamEvent checks if an event proves successful
+// completion. A Responses response.incomplete event is terminal on the wire but
+// deliberately excluded: persistence must record it as non-completed.
+func isSuccessfulTerminalStreamEvent(event *httpclient.StreamEvent) bool {
+	if event == nil {
+		return false
+	}
+	if event.Type == "response.completed" {
+		if len(event.Data) == 0 {
+			return true
+		}
+
+		var payload struct {
+			Response struct {
+				Status *string         `json:"status"`
+				Error  json.RawMessage `json:"error"`
+			} `json:"response"`
+		}
+		if err := json.Unmarshal(event.Data, &payload); err != nil {
+			return false
+		}
+		if len(payload.Response.Error) > 0 && string(payload.Response.Error) != "null" {
+			return false
+		}
+		if payload.Response.Status == nil {
+			return true
+		}
+
+		status := strings.ToLower(strings.TrimSpace(*payload.Response.Status))
+		return status == "completed"
+	}
+
 	// For chat completions, check for [DONE] event
 	return bytes.Equal(event.Data, llm.DoneStreamEvent.Data) ||
-		// For Responses API, check for response.completed event
-		event.Type == "response.completed" ||
 		// For Anthropic Messages API, check for message_stop event
 		event.Type == "message_stop" ||
 		// For OpenAI audio APIs (TTS sse / STT stream) which have no [DONE] sentinel:
@@ -92,6 +122,51 @@ func isTerminalStreamEvent(event *httpclient.StreamEvent) bool {
 		event.Type == "speech.audio.done" ||
 		event.Type == "transcript.text.done" ||
 		event.Type == httpclient.BinaryStreamDoneEventType
+}
+
+// aggregatedTerminalFailure returns an actionable error for an explicit
+// protocol terminal that was not successful. It is intentionally separate from
+// channel health: a response.incomplete after useful output can still prove the
+// channel usable while the request/execution remains non-completed in storage.
+func aggregatedTerminalFailure(meta llm.ResponseMeta) error {
+	if !meta.Terminal || meta.Completed {
+		return nil
+	}
+	return protocolTerminalFailure(meta.ProtocolStatus, meta.IncompleteReason)
+}
+
+func responseProtocolTerminalFailure(response *llm.Response) error {
+	if response == nil || strings.TrimSpace(response.ProtocolStatus) == "" {
+		return nil
+	}
+	return protocolTerminalFailure(response.ProtocolStatus, response.IncompleteReason)
+}
+
+func protocolTerminalFailure(protocolStatus string, incompleteReason string) error {
+	status := strings.ToLower(strings.TrimSpace(protocolStatus))
+	if status == "completed" {
+		return nil
+	}
+	if status == "" {
+		status = "not_completed"
+	}
+	code := "response_" + status
+	message := "upstream response ended with protocol status " + status
+	if status == "incomplete" {
+		message = "upstream response incomplete"
+	}
+	if reason := strings.TrimSpace(incompleteReason); reason != "" {
+		message += ": " + reason
+	}
+
+	return &llm.ResponseError{
+		StatusCode: http.StatusBadGateway,
+		Detail: llm.ErrorDetail{
+			Type:    "api_error",
+			Code:    code,
+			Message: message,
+		},
+	}
 }
 
 func (ts *InboundPersistentStream) Err() error {
@@ -146,9 +221,25 @@ func (ts *InboundPersistentStream) Close() error {
 
 	if len(ts.responseChunks) > 0 && !ts.state.StreamCompleted {
 		responseBody, meta, aggErr = ts.transformer.AggregateStreamChunks(context.WithoutCancel(ctx), ts.responseChunks)
-		if aggErr == nil && meta.ID != "" && len(responseBody) > 0 && isCompletedAggregated(meta) {
+		if aggErr == nil && meta.ID != "" && len(responseBody) > 0 && meta.Completed {
 			log.Debug(ctx, "Stream has valid complete response without terminal event, treating as completed")
 			ts.state.StreamCompleted = true
+		}
+	}
+
+	if aggErr == nil {
+		if terminalErr := aggregatedTerminalFailure(meta); terminalErr != nil {
+			persistCtx := context.WithoutCancel(ctx)
+			if ts.request != nil {
+				if err := ts.requestService.UpdateRequestStatusFromError(persistCtx, ts.request.ID, terminalErr); err != nil {
+					log.Warn(persistCtx, "Failed to update request status from incomplete terminal", log.Cause(err))
+				}
+				if err := ts.requestService.SaveRequestChunks(persistCtx, ts.request.ID, ts.responseChunks); err != nil {
+					log.Warn(persistCtx, "Failed to save incomplete request chunks", log.Cause(err))
+				}
+			}
+
+			return ts.stream.Close()
 		}
 	}
 
@@ -181,7 +272,10 @@ func (ts *InboundPersistentStream) Close() error {
 		if ts.request != nil {
 			persistCtx := context.WithoutCancel(ctx)
 
-			errToReport := errors.New("stream ended without terminal event or completed response")
+			errToReport := aggErr
+			if errToReport == nil {
+				errToReport = errors.New("stream ended without terminal event or completed response")
+			}
 
 			if err := ts.requestService.UpdateRequestStatusFromError(persistCtx, ts.request.ID, errToReport); err != nil {
 				log.Warn(persistCtx, "Failed to update request status from error", log.Cause(err))
@@ -219,6 +313,26 @@ func (ts *InboundPersistentStream) persistResponseChunks(ctx context.Context) {
 	if err != nil {
 		log.Warn(persistCtx, "Failed to aggregate chunks for main request", log.Cause(err))
 		dumper.DumpStreamEvents(persistCtx, ts.responseChunks, "response_chunks.json")
+		if ts.request != nil {
+			if updateErr := ts.requestService.UpdateRequestStatusFromError(persistCtx, ts.request.ID, err); updateErr != nil {
+				log.Warn(persistCtx, "Failed to update request status from aggregation error", log.Cause(updateErr))
+			}
+		}
+
+		return
+	}
+	if terminalErr := aggregatedTerminalFailure(meta); terminalErr != nil {
+		ts.state.StreamCompleted = false
+		if ts.request != nil {
+			if updateErr := ts.requestService.UpdateRequestStatusFromError(persistCtx, ts.request.ID, terminalErr); updateErr != nil {
+				log.Warn(persistCtx, "Failed to update request status from incomplete terminal", log.Cause(updateErr))
+			}
+			if saveErr := ts.requestService.SaveRequestChunks(persistCtx, ts.request.ID, ts.responseChunks); saveErr != nil {
+				log.Warn(persistCtx, "Failed to save incomplete request chunks", log.Cause(saveErr))
+			}
+		}
+
+		return
 	}
 
 	ts._persistResponse(persistCtx, responseBody, meta)
@@ -228,6 +342,17 @@ func (ts *InboundPersistentStream) persistResponseChunks(ctx context.Context) {
 // This avoids redundant aggregation when the data is already available.
 func (ts *InboundPersistentStream) _persistResponse(ctx context.Context, responseBody []byte, meta llm.ResponseMeta) {
 	if ts.request == nil {
+		return
+	}
+	if terminalErr := aggregatedTerminalFailure(meta); terminalErr != nil {
+		ts.state.StreamCompleted = false
+		if err := ts.requestService.UpdateRequestStatusFromError(ctx, ts.request.ID, terminalErr); err != nil {
+			log.Warn(ctx, "Failed to update request status from incomplete terminal", log.Cause(err))
+		}
+		if err := ts.requestService.SaveRequestChunks(ctx, ts.request.ID, ts.responseChunks); err != nil {
+			log.Warn(ctx, "Failed to save incomplete request chunks", log.Cause(err))
+		}
+
 		return
 	}
 

@@ -86,7 +86,7 @@ func (ts *OutboundPersistentStream) Current() *httpclient.StreamEvent {
 		// Check if this is a terminal event, which indicates the stream completed successfully.
 		// For Chat Completions API this is the raw [DONE] event; for Responses API this is
 		// response.completed; for Anthropic Messages API this is message_stop.
-		if isTerminalStreamEvent(event) {
+		if isSuccessfulTerminalStreamEvent(event) {
 			ts.state.StreamCompleted = true
 		}
 	}
@@ -143,11 +143,13 @@ func (ts *OutboundPersistentStream) Close() error {
 	var responseBody []byte
 	var meta llm.ResponseMeta
 	var aggErr error
+	aggregatedTerminal := false
 	aggregatedCompleted := false
 
 	if len(ts.responseChunks) > 0 {
 		responseBody, meta, aggErr = ts.transformer.AggregateStreamChunks(context.WithoutCancel(ctx), ts.state.RawProviderRequest, ts.responseChunks)
-		aggregatedCompleted = aggErr == nil && isCompletedAggregated(meta)
+		aggregatedTerminal = aggErr == nil && isTerminalAggregated(meta)
+		aggregatedCompleted = aggregatedTerminal && meta.Completed
 		ts.logFinalizationDecision(ctx, "aggregated_outbound_chunks", streamErr, ctxErr, aggregatedCompleted, aggErr)
 		if aggregatedCompleted {
 			log.Debug(ctx, "Stream has valid complete response without terminal event, treating as completed")
@@ -155,6 +157,18 @@ func (ts *OutboundPersistentStream) Close() error {
 		}
 	} else {
 		ts.logFinalizationDecision(ctx, "no_outbound_chunks_to_aggregate", streamErr, ctxErr, false, nil)
+	}
+
+	if aggErr == nil && aggregatedTerminal && !aggregatedCompleted {
+		terminalErr := aggregatedTerminalFailure(meta)
+		if terminalErr == nil {
+			terminalErr = errors.New("upstream stream reached a non-completed terminal state")
+		}
+		persistCtx, cancel := xcontext.DetachWithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		ts.persistAggregatedFailure(persistCtx, meta, terminalErr)
+
+		return ts.stream.Close()
 	}
 
 	// ended without a terminal event / complete aggregated response.
@@ -185,7 +199,10 @@ func (ts *OutboundPersistentStream) Close() error {
 		persistCtx, cancel := xcontext.DetachWithTimeout(ctx, 10*time.Second)
 		defer cancel()
 
-		errToReport := errors.New("stream ended without terminal event or completed response")
+		errToReport := aggErr
+		if errToReport == nil {
+			errToReport = errors.New("stream ended without terminal event or completed response")
+		}
 		if ts.requestExec != nil {
 			if err := ts.RequestService.UpdateRequestExecutionStatusFromError(persistCtx, ts.requestExec.ID, errToReport); err != nil {
 				log.Warn(persistCtx, "Failed to update request execution status from error", log.Cause(err))
@@ -250,6 +267,13 @@ func (ts *OutboundPersistentStream) persistResponseChunks(ctx context.Context) {
 		responseBody, meta, err := ts.transformer.AggregateStreamChunks(persistCtx, ts.state.RawProviderRequest, ts.responseChunks)
 		if err != nil {
 			log.Warn(persistCtx, "Failed to aggregate chunks using transformer", log.Cause(err))
+			if updateErr := ts.RequestService.UpdateRequestExecutionStatusFromError(persistCtx, ts.requestExec.ID, err); updateErr != nil {
+				log.Warn(persistCtx, "Failed to update request execution status from aggregation error", log.Cause(updateErr))
+			}
+			return
+		}
+		if terminalErr := aggregatedTerminalFailure(meta); terminalErr != nil {
+			ts.persistAggregatedFailure(persistCtx, meta, terminalErr)
 			return
 		}
 
@@ -257,8 +281,33 @@ func (ts *OutboundPersistentStream) persistResponseChunks(ctx context.Context) {
 	}
 }
 
+func (ts *OutboundPersistentStream) persistAggregatedFailure(ctx context.Context, meta llm.ResponseMeta, terminalErr error) {
+	if ts.requestExec == nil {
+		return
+	}
+	ts.state.StreamCompleted = false
+
+	// Even an incomplete response consumed upstream resources. Retain its usage
+	// for quotas/accounting while keeping the execution status non-completed.
+	if usage := meta.Usage; usage != nil {
+		if _, err := ts.UsageLogService.CreateUsageLogFromRequest(ctx, ts.request, ts.requestExec, usage); err != nil {
+			log.Warn(ctx, "Failed to create usage log from incomplete request", log.Cause(err))
+		}
+	}
+	if err := ts.RequestService.UpdateRequestExecutionStatusFromError(ctx, ts.requestExec.ID, terminalErr); err != nil {
+		log.Warn(ctx, "Failed to update request execution from incomplete terminal", log.Cause(err))
+	}
+	if err := ts.RequestService.SaveRequestExecutionChunks(ctx, ts.requestExec.ID, ts.responseChunks); err != nil {
+		log.Warn(ctx, "Failed to save incomplete request execution chunks", log.Cause(err))
+	}
+}
+
 func (ts *OutboundPersistentStream) persistAggregatedResponse(ctx context.Context, responseBody []byte, meta llm.ResponseMeta) {
 	if ts.requestExec == nil {
+		return
+	}
+	if terminalErr := aggregatedTerminalFailure(meta); terminalErr != nil {
+		ts.persistAggregatedFailure(ctx, meta, terminalErr)
 		return
 	}
 
@@ -305,9 +354,8 @@ func (ts *OutboundPersistentStream) persistAggregatedResponse(ctx context.Contex
 	}
 }
 
-func isCompletedAggregated(meta llm.ResponseMeta) bool {
-	return meta.Completed ||
-		(meta.Usage != nil && meta.Usage.CompletionTokens > 0)
+func isTerminalAggregated(meta llm.ResponseMeta) bool {
+	return meta.Terminal || meta.Completed
 }
 
 var errSkipCandidateByCircuitBreaker = errors.New("skip candidate by circuit breaker")

@@ -3,6 +3,8 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/looplj/axonhub/internal/contexts"
@@ -90,6 +92,15 @@ func (m *performanceRecording) OnOutboundRawResponse(ctx context.Context, respon
 
 func (m *performanceRecording) OnOutboundLlmResponse(ctx context.Context, response *llm.Response) (*llm.Response, error) {
 	if m.outbound.state.Perf == nil {
+		return response, nil
+	}
+
+	if terminal, successful := llmTerminalOutcome(response); terminal && !successful {
+		m.outbound.state.Perf.MarkFailed(http.StatusBadGateway)
+		if m.outbound.state.ChannelService != nil {
+			m.outbound.state.ChannelService.AsyncRecordPerformance(ctx, m.outbound.state.Perf)
+		}
+
 		return response, nil
 	}
 
@@ -183,6 +194,7 @@ type recordPerformanceStream struct {
 	reasoningEndSet   bool
 	semanticOutput    bool
 	recorded          bool
+	terminalFailure   bool
 }
 
 func (s *recordPerformanceStream) Current() *llm.Response {
@@ -220,7 +232,10 @@ func (s *recordPerformanceStream) Current() *llm.Response {
 		}
 	}
 
-	if pipeline.IsTerminalLlmStreamEvent(event) && s.semanticOutput {
+	if terminal, successful := llmTerminalOutcome(event); terminal && !successful {
+		s.terminalFailure = true
+		s.recordFailure()
+	} else if successful && s.semanticOutput {
 		s.recordSuccess()
 	}
 
@@ -232,16 +247,18 @@ func (s *recordPerformanceStream) Next() bool {
 }
 
 func (s *recordPerformanceStream) Close() error {
-	if !s.recorded && s.semanticOutput && s.state != nil && s.state.Perf != nil {
-		if s.state.StreamCompleted {
+	if !s.recorded && s.state != nil && s.state.Perf != nil {
+		if s.terminalFailure {
+			s.recordFailure()
+		} else if s.semanticOutput && s.state.StreamCompleted {
 			s.recordSuccess()
-		} else if s.ctx.Err() != nil {
+		} else if s.semanticOutput && s.ctx.Err() != nil {
 			s.state.Perf.MarkCanceled()
 			if s.state.ChannelService != nil {
 				s.state.ChannelService.AsyncRecordPerformance(s.ctx, s.state.Perf)
 			}
 			s.recorded = true
-		} else {
+		} else if s.semanticOutput {
 			// Meaningful output was already committed to the client, so the
 			// pipeline cannot safely retry. Still record the incomplete stream as
 			// unhealthy so future sessions avoid the channel temporarily.
@@ -256,6 +273,45 @@ func (s *recordPerformanceStream) Close() error {
 	return s.stream.Close()
 }
 
+func llmTerminalOutcome(response *llm.Response) (terminal, successful bool) {
+	if response == nil {
+		return false, false
+	}
+	if response.Error != nil {
+		return true, false
+	}
+	if response == llm.DoneResponse || response.Object == "[DONE]" {
+		return true, true
+	}
+
+	switch strings.ToLower(strings.TrimSpace(response.ProtocolStatus)) {
+	case "failed", "canceled", "cancelled", "error":
+		return true, false
+	case "completed", "incomplete":
+		// An explicit response.incomplete is an honest client/request terminal,
+		// but it does not make a channel unhealthy after the channel produced
+		// meaningful content. Empty-response detection still retries it when no
+		// semantic output was produced.
+		return true, true
+	}
+
+	for _, choice := range response.Choices {
+		if choice.FinishReason == nil {
+			continue
+		}
+
+		if strings.TrimSpace(*choice.FinishReason) != "" {
+			// Finish reasons are protocol-local termination reasons, not provider
+			// health errors. In particular, a normal Chat Completions `length`
+			// response may contain perfectly usable output.
+			terminal = true
+			successful = true
+		}
+	}
+
+	return terminal, successful
+}
+
 func (s *recordPerformanceStream) Err() error {
 	return s.stream.Err()
 }
@@ -266,6 +322,18 @@ func (s *recordPerformanceStream) recordSuccess() {
 	}
 
 	s.state.Perf.MarkSuccess()
+	if s.state.ChannelService != nil {
+		s.state.ChannelService.AsyncRecordPerformance(s.ctx, s.state.Perf)
+	}
+	s.recorded = true
+}
+
+func (s *recordPerformanceStream) recordFailure() {
+	if s.recorded || s.state == nil || s.state.Perf == nil {
+		return
+	}
+
+	s.state.Perf.MarkFailed(http.StatusBadGateway)
 	if s.state.ChannelService != nil {
 		s.state.ChannelService.AsyncRecordPerformance(s.ctx, s.state.Perf)
 	}

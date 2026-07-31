@@ -391,6 +391,131 @@ func TestInboundTransformer_TransformStream_EmitsUpstreamErrorEvents(t *testing.
 	}
 }
 
+func TestInboundTransformer_TransformStream_PreservesTerminalSemantics(t *testing.T) {
+	tests := []struct {
+		name           string
+		finishReason   string
+		wantEventType  StreamEventType
+		wantStatus     string
+		wantIncomplete string
+		wantErrorCode  string
+	}{
+		{
+			name:          "completed",
+			finishReason:  "stop",
+			wantEventType: StreamEventTypeResponseCompleted,
+			wantStatus:    "completed",
+		},
+		{
+			name:           "incomplete",
+			finishReason:   "length",
+			wantEventType:  StreamEventTypeResponseIncomplete,
+			wantStatus:     "incomplete",
+			wantIncomplete: "max_output_tokens",
+		},
+		{
+			name:          "failed",
+			finishReason:  "error",
+			wantEventType: StreamEventTypeResponseFailed,
+			wantStatus:    "failed",
+			wantErrorCode: "response_failed",
+		},
+		{
+			name:          "unknown finish reason fails closed",
+			finishReason:  "mystery",
+			wantEventType: StreamEventTypeResponseFailed,
+			wantStatus:    "failed",
+			wantErrorCode: "invalid_finish_reason",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			source := streams.SliceStream([]*llm.Response{
+				{
+					Object: "chat.completion.chunk",
+					ID:     "resp_terminal",
+					Model:  "gpt-5",
+					Choices: []llm.Choice{{
+						Delta: &llm.Message{Content: llm.MessageContent{Content: lo.ToPtr("partial")}},
+					}},
+				},
+				{
+					Object: "chat.completion.chunk",
+					ID:     "resp_terminal",
+					Model:  "gpt-5",
+					Choices: []llm.Choice{{
+						FinishReason: lo.ToPtr(tt.finishReason),
+					}},
+				},
+				{
+					Object: "chat.completion.chunk",
+					ID:     "resp_terminal",
+					Model:  "gpt-5",
+					Usage:  &llm.Usage{PromptTokens: 5, CompletionTokens: 1, TotalTokens: 6},
+				},
+			})
+
+			stream, err := NewInboundTransformer().TransformStream(t.Context(), source)
+			require.NoError(t, err)
+
+			var terminal StreamEvent
+			for stream.Next() {
+				var event StreamEvent
+				require.NoError(t, json.Unmarshal(stream.Current().Data, &event))
+				if event.Type == tt.wantEventType {
+					terminal = event
+				}
+			}
+			require.NoError(t, stream.Err())
+			require.Equal(t, tt.wantEventType, terminal.Type)
+			require.NotNil(t, terminal.Response)
+			require.Equal(t, tt.wantStatus, lo.FromPtr(terminal.Response.Status))
+			if tt.wantIncomplete != "" {
+				require.NotNil(t, terminal.Response.IncompleteDetails)
+				require.Equal(t, tt.wantIncomplete, terminal.Response.IncompleteDetails.Reason)
+			}
+			if tt.wantErrorCode != "" {
+				require.NotNil(t, terminal.Response.Error)
+				require.Equal(t, tt.wantErrorCode, terminal.Response.Error.Code)
+			}
+		})
+	}
+}
+
+func TestInboundTransformer_TransformStream_PreservesStructuredResponseError(t *testing.T) {
+	upstreamErr := &llm.ResponseError{
+		StatusCode: 502,
+		Detail: llm.ErrorDetail{
+			Type:    "invalid_request_error",
+			Code:    "unsupported_value",
+			Message: "reasoning.context must be all_turns",
+		},
+	}
+	source := &errorResponseStream{
+		items: []*llm.Response{{ID: "resp_error", Model: "gpt-5"}},
+		err:   upstreamErr,
+	}
+
+	stream, err := NewInboundTransformer().TransformStream(t.Context(), source)
+	require.NoError(t, err)
+
+	var failed StreamEvent
+	for stream.Next() {
+		var event StreamEvent
+		require.NoError(t, json.Unmarshal(stream.Current().Data, &event))
+		if event.Type == StreamEventTypeResponseFailed {
+			failed = event
+		}
+	}
+	require.NoError(t, stream.Err())
+	require.NotNil(t, failed.Response)
+	require.NotNil(t, failed.Response.Error)
+	require.Equal(t, "invalid_request_error", failed.Response.Error.Type)
+	require.Equal(t, "unsupported_value", failed.Response.Error.Code)
+	require.Equal(t, "reasoning.context must be all_turns", failed.Response.Error.Message)
+}
+
 type errorResponseStream struct {
 	items []*llm.Response
 	index int

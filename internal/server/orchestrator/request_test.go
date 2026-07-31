@@ -406,6 +406,43 @@ func TestPersistRequestMiddleware_SpeechResponse_StoresMetadataPlaceholder(t *te
 	require.Contains(t, string(updated.ResponseBody), "\"bytes\":9")
 }
 
+func TestPersistRequestMiddleware_IncompleteProtocolResponseRemainsFailed(t *testing.T) {
+	client := enttest.NewEntClient(t, "sqlite3", "file:ent?mode=memory&_fk=0")
+	defer client.Close()
+
+	ctx := authz.WithTestBypass(context.Background())
+	ctx = ent.NewContext(ctx, client)
+	systemService := newTestSystemService(client)
+	requestService := newTestRequestServiceForChannels(client, systemService)
+	req, err := client.Request.Create().
+		SetModelID("gpt-5.6-sol").
+		SetFormat(string(llm.APIFormatOpenAIResponse)).
+		SetRequestBody([]byte(`{"model":"gpt-5.6-sol"}`)).
+		SetStatus(entrequest.StatusProcessing).
+		SetStream(false).
+		Save(ctx)
+	require.NoError(t, err)
+
+	state := &PersistenceState{Request: req, RequestService: requestService}
+	middleware := &persistRequestMiddleware{
+		inbound: &PersistentInboundTransformer{state: state},
+		llmResponse: &llm.Response{
+			ID:               "resp_partial",
+			ProtocolStatus:   "incomplete",
+			IncompleteReason: "max_output_tokens",
+		},
+	}
+	_, err = middleware.OnInboundRawResponse(ctx, &httpclient.Response{
+		StatusCode: 200,
+		Body:       []byte(`{"id":"resp_partial","status":"incomplete"}`),
+	})
+	require.NoError(t, err)
+
+	stored, err := client.Request.Get(ctx, req.ID)
+	require.NoError(t, err)
+	require.Equal(t, entrequest.StatusFailed, stored.Status)
+}
+
 func TestAudioSafeResponseBody(t *testing.T) {
 	t.Parallel()
 

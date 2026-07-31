@@ -67,18 +67,53 @@ func TestNewOutboundTransformer(t *testing.T) {
 	}
 }
 
-func TestOutboundTransformer_TransformResponse_CanceledFinishReason(t *testing.T) {
+func TestOutboundTransformer_TransformResponse_CanceledIsUpstreamError(t *testing.T) {
 	transformer, err := NewOutboundTransformer("https://api.openai.com", "test-api-key")
 	require.NoError(t, err)
 
 	result, err := transformer.TransformResponse(context.Background(), &httpclient.Response{
 		StatusCode: http.StatusOK,
-		Body:       []byte(`{"id":"resp_canceled","object":"response","created_at":1700000000,"status":"canceled","model":"gpt-5","output":[]}`),
+		Body:       []byte(`{"id":"resp_canceled","object":"response","created_at":1700000000,"status":"canceled","model":"gpt-5","output":[],"error":{"type":"server_error","code":"account_unavailable","message":"account is temporarily unavailable"}}`),
+	})
+	require.Nil(t, result)
+	var responseErr *llm.ResponseError
+	require.ErrorAs(t, err, &responseErr)
+	require.Equal(t, http.StatusBadGateway, responseErr.StatusCode)
+	require.Equal(t, "account_unavailable", responseErr.Detail.Code)
+	require.Equal(t, "server_error", responseErr.Detail.Type)
+	require.Equal(t, "account is temporarily unavailable", responseErr.Detail.Message)
+}
+
+func TestOutboundTransformer_TransformResponse_HTTP200ErrorEnvelopeIsBadGateway(t *testing.T) {
+	transformer, err := NewOutboundTransformer("https://api.openai.com", "test-api-key")
+	require.NoError(t, err)
+
+	result, err := transformer.TransformResponse(context.Background(), &httpclient.Response{
+		StatusCode: http.StatusOK,
+		Body:       []byte(`{"error":{"type":"invalid_request_error","code":"unsupported_value","message":"reasoning.context must be all_turns"}}`),
+	})
+	require.Nil(t, result)
+	var responseErr *llm.ResponseError
+	require.ErrorAs(t, err, &responseErr)
+	require.Equal(t, http.StatusBadGateway, responseErr.StatusCode)
+	require.Equal(t, "unsupported_value", responseErr.Detail.Code)
+	require.Equal(t, "invalid_request_error", responseErr.Detail.Type)
+	require.Equal(t, "reasoning.context must be all_turns", responseErr.Detail.Message)
+}
+
+func TestOutboundTransformer_TransformResponse_IncompleteStaysIncomplete(t *testing.T) {
+	transformer, err := NewOutboundTransformer("https://api.openai.com", "test-api-key")
+	require.NoError(t, err)
+
+	result, err := transformer.TransformResponse(context.Background(), &httpclient.Response{
+		StatusCode: http.StatusOK,
+		Body:       []byte(`{"id":"resp_incomplete","object":"response","created_at":1700000000,"status":"incomplete","model":"gpt-5","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"partial"}]}],"incomplete_details":{"reason":"max_output_tokens"}}`),
 	})
 	require.NoError(t, err)
 	require.Len(t, result.Choices, 1)
-	require.NotNil(t, result.Choices[0].FinishReason)
-	require.Equal(t, "cancelled", *result.Choices[0].FinishReason)
+	require.Equal(t, "length", lo.FromPtr(result.Choices[0].FinishReason))
+	require.Equal(t, "incomplete", result.ProtocolStatus)
+	require.Equal(t, "max_output_tokens", result.IncompleteReason)
 }
 
 func TestOutboundTransformer_buildFullRequestURL(t *testing.T) {

@@ -107,6 +107,14 @@ func (m *persistRequestMiddleware) OnInboundRawResponse(ctx context.Context, htt
 		}
 	}
 
+	if terminalErr := responseProtocolTerminalFailure(llmResp); terminalErr != nil {
+		if err := state.RequestService.UpdateRequestStatusFromError(persistCtx, state.Request.ID, terminalErr); err != nil {
+			log.Warn(persistCtx, "Failed to update request from non-completed protocol terminal", log.Cause(err))
+		}
+
+		return httpResp, nil
+	}
+
 	// Video generation is async: initial response contains provider task id, but task may not be completed.
 	// Keep request in processing status and store provider task id in external_id.
 	if llmResp.RequestType == llm.RequestTypeVideo {

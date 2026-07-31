@@ -188,6 +188,94 @@ func (t *OutboundTransformer) TransformError(ctx context.Context, rawErr *httpcl
 	}
 }
 
+func newUpstreamResponseError(status string, responseErr *Error) *llm.ResponseError {
+	detail := llm.ErrorDetail{Type: "api_error"}
+
+	if responseErr != nil {
+		detail.Code = responseErr.Code
+		detail.Message = strings.TrimSpace(responseErr.Message)
+		if responseErr.Type != "" {
+			detail.Type = responseErr.Type
+		}
+	}
+
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "canceled", "cancelled":
+		if detail.Code == "" {
+			detail.Code = "response_cancelled"
+		}
+		if detail.Message == "" {
+			detail.Message = "upstream cancelled the response"
+		}
+	default:
+		if detail.Code == "" {
+			detail.Code = "response_failed"
+		}
+		if detail.Message == "" {
+			detail.Message = "upstream failed to generate a response"
+		}
+	}
+
+	return &llm.ResponseError{
+		StatusCode: http.StatusBadGateway,
+		Detail:     detail,
+	}
+}
+
+func newUpstreamStreamEventError(event *StreamEvent) *llm.ResponseError {
+	if event == nil {
+		return newUpstreamResponseError("failed", nil)
+	}
+
+	detail := llm.ErrorDetail{
+		Code:    event.Code,
+		Message: strings.TrimSpace(event.Message),
+		Type:    "api_error",
+		Param:   lo.FromPtr(event.Param),
+	}
+	if detail.Code == "" {
+		detail.Code = "upstream_error"
+	}
+	if detail.Message == "" {
+		detail.Message = "upstream returned an error event"
+	}
+
+	return &llm.ResponseError{
+		StatusCode: http.StatusBadGateway,
+		Detail:     detail,
+	}
+}
+
+func responseTerminalError(resp *Response) *llm.ResponseError {
+	if resp == nil {
+		return nil
+	}
+
+	status := ""
+	if resp.Status != nil {
+		status = strings.ToLower(strings.TrimSpace(*resp.Status))
+	}
+
+	switch status {
+	case "failed", "canceled", "cancelled":
+		return newUpstreamResponseError(status, resp.Error)
+	default:
+		if resp.Error != nil {
+			return newUpstreamResponseError("failed", resp.Error)
+		}
+
+		return nil
+	}
+}
+
+func responseErrorFromSnapshot(resp *Response) *Error {
+	if resp == nil {
+		return nil
+	}
+
+	return resp.Error
+}
+
 func (t *OutboundTransformer) TransformRequest(ctx context.Context, llmReq *llm.Request) (*httpclient.Request, error) {
 	if llmReq == nil {
 		return nil, fmt.Errorf("chat request is nil")
@@ -369,6 +457,9 @@ func (t *OutboundTransformer) transformStandardResponse(
 	if err := json.Unmarshal(httpResp.Body, &resp); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal responses api response: %w", err)
 	}
+	if responseErr := responseTerminalError(&resp); responseErr != nil {
+		return nil, responseErr
+	}
 
 	// Validate that we got a valid response
 	if resp.ID == "" && resp.Model == "" && len(resp.Output) == 0 {
@@ -383,6 +474,15 @@ func (t *OutboundTransformer) transformStandardResponse(
 		PreviousResponseID:  resp.PreviousResponseID,
 		Choices:             make([]llm.Choice, 0),
 		TransformerMetadata: map[string]any{},
+	}
+	if resp.Status != nil {
+		status := strings.ToLower(strings.TrimSpace(*resp.Status))
+		if status == "incomplete" {
+			llmResp.ProtocolStatus = status
+		}
+	}
+	if resp.IncompleteDetails != nil {
+		llmResp.IncompleteReason = strings.TrimSpace(resp.IncompleteDetails.Reason)
 	}
 
 	// Convert usage if present
@@ -407,12 +507,8 @@ func (t *OutboundTransformer) transformStandardResponse(
 		switch *resp.Status {
 		case "completed":
 			choice.FinishReason = lo.ToPtr("stop")
-		case "failed":
-			choice.FinishReason = lo.ToPtr("error")
 		case "incomplete":
 			choice.FinishReason = lo.ToPtr("length")
-		case "canceled", "cancelled":
-			choice.FinishReason = lo.ToPtr("cancelled")
 		}
 	}
 

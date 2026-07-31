@@ -44,7 +44,8 @@ type responsesInboundStream struct {
 	hasReasoningSummaryPart bool
 	hasContentPartStarted   bool
 	hasFinished             bool
-	responseCompleted       bool
+	responseTerminalEmitted bool
+	finishReason            string
 	pendingAnnotations      []llm.Annotation
 
 	// Response metadata
@@ -124,22 +125,9 @@ func (s *responsesInboundStream) Next() bool {
 
 	// Try to get the next chunk from source
 	if !s.source.Next() {
-		if s.err == nil && !s.errorEventEmitted && s.source.Err() == nil && s.hasFinished && !s.responseCompleted {
-			s.responseCompleted = true
-			s.aggregator.status = "completed"
-			response := s.aggregator.buildResponse()
-			if s.usage != nil {
-				response.Usage = ConvertLLMUsageToResponsesUsage(s.usage)
-			}
-			if calls := getResponseWebSearchCallsFromMetadata(s.transformerMetadata); len(calls) > 0 {
-				response.Output = append(append([]Item(nil), calls...), response.Output...)
-			}
-
-			if err := s.enqueueEvent(&StreamEvent{
-				Type:     StreamEventTypeResponseCompleted,
-				Response: response,
-			}); err != nil {
-				s.err = fmt.Errorf("failed to enqueue response.completed event: %w", err)
+		if s.err == nil && !s.errorEventEmitted && s.source.Err() == nil && s.hasFinished && !s.responseTerminalEmitted {
+			if err := s.emitTerminalResponse(); err != nil {
+				s.err = err
 				return false
 			}
 
@@ -147,7 +135,7 @@ func (s *responsesInboundStream) Next() bool {
 		}
 
 		// Source stream ended - check if we need to emit an error event
-		if s.err == nil && !s.errorEventEmitted && s.source.Err() != nil {
+		if s.err == nil && !s.errorEventEmitted && !s.responseTerminalEmitted && s.source.Err() != nil {
 			sourceErr := s.source.Err()
 			// Don't emit error event for client cancellation
 			if errors.Is(sourceErr, context.Canceled) {
@@ -285,6 +273,7 @@ func (s *responsesInboundStream) Next() bool {
 		// Handle finish reason
 		if choice.FinishReason != nil && !s.hasFinished {
 			s.hasFinished = true
+			s.finishReason = strings.ToLower(strings.TrimSpace(*choice.FinishReason))
 
 			// Close any open content parts
 			if err := s.closeCurrentContentPart(); err != nil {
@@ -301,30 +290,85 @@ func (s *responsesInboundStream) Next() bool {
 	}
 
 	// Handle final usage chunk and complete response
-	if chunk.Usage != nil && s.hasFinished && !s.responseCompleted {
-		s.responseCompleted = true
+	if chunk.Usage != nil && s.hasFinished && !s.responseTerminalEmitted {
 		s.usage = chunk.Usage
-
-		// Build final response using aggregator
-		s.aggregator.status = "completed"
-		response := s.aggregator.buildResponse()
-		response.Usage = ConvertLLMUsageToResponsesUsage(s.usage)
-		if calls := getResponseWebSearchCallsFromMetadata(s.transformerMetadata); len(calls) > 0 {
-			response.Output = append(append([]Item(nil), calls...), response.Output...)
-		}
-
-		err := s.enqueueEvent(&StreamEvent{
-			Type:     StreamEventTypeResponseCompleted,
-			Response: response,
-		})
-		if err != nil {
-			s.err = fmt.Errorf("failed to enqueue response.completed event: %w", err)
+		if err := s.emitTerminalResponse(); err != nil {
+			s.err = err
 			return false
 		}
 	}
 
 	// Continue to the next event
 	return s.Next()
+}
+
+func (s *responsesInboundStream) emitTerminalResponse() error {
+	if s.responseTerminalEmitted {
+		return nil
+	}
+	if s.aggregator == nil {
+		s.aggregator = newStreamAggregator()
+	}
+
+	eventType := StreamEventTypeResponseCompleted
+	status := "completed"
+
+	switch s.finishReason {
+	case "stop", "tool_calls", "function_call":
+		// Successful terminal.
+	case "length", "content_filter":
+		eventType = StreamEventTypeResponseIncomplete
+		status = "incomplete"
+	case "error", "canceled", "cancelled":
+		eventType = StreamEventTypeResponseFailed
+		status = "failed"
+	default:
+		eventType = StreamEventTypeResponseFailed
+		status = "failed"
+	}
+
+	s.aggregator.status = status
+	response := s.aggregator.buildResponse()
+	if s.usage != nil {
+		response.Usage = ConvertLLMUsageToResponsesUsage(s.usage)
+	}
+	if calls := getResponseWebSearchCallsFromMetadata(s.transformerMetadata); len(calls) > 0 {
+		response.Output = append(append([]Item(nil), calls...), response.Output...)
+	}
+
+	switch eventType {
+	case StreamEventTypeResponseIncomplete:
+		reason := "max_output_tokens"
+		if s.finishReason == "content_filter" {
+			reason = "content_filter"
+		}
+		response.IncompleteDetails = &ResponseIncompleteDetails{Reason: reason}
+	case StreamEventTypeResponseFailed:
+		code := "invalid_finish_reason"
+		message := "upstream returned an unsupported finish reason"
+		if s.finishReason == "error" {
+			code = "response_failed"
+			message = "upstream failed to generate a response"
+		} else if s.finishReason == "canceled" || s.finishReason == "cancelled" {
+			code = "response_cancelled"
+			message = "upstream cancelled the response"
+		} else if s.finishReason != "" {
+			message += ": " + s.finishReason
+		}
+		response.Error = &Error{
+			Type:    "api_error",
+			Code:    code,
+			Message: message,
+		}
+	}
+
+	if err := s.enqueueEvent(&StreamEvent{Type: eventType, Response: response}); err != nil {
+		return fmt.Errorf("failed to enqueue %s event: %w", eventType, err)
+	}
+
+	s.responseTerminalEmitted = true
+
+	return nil
 }
 
 func (s *responsesInboundStream) mergeTransformerMetadata(metadata map[string]any) {
@@ -995,10 +1039,10 @@ func (s *responsesInboundStream) closeCurrentOutputItem() error {
 }
 
 func (s *responsesInboundStream) emitStreamErrorEvent(err error) error {
-	code, message := classifyStreamError(err)
+	responseErr := classifyStreamError(err)
 
 	if s.hasResponseCreated {
-		response := s.buildFailedResponse(code, message)
+		response := s.buildFailedResponse(responseErr)
 		if err := s.enqueueEvent(&StreamEvent{
 			Type:     StreamEventTypeResponseFailed,
 			Response: response,
@@ -1008,8 +1052,8 @@ func (s *responsesInboundStream) emitStreamErrorEvent(err error) error {
 	} else {
 		if err := s.enqueueEvent(&StreamEvent{
 			Type:    StreamEventTypeError,
-			Code:    code,
-			Message: message,
+			Code:    responseErr.Code,
+			Message: responseErr.Message,
 		}); err != nil {
 			return err
 		}
@@ -1020,48 +1064,69 @@ func (s *responsesInboundStream) emitStreamErrorEvent(err error) error {
 	return nil
 }
 
-func classifyStreamError(err error) (code, message string) {
-	code = "stream_error"
-	message = err.Error()
+func classifyStreamError(err error) *Error {
+	responseErr := &Error{
+		Type:    "server_error",
+		Code:    "stream_error",
+		Message: err.Error(),
+	}
 
 	if errors.Is(err, io.EOF) {
-		code = "upstream_eof"
-		message = "upstream connection closed unexpectedly"
-		return code, message
+		responseErr.Code = "upstream_eof"
+		responseErr.Message = "upstream connection closed unexpectedly"
+		return responseErr
 	}
 
 	if errors.Is(err, context.Canceled) {
-		code = "client_cancel"
-		message = "client disconnected"
-		return code, message
+		responseErr.Code = "client_cancel"
+		responseErr.Message = "client disconnected"
+		return responseErr
 	}
 
 	if errors.Is(err, context.DeadlineExceeded) {
-		code = "timeout"
-		message = "request timeout"
-		return code, message
+		responseErr.Code = "timeout"
+		responseErr.Message = "request timeout"
+		return responseErr
+	}
+
+	var llmErr *llm.ResponseError
+	if errors.As(err, &llmErr) {
+		responseErr.Code = llmErr.Detail.Code
+		responseErr.Message = llmErr.Detail.Message
+		responseErr.Type = llmErr.Detail.Type
+		if responseErr.Code == "" {
+			responseErr.Code = "upstream_error"
+		}
+		if responseErr.Message == "" {
+			responseErr.Message = "upstream request failed"
+		}
+		if responseErr.Type == "" {
+			responseErr.Type = "api_error"
+		}
+
+		return responseErr
 	}
 
 	var httpErr *httpclient.Error
 	if errors.As(err, &httpErr) {
-		code = "api_error"
-		message = string(httpErr.Body)
-		if message == "" {
-			message = httpErr.Status
+		responseErr.Code = "api_error"
+		responseErr.Message = string(httpErr.Body)
+		if responseErr.Message == "" {
+			responseErr.Message = httpErr.Status
 		}
-		return code, message
+		return responseErr
 	}
 
 	if errors.Is(err, ErrStreamIncomplete) {
-		code = "incomplete_stream"
-		message = "stream ended without terminal event"
-		return code, message
+		responseErr.Code = "incomplete_stream"
+		responseErr.Message = "stream ended without terminal event"
+		return responseErr
 	}
 
-	return code, message
+	return responseErr
 }
 
-func (s *responsesInboundStream) buildFailedResponse(code, message string) *Response {
+func (s *responsesInboundStream) buildFailedResponse(responseErr *Error) *Response {
 	response := &Response{
 		Object:    "response",
 		ID:        s.responseID,
@@ -1069,11 +1134,7 @@ func (s *responsesInboundStream) buildFailedResponse(code, message string) *Resp
 		CreatedAt: s.createdAt,
 		Status:    lo.ToPtr("failed"),
 		Output:    []Item{},
-		Error: &Error{
-			Type:    "server_error",
-			Code:    code,
-			Message: message,
-		},
+		Error:     responseErr,
 	}
 
 	if s.aggregator != nil {

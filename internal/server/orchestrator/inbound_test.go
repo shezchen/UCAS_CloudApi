@@ -8,8 +8,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/looplj/axonhub/internal/authz"
 	"github.com/looplj/axonhub/internal/ent"
 	"github.com/looplj/axonhub/internal/ent/enttest"
+	"github.com/looplj/axonhub/internal/ent/request"
 	"github.com/looplj/axonhub/internal/pkg/xcache"
 	"github.com/looplj/axonhub/internal/server/biz"
 	"github.com/looplj/axonhub/llm"
@@ -153,7 +155,9 @@ func TestInboundPersistentStream_Close_WithCompleteResponse(t *testing.T) {
 	mockTransformer := &mockInboundTransformer{
 		aggregateResponseBody: []byte(`{"id":"chatcmpl-abc123","object":"chat.completion","created":1234567890,"model":"gpt-4","choices":[{"index":0,"message":{"role":"assistant","content":"Hello!"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`),
 		aggregateMeta: llm.ResponseMeta{
-			ID: "chatcmpl-abc123",
+			ID:        "chatcmpl-abc123",
+			Terminal:  true,
+			Completed: true,
 			Usage: &llm.Usage{
 				PromptTokens:     10,
 				CompletionTokens: 5,
@@ -260,15 +264,69 @@ func TestInboundPersistentStream_Close_WithAggregationError(t *testing.T) {
 	assert.True(t, mockStream.closed, "Stream should be closed")
 }
 
-func TestIsTerminalStreamEvent_AudioDoneEvents(t *testing.T) {
+func TestIsSuccessfulTerminalStreamEvent(t *testing.T) {
 	// OpenAI audio SSE streams have no [DONE] sentinel; terminal completion is
 	// signaled by typed *.done events surfaced via StreamEvent.Type.
-	require.True(t, isTerminalStreamEvent(&httpclient.StreamEvent{Type: "speech.audio.done"}))
-	require.True(t, isTerminalStreamEvent(&httpclient.StreamEvent{Type: "transcript.text.done"}))
-	require.True(t, isTerminalStreamEvent(&httpclient.StreamEvent{Type: httpclient.BinaryStreamDoneEventType}))
+	require.True(t, isSuccessfulTerminalStreamEvent(&httpclient.StreamEvent{Type: "speech.audio.done"}))
+	require.True(t, isSuccessfulTerminalStreamEvent(&httpclient.StreamEvent{Type: "transcript.text.done"}))
+	require.True(t, isSuccessfulTerminalStreamEvent(&httpclient.StreamEvent{Type: httpclient.BinaryStreamDoneEventType}))
+	require.True(t, isSuccessfulTerminalStreamEvent(&httpclient.StreamEvent{Type: "response.completed"}))
+	require.False(t, isSuccessfulTerminalStreamEvent(&httpclient.StreamEvent{Type: "response.incomplete"}))
+	require.False(t, isSuccessfulTerminalStreamEvent(&httpclient.StreamEvent{
+		Type: "response.completed",
+		Data: []byte(`{"type":"response.completed","response":{"status":"failed","error":{"message":"boom"}}}`),
+	}))
 
 	// Other events must not be treated as terminal.
-	require.False(t, isTerminalStreamEvent(&httpclient.StreamEvent{Type: "speech.audio.delta"}))
-	require.False(t, isTerminalStreamEvent(&httpclient.StreamEvent{Type: "transcript.text.delta"}))
-	require.False(t, isTerminalStreamEvent(&httpclient.StreamEvent{Type: "audio/mpeg"}))
+	require.False(t, isSuccessfulTerminalStreamEvent(&httpclient.StreamEvent{Type: "response.failed"}))
+	require.False(t, isSuccessfulTerminalStreamEvent(&httpclient.StreamEvent{Type: "response.cancelled"}))
+	require.False(t, isSuccessfulTerminalStreamEvent(&httpclient.StreamEvent{Type: "speech.audio.delta"}))
+	require.False(t, isSuccessfulTerminalStreamEvent(&httpclient.StreamEvent{Type: "transcript.text.delta"}))
+	require.False(t, isSuccessfulTerminalStreamEvent(&httpclient.StreamEvent{Type: "audio/mpeg"}))
+}
+
+func TestInboundPersistentStream_Close_IncompleteTerminalPersistsFailedRequest(t *testing.T) {
+	client := enttest.NewEntClient(t, "sqlite3", "file:ent?mode=memory&_fk=0")
+	defer client.Close()
+
+	ctx := authz.WithTestBypass(context.Background())
+	ctx = ent.NewContext(ctx, client)
+	project := createTestProject(t, ctx, client)
+	channel := createTestChannel(t, ctx, client)
+	requestService := createTestRequestService(t, client)
+
+	req, err := client.Request.Create().
+		SetProjectID(project.ID).
+		SetChannelID(channel.ID).
+		SetModelID("gpt-5.6-sol").
+		SetStatus(request.StatusPending).
+		SetRequestBody([]byte(`{"stream":true}`)).
+		Save(ctx)
+	require.NoError(t, err)
+
+	stream := &mockStream{events: []*httpclient.StreamEvent{{
+		Type: "response.incomplete",
+		Data: []byte(`{"type":"response.incomplete","response":{"id":"resp_partial","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}`),
+	}}}
+	transformer := &mockInboundTransformer{
+		aggregateResponseBody: []byte(`{"id":"resp_partial","status":"incomplete"}`),
+		aggregateMeta: llm.ResponseMeta{
+			ID:               "resp_partial",
+			Terminal:         true,
+			Completed:        false,
+			ProtocolStatus:   "incomplete",
+			IncompleteReason: "max_output_tokens",
+		},
+	}
+	state := &PersistenceState{}
+	persistent := NewInboundPersistentStream(ctx, stream, req, nil, requestService, transformer, nil, state)
+	for persistent.Next() {
+		_ = persistent.Current()
+	}
+	require.NoError(t, persistent.Close())
+
+	stored, err := client.Request.Get(ctx, req.ID)
+	require.NoError(t, err)
+	require.Equal(t, request.StatusFailed, stored.Status)
+	require.False(t, state.StreamCompleted)
 }

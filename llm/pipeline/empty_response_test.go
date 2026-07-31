@@ -105,6 +105,46 @@ func TestHasResponseContent(t *testing.T) {
 	})
 }
 
+func TestPreReadLlmStream_IncompleteTerminalBeforeContentRemainsRetryable(t *testing.T) {
+	p := &pipeline{
+		maxChannelRetries:      1,
+		emptyResponseDetection: true,
+	}
+	stream := streams.SliceStream([]*llm.Response{
+		{ProtocolStatus: "incomplete", IncompleteReason: "max_output_tokens", Choices: []llm.Choice{{FinishReason: lo.ToPtr("length")}}},
+		llm.DoneResponse,
+	})
+
+	result, err := p.preReadLlmStream(context.Background(), stream, nil)
+	require.Nil(t, result)
+	require.ErrorIs(t, err, ErrEmptyResponse)
+}
+
+func TestPreReadLlmStream_IncompleteAfterContentIsNotReplayed(t *testing.T) {
+	p := &pipeline{
+		maxChannelRetries:      1,
+		emptyResponseDetection: true,
+	}
+	content := &llm.Response{Choices: []llm.Choice{{
+		Delta: &llm.Message{Content: llm.MessageContent{Content: lo.ToPtr("partial")}},
+	}}}
+	incomplete := &llm.Response{
+		ProtocolStatus:   "incomplete",
+		IncompleteReason: "max_output_tokens",
+		Choices:          []llm.Choice{{FinishReason: lo.ToPtr("length")}},
+	}
+
+	result, err := p.preReadLlmStream(context.Background(), streams.SliceStream([]*llm.Response{
+		content,
+		incomplete,
+		llm.DoneResponse,
+	}), nil)
+	require.NoError(t, err)
+	actual, err := streams.All(result)
+	require.NoError(t, err)
+	require.Equal(t, []*llm.Response{content, incomplete, llm.DoneResponse}, actual)
+}
+
 func TestPipeline_Process_StreamEmptyResponseDetection(t *testing.T) {
 	ctx := context.Background()
 

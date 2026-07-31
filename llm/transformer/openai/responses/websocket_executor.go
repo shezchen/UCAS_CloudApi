@@ -123,11 +123,9 @@ func (e *WebSocketExecutor) Do(ctx context.Context, request *httpclient.Request)
 		return nil, err
 	}
 
-	// Response-level terminal events (response.failed, response.cancelled,
-	// response.incomplete) are valid Responses API payloads, not transport
-	// failures. Keep them as HTTP 200 response objects so callers can inspect
-	// body.status/error/incomplete_details instead of retrying or disabling the
-	// channel as if the WebSocket transport failed.
+	// Successful and incomplete response terminals remain HTTP 200 response
+	// objects. Failed and cancelled terminals are converted by aggregation into
+	// a typed upstream error so the pipeline can fail over before committing.
 	return &httpclient.Response{
 		StatusCode: http.StatusOK,
 		Headers: http.Header{
@@ -147,19 +145,10 @@ func TopLevelWebSocketError(chunks []*httpclient.StreamEvent) error {
 
 		var event StreamEvent
 		if err := json.Unmarshal(chunk.Data, &event); err != nil {
-			return fmt.Errorf("websocket error event")
-		}
-		if event.Code != "" && event.Message != "" {
-			return fmt.Errorf("websocket error event: %s: %s", event.Code, event.Message)
-		}
-		if event.Message != "" {
-			return fmt.Errorf("websocket error event: %s", event.Message)
-		}
-		if event.Code != "" {
-			return fmt.Errorf("websocket error event: %s", event.Code)
+			return newUpstreamStreamEventError(nil)
 		}
 
-		return fmt.Errorf("websocket error event")
+		return newUpstreamStreamEventError(&event)
 	}
 
 	return nil

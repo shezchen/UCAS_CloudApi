@@ -2,12 +2,15 @@ package responses
 
 import (
 	"encoding/json"
+	"net/http"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/looplj/axonhub/llm"
 	"github.com/looplj/axonhub/llm/httpclient"
 	"github.com/looplj/axonhub/llm/internal/pkg/xtest"
 )
@@ -43,10 +46,16 @@ func TestAggregateStreamChunks(t *testing.T) {
 }
 
 func TestAggregateStreamChunks_CancelledFallbackUsesCanonicalStatus(t *testing.T) {
-	resultBytes, _, err := AggregateStreamChunks(t.Context(), []*httpclient.StreamEvent{
+	resultBytes, meta, err := AggregateStreamChunks(t.Context(), []*httpclient.StreamEvent{
 		{Type: "response.cancelled", Data: []byte(`{"type":"response.cancelled","response":{"id":"resp_canceled","object":"response","created_at":1700000000,"model":"gpt-5","output":[]}}`)},
 	})
-	require.NoError(t, err)
+	var responseErr *llm.ResponseError
+	require.ErrorAs(t, err, &responseErr)
+	require.Equal(t, http.StatusBadGateway, responseErr.StatusCode)
+	require.True(t, meta.Terminal)
+	require.False(t, meta.Completed)
+	require.Equal(t, "canceled", meta.ProtocolStatus)
+	require.Empty(t, meta.IncompleteReason)
 
 	var body Response
 	require.NoError(t, json.Unmarshal(resultBytes, &body))
@@ -59,7 +68,8 @@ func TestAggregateStreamChunks_CancelledSnapshotPreservesStatus(t *testing.T) {
 		{Type: "response.created", Data: []byte(`{"type":"response.created","response":{"id":"resp_canceled","object":"response","created_at":1700000000,"model":"gpt-5","status":"in_progress","output":[]}}`)},
 		{Type: "response.cancelled", Data: []byte(`{"type":"response.cancelled","response":{"id":"resp_canceled","object":"response","created_at":1700000001,"model":"gpt-5-codex","status":"canceled","output":[]}}`)},
 	})
-	require.NoError(t, err)
+	var responseErr *llm.ResponseError
+	require.ErrorAs(t, err, &responseErr)
 
 	var body Response
 	require.NoError(t, json.Unmarshal(resultBytes, &body))
@@ -68,6 +78,44 @@ func TestAggregateStreamChunks_CancelledSnapshotPreservesStatus(t *testing.T) {
 	require.Equal(t, int64(1700000001), body.CreatedAt)
 	require.NotNil(t, body.Status)
 	require.Equal(t, "canceled", *body.Status)
+}
+
+func TestAggregateStreamChunks_FailedUsageCannotOverrideFailure(t *testing.T) {
+	resultBytes, meta, err := AggregateStreamChunks(t.Context(), []*httpclient.StreamEvent{
+		{Type: "response.created", Data: []byte(`{"type":"response.created","response":{"id":"resp_failed","object":"response","created_at":1700000000,"model":"gpt-5","status":"in_progress","output":[]}}`)},
+		{Type: "response.failed", Data: []byte(`{"type":"response.failed","response":{"id":"resp_failed","object":"response","created_at":1700000000,"model":"gpt-5","status":"failed","output":[],"usage":{"input_tokens":20,"output_tokens":7,"total_tokens":27},"error":{"type":"server_error","code":"upstream_broken","message":"provider failed after usage"}}}`)},
+	})
+
+	var responseErr *llm.ResponseError
+	require.ErrorAs(t, err, &responseErr)
+	require.Equal(t, http.StatusBadGateway, responseErr.StatusCode)
+	require.Equal(t, "upstream_broken", responseErr.Detail.Code)
+	require.Equal(t, "provider failed after usage", responseErr.Detail.Message)
+	require.True(t, meta.Terminal)
+	require.False(t, meta.Completed)
+	require.NotNil(t, meta.Usage)
+	require.Equal(t, int64(7), meta.Usage.CompletionTokens)
+
+	var body Response
+	require.NoError(t, json.Unmarshal(resultBytes, &body))
+	require.Equal(t, "failed", lo.FromPtr(body.Status))
+}
+
+func TestAggregateStreamChunks_IncompleteIsTerminalButNotCompleted(t *testing.T) {
+	resultBytes, meta, err := AggregateStreamChunks(t.Context(), []*httpclient.StreamEvent{
+		{Type: "response.incomplete", Data: []byte(`{"type":"response.incomplete","response":{"id":"resp_incomplete","object":"response","created_at":1700000000,"model":"gpt-5","status":"incomplete","output":[],"usage":{"input_tokens":20,"output_tokens":7,"total_tokens":27},"incomplete_details":{"reason":"max_output_tokens"}}}`)},
+	})
+	require.NoError(t, err)
+	require.True(t, meta.Terminal)
+	require.False(t, meta.Completed)
+	require.Equal(t, "incomplete", meta.ProtocolStatus)
+	require.Equal(t, "max_output_tokens", meta.IncompleteReason)
+
+	var body Response
+	require.NoError(t, json.Unmarshal(resultBytes, &body))
+	require.Equal(t, "incomplete", lo.FromPtr(body.Status))
+	require.NotNil(t, body.IncompleteDetails)
+	require.Equal(t, "max_output_tokens", body.IncompleteDetails.Reason)
 }
 
 func TestAggregateStreamChunks_WithTestData(t *testing.T) {

@@ -127,6 +127,7 @@ func AggregateStreamChunks(ctx context.Context, chunks []*httpclient.StreamEvent
 		lastChunkResponse *Response
 		usage             *Usage
 		systemFingerprint string
+		sawFinishReason   bool
 		// Map to track choices by their index
 		choicesAggs = make(map[int]*choiceAggregator)
 		// Map to track unique citations
@@ -228,6 +229,7 @@ func AggregateStreamChunks(ctx context.Context, chunks []*httpclient.StreamEvent
 			// Capture finish reason
 			if choice.FinishReason != nil {
 				choiceAgg.finishReason = choice.FinishReason
+				sawFinishReason = true
 			}
 		}
 
@@ -386,7 +388,9 @@ func AggregateStreamChunks(ctx context.Context, chunks []*httpclient.StreamEvent
 	}
 
 	return data, llm.ResponseMeta{
-		ID:    response.ID,
-		Usage: responseUsage,
+		ID:        response.ID,
+		Usage:     responseUsage,
+		Terminal:  sawFinishReason,
+		Completed: sawFinishReason,
 	}, nil
 }

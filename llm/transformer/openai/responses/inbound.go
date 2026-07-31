@@ -71,6 +71,15 @@ func (t *InboundTransformer) TransformResponse(ctx context.Context, chatResp *ll
 
 	// Convert to Responses API format
 	resp := convertToResponsesAPIResponse(chatResp)
+	if resp.Status != nil {
+		status := strings.ToLower(strings.TrimSpace(*resp.Status))
+		if status != "completed" {
+			chatResp.ProtocolStatus = status
+		}
+	}
+	if resp.IncompleteDetails != nil {
+		chatResp.IncompleteReason = strings.TrimSpace(resp.IncompleteDetails.Reason)
+	}
 
 	body, err := json.Marshal(resp)
 	if err != nil {

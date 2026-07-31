@@ -33,6 +33,7 @@ type streamAggregator struct {
 	// Terminal response details
 	responseError     *Error
 	incompleteDetails *ResponseIncompleteDetails
+	terminalType      StreamEventType
 }
 
 // aggregatedItem holds the accumulated state for an output item.
@@ -217,14 +218,27 @@ func AggregateStreamChunks(_ context.Context, chunks []*httpclient.StreamEvent) 
 	}
 
 	meta := llm.ResponseMeta{
-		ID: agg.responseID,
+		ID:               agg.responseID,
+		Terminal:         agg.terminalType != "",
+		Completed:        agg.terminalType == StreamEventTypeResponseCompleted,
+		ProtocolStatus:   strings.ToLower(strings.TrimSpace(agg.status)),
+		IncompleteReason: strings.TrimSpace(lo.FromPtr(agg.incompleteDetails).Reason),
 	}
 
 	if agg.usage != nil {
 		meta.Usage = agg.usage.ToUsage()
 	}
 
-	return body, meta, nil
+	switch agg.terminalType {
+	case StreamEventTypeError:
+		return body, meta, newUpstreamResponseError("failed", agg.responseError)
+	case StreamEventTypeResponseFailed:
+		return body, meta, newUpstreamResponseError("failed", agg.responseError)
+	case StreamEventTypeResponseCancelled:
+		return body, meta, newUpstreamResponseError("cancelled", agg.responseError)
+	default:
+		return body, meta, nil
+	}
 }
 
 //nolint:gocognit,maintidx // Event processing is inherently complex.
@@ -518,30 +532,63 @@ func (a *streamAggregator) processEvent(ev *StreamEvent) {
 		}
 
 	case StreamEventTypeResponseCompleted:
-		a.status = "completed"
-		if ev.Response != nil {
-			a.previousResponseID = ev.Response.PreviousResponseID
-			if ev.Response.Usage != nil {
-				a.usage = ev.Response.Usage
-			}
+		a.applyResponseSnapshot(ev.Response)
+		if responseTerminalError(ev.Response) != nil {
+			a.terminalType = StreamEventTypeResponseFailed
+			a.status = "failed"
+		} else {
+			a.terminalType = StreamEventTypeResponseCompleted
+			a.status = "completed"
 		}
 
 	case StreamEventTypeResponseFailed:
+		a.terminalType = StreamEventTypeResponseFailed
 		a.applyResponseSnapshot(ev.Response)
 		if ev.Response == nil || ev.Response.Status == nil {
 			a.status = "failed"
 		}
+		if a.responseError == nil {
+			a.responseError = &Error{
+				Type:    "api_error",
+				Code:    "response_failed",
+				Message: "upstream failed to generate a response",
+			}
+		}
 
 	case StreamEventTypeResponseCancelled:
+		a.terminalType = StreamEventTypeResponseCancelled
 		a.applyResponseSnapshot(ev.Response)
 		if ev.Response == nil || ev.Response.Status == nil {
 			a.status = "canceled"
 		}
+		if a.responseError == nil {
+			a.responseError = &Error{
+				Type:    "api_error",
+				Code:    "response_cancelled",
+				Message: "upstream cancelled the response",
+			}
+		}
 
 	case StreamEventTypeResponseIncomplete:
+		a.terminalType = StreamEventTypeResponseIncomplete
 		a.applyResponseSnapshot(ev.Response)
 		if ev.Response == nil || ev.Response.Status == nil {
 			a.status = "incomplete"
+		}
+
+	case StreamEventTypeError:
+		a.terminalType = StreamEventTypeError
+		a.status = "failed"
+		a.responseError = &Error{
+			Type:    "api_error",
+			Code:    ev.Code,
+			Message: ev.Message,
+		}
+		if a.responseError.Code == "" {
+			a.responseError.Code = "upstream_error"
+		}
+		if a.responseError.Message == "" {
+			a.responseError.Message = "upstream returned an error event"
 		}
 	}
 }

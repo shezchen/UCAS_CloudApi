@@ -76,13 +76,19 @@ func (m *modelCircuitBreakerTracker) OnOutboundLlmResponse(ctx context.Context, 
 		return response, nil
 	}
 
-	if !pipeline.HasResponseContent(response) {
-		return response, nil
-	}
-
 	channel := m.outbound.GetCurrentChannel()
 	modelID := m.outbound.GetRequestedModel()
 	if channel == nil || modelID == "" {
+		return response, nil
+	}
+	if terminal, successful := llmTerminalOutcome(response); terminal && !successful {
+		m.modelCircuitBreaker.RecordError(ctx, channel.ID, modelID, m.attemptWasProbe)
+		m.probeActive = false
+		m.attemptWasProbe = false
+
+		return response, nil
+	}
+	if !pipeline.HasResponseContent(response) {
 		return response, nil
 	}
 
@@ -187,6 +193,7 @@ type probeReleasingStream struct {
 	modelID             string
 	wasProbe            bool
 	semanticOutput      bool
+	terminalFailure     bool
 }
 
 func (s *probeReleasingStream) Next() bool {
@@ -207,13 +214,20 @@ func (s *probeReleasingStream) Current() *llm.Response {
 		s.semanticOutput = true
 	}
 
-	if !s.recorded && s.semanticOutput && pipeline.IsTerminalLlmStreamEvent(event) {
-		s.modelCircuitBreaker.RecordSuccess(s.ctx, s.channelID, s.modelID)
-		if s.onSuccess != nil {
-			s.onSuccess()
+	if !s.recorded {
+		if terminal, successful := llmTerminalOutcome(event); terminal && !successful {
+			s.terminalFailure = true
+			s.modelCircuitBreaker.RecordError(s.ctx, s.channelID, s.modelID, s.wasProbe)
+			s.recorded = true
+			s.releaseOnce()
+		} else if successful && s.semanticOutput {
+			s.modelCircuitBreaker.RecordSuccess(s.ctx, s.channelID, s.modelID)
+			if s.onSuccess != nil {
+				s.onSuccess()
+			}
+			s.recorded = true
+			s.releaseOnce()
 		}
-		s.recorded = true
-		s.releaseOnce()
 	}
 
 	return event
@@ -224,8 +238,10 @@ func (s *probeReleasingStream) Err() error {
 }
 
 func (s *probeReleasingStream) Close() error {
-	if !s.recorded && s.semanticOutput {
-		if s.state != nil && s.state.StreamCompleted {
+	if !s.recorded && (s.semanticOutput || s.terminalFailure) {
+		if s.terminalFailure {
+			s.modelCircuitBreaker.RecordError(s.ctx, s.channelID, s.modelID, s.wasProbe)
+		} else if s.state != nil && s.state.StreamCompleted {
 			s.modelCircuitBreaker.RecordSuccess(s.ctx, s.channelID, s.modelID)
 			if s.onSuccess != nil {
 				s.onSuccess()

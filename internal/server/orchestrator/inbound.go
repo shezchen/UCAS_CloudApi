@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 
 	"github.com/looplj/axonhub/internal/dumper"
@@ -81,8 +82,12 @@ func (ts *InboundPersistentStream) Current() *httpclient.StreamEvent {
 // isTerminalStreamEvent checks if the event represents the end of a successfully completed stream.
 // For Chat Completions API this is the raw [DONE] event; for Responses API this is response.completed.
 func isTerminalStreamEvent(event *httpclient.StreamEvent) bool {
+	if event == nil {
+		return false
+	}
+
 	// For chat completions, check for [DONE] event
-	return bytes.Equal(event.Data, llm.DoneStreamEvent.Data) ||
+	if bytes.Equal(bytes.TrimSpace(event.Data), llm.DoneStreamEvent.Data) ||
 		// For Responses API, check for response.completed event
 		event.Type == "response.completed" ||
 		// For Anthropic Messages API, check for message_stop event
@@ -91,7 +96,21 @@ func isTerminalStreamEvent(event *httpclient.StreamEvent) bool {
 		// rely on the terminal *.done event surfaced as StreamEvent.Type.
 		event.Type == "speech.audio.done" ||
 		event.Type == "transcript.text.done" ||
-		event.Type == httpclient.BinaryStreamDoneEventType
+		event.Type == httpclient.BinaryStreamDoneEventType {
+		return true
+	}
+
+	// Some OpenAI-compatible providers omit the SSE `event:` field and carry
+	// the event type only in the JSON data. Accept that wire-compatible form so
+	// a valid response.completed event is not reported as a dropped stream.
+	var envelope struct {
+		Type string `json:"type"`
+	}
+	if len(event.Data) > 0 && json.Unmarshal(event.Data, &envelope) == nil {
+		return envelope.Type == "response.completed"
+	}
+
+	return false
 }
 
 func (ts *InboundPersistentStream) Err() error {

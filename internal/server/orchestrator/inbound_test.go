@@ -227,6 +227,18 @@ func TestInboundPersistentStream_Close_WithTerminalEvent(t *testing.T) {
 	assert.True(t, mockStream.closed, "Stream should be closed")
 }
 
+func TestIsTerminalStreamEvent_ResponsesTypeInData(t *testing.T) {
+	t.Parallel()
+
+	require.True(t, isTerminalStreamEvent(&httpclient.StreamEvent{
+		Data: []byte(`{"type":"response.completed","response":{"status":"completed"}}`),
+	}))
+	require.False(t, isTerminalStreamEvent(&httpclient.StreamEvent{
+		Data: []byte(`{"type":"response.in_progress"}`),
+	}))
+	require.False(t, isTerminalStreamEvent(nil))
+}
+
 // TestInboundPersistentStream_Close_WithAggregationError tests the error path:
 // aggregation fails but fallback behavior still works (persistResponseChunks called in final block).
 func TestInboundPersistentStream_Close_WithAggregationError(t *testing.T) {

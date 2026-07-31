@@ -389,7 +389,104 @@ func TestPipeline_Process_RetryLogic(t *testing.T) {
 		require.Error(t, err)
 		require.Nil(t, res)
 		require.Equal(t, 4, execCalls)
+
+		var exhausted *UpstreamCandidatesExhaustedError
+		require.ErrorAs(t, err, &exhausted)
+		require.Equal(t, 4, exhausted.AttemptCount)
+		require.Equal(t, 4, exhausted.CategoryCounts[UpstreamAttemptUnavailable])
 	})
+}
+
+func TestPipeline_Process_AggregatesTerraFailureChainEndingInUpstream402(t *testing.T) {
+	ctx := context.Background()
+	inbound := &mockInbound{}
+
+	upstream402 := &llm.ResponseError{
+		StatusCode: http.StatusPaymentRequired,
+		Detail: llm.ErrorDetail{
+			Message: "You have exceeded your monthly quota",
+			Type:    "insufficient_quota",
+		},
+	}
+	attemptErrors := []error{
+		ErrStreamIncomplete,
+		ErrStreamIncomplete,
+		ErrStreamIncomplete,
+		&llm.ResponseError{
+			StatusCode: http.StatusUnauthorized,
+			Detail: llm.ErrorDetail{
+				Message: "authentication token is invalid",
+				Type:    "authentication_error",
+			},
+		},
+		upstream402,
+	}
+
+	execCalls := 0
+	executor := &mockExecutor{
+		do: func(ctx context.Context, req *httpclient.Request) (*httpclient.Response, error) {
+			err := attemptErrors[execCalls]
+			execCalls++
+
+			return nil, err
+		},
+	}
+	outbound := &mockOutbound{
+		canRetry:        func(error) bool { return false },
+		hasMoreChannels: func() bool { return execCalls < len(attemptErrors) },
+	}
+
+	p := NewFactory(executor).Pipeline(inbound, outbound, WithRetry(len(attemptErrors)-1, 0, 0))
+	res, err := p.Process(ctx, &httpclient.Request{})
+
+	require.Error(t, err)
+	require.Nil(t, res)
+	require.Equal(t, len(attemptErrors), execCalls)
+
+	var exhausted *UpstreamCandidatesExhaustedError
+	require.ErrorAs(t, err, &exhausted)
+	require.Equal(t, 5, exhausted.AttemptCount)
+	require.Equal(t, map[UpstreamAttemptFailureCategory]int{
+		UpstreamAttemptIncompleteStream: 3,
+		UpstreamAttemptAuthentication:   1,
+		UpstreamAttemptQuota:            1,
+	}, exhausted.CategoryCounts)
+	require.ErrorIs(t, exhausted.LastErr, upstream402)
+}
+
+func TestPipeline_Process_SingleAttemptKeepsOriginalError(t *testing.T) {
+	originalErr := &llm.ResponseError{
+		StatusCode: http.StatusPaymentRequired,
+		Detail: llm.ErrorDetail{
+			Message: "You have exceeded your monthly quota",
+		},
+	}
+	executor := &mockExecutor{
+		do: func(context.Context, *httpclient.Request) (*httpclient.Response, error) {
+			return nil, originalErr
+		},
+	}
+
+	p := NewFactory(executor).Pipeline(&mockInbound{}, &mockOutbound{})
+	res, err := p.Process(context.Background(), &httpclient.Request{})
+
+	require.Nil(t, res)
+	require.ErrorIs(t, err, originalErr)
+	var exhausted *UpstreamCandidatesExhaustedError
+	require.NotErrorAs(t, err, &exhausted)
+}
+
+func TestClassifyUpstreamAttemptFailure_ModelNotSupportedCode(t *testing.T) {
+	err := WrapUpstreamError(&llm.ResponseError{
+		StatusCode: http.StatusUnprocessableEntity,
+		Detail: llm.ErrorDetail{
+			Message: "The selected model cannot be used by this account",
+			Type:    "invalid_request_error",
+			Code:    "model_not_supported",
+		},
+	})
+
+	require.Equal(t, UpstreamAttemptModelNotSupported, classifyUpstreamAttemptFailure(err))
 }
 
 func TestPipeline_Process_RetryPreservesOriginalStreamIntent(t *testing.T) {

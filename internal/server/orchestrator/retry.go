@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"regexp"
 	"slices"
@@ -13,7 +14,10 @@ import (
 	"github.com/looplj/axonhub/internal/server/biz"
 	"github.com/looplj/axonhub/llm"
 	"github.com/looplj/axonhub/llm/httpclient"
+	"github.com/looplj/axonhub/llm/pipeline"
 )
+
+const upstreamCandidatesExhausted = "upstream_candidates_exhausted"
 
 func isRetryableError(err error) bool {
 	if err == nil {
@@ -157,6 +161,84 @@ func ExtractStatusCodeFromError(err error) int {
 	}
 
 	return 0
+}
+
+// finalizeUpstreamCandidatesExhaustedError converts the pipeline's private,
+// in-memory attempt counters into a safe client-facing 503. The final provider
+// detail is sanitized with the same policy used by the six-hour activity view.
+// The second return value remains the real final error so the last execution
+// keeps its actual provider status and diagnostic instead of being overwritten
+// by the aggregate summary.
+func finalizeUpstreamCandidatesExhaustedError(err error) (clientErr, lastExecutionErr error) {
+	var exhausted *pipeline.UpstreamCandidatesExhaustedError
+	if !errors.As(err, &exhausted) {
+		return err, err
+	}
+
+	lastErr := exhausted.LastErr
+	if lastErr == nil {
+		lastErr = err
+	}
+
+	counts := exhausted.CategoryCounts
+	orderedCategories := []struct {
+		category pipeline.UpstreamAttemptFailureCategory
+		singular string
+		plural   string
+	}{
+		{pipeline.UpstreamAttemptIncompleteStream, "incomplete stream", "incomplete streams"},
+		{pipeline.UpstreamAttemptAuthentication, "authentication failure", "authentication failures"},
+		{pipeline.UpstreamAttemptQuota, "upstream quota exhaustion", "upstream quota exhaustions"},
+		{pipeline.UpstreamAttemptModelNotSupported, "model-not-supported rejection", "model-not-supported rejections"},
+		{pipeline.UpstreamAttemptRateLimited, "rate-limit response", "rate-limit responses"},
+		{pipeline.UpstreamAttemptTimeout, "upstream timeout", "upstream timeouts"},
+		{pipeline.UpstreamAttemptUnavailable, "upstream unavailable error", "upstream unavailable errors"},
+		{pipeline.UpstreamAttemptOther, "other upstream error", "other upstream errors"},
+	}
+	parts := make([]string, 0, len(orderedCategories))
+	for _, entry := range orderedCategories {
+		if count := counts[entry.category]; count > 0 {
+			label := entry.plural
+			if count == 1 {
+				label = entry.singular
+			}
+			parts = append(parts, fmt.Sprintf("%d %s", count, label))
+		}
+	}
+
+	message := fmt.Sprintf(
+		"All upstream candidates failed after %d attempts: %s.",
+		exhausted.AttemptCount,
+		strings.Join(parts, ", "),
+	)
+	if detail := biz.SanitizeCampusDiagnosticError(upstreamFailureDetail(lastErr)); detail != "" {
+		lastLabel := "Last upstream error"
+		if statusCode := ExtractStatusCodeFromError(lastErr); statusCode > 0 {
+			lastLabel = fmt.Sprintf("Last upstream error (HTTP %d)", statusCode)
+		}
+		message += " " + lastLabel + ": " + detail
+	}
+	if counts[pipeline.UpstreamAttemptQuota] > 0 {
+		message += " Upstream quota here means the shared provider channel's allowance, not the caller's campus daily/weekly quota or billing."
+	}
+
+	return &llm.ResponseError{
+		StatusCode: http.StatusServiceUnavailable,
+		Detail: llm.ErrorDetail{
+			Message: message,
+			Type:    upstreamCandidatesExhausted,
+			Code:    upstreamCandidatesExhausted,
+		},
+	}, lastErr
+}
+
+func upstreamFailureDetail(err error) string {
+	var responseErr *llm.ResponseError
+	if errors.As(err, &responseErr) && strings.TrimSpace(responseErr.Detail.Message) != "" {
+		return responseErr.Detail.Message
+	}
+
+	return ExtractErrorMessage(err)
 }
 
 func deriveLoadBalancerStrategy(retryPolicy *biz.RetryPolicy, apiKey *ent.APIKey) string {

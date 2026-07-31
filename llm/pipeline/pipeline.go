@@ -272,6 +272,8 @@ func (p *pipeline) Process(ctx context.Context, request *httpclient.Request) (*R
 	originalStream := llmRequest.Stream
 
 	var lastErr error
+	attemptCount := 0
+	attemptCategories := make(map[UpstreamAttemptFailureCategory]int)
 
 	channelSwitches := 0
 	sameChannelRetries := 0
@@ -286,6 +288,8 @@ func (p *pipeline) Process(ctx context.Context, request *httpclient.Request) (*R
 		}
 
 		lastErr = err
+		attemptCount++
+		attemptCategories[classifyUpstreamAttemptFailure(err)]++
 
 		// Stop retrying if the context is canceled or the deadline is exceeded.
 		if ctx.Err() != nil {
@@ -352,7 +356,15 @@ func (p *pipeline) Process(ctx context.Context, request *httpclient.Request) (*R
 		)
 	}
 
-	return nil, lastErr
+	if attemptCount <= 1 {
+		return nil, lastErr
+	}
+
+	return nil, &UpstreamCandidatesExhaustedError{
+		AttemptCount:   attemptCount,
+		CategoryCounts: attemptCategories,
+		LastErr:        lastErr,
+	}
 }
 
 func (p *pipeline) processRequest(ctx context.Context, request *llm.Request) (*Result, error) {

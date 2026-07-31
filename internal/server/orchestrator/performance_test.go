@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -425,4 +426,52 @@ func TestRecordPerformanceStream_IncompleteCommittedContentIsUnhealthy(t *testin
 	require.False(t, state.Perf.Success)
 	require.True(t, state.Perf.RequestCompleted)
 	require.Equal(t, 500, state.Perf.ResponseStatusCode)
+}
+
+func TestRecordPerformanceStream_GenericFinishReasonsWithContentAreHealthy(t *testing.T) {
+	for _, finishReason := range []string{"length", "content_filter", "error", "cancelled", "unknown"} {
+		t.Run(finishReason, func(t *testing.T) {
+			text := "partial"
+			state := &PersistenceState{
+				Perf: &biz.PerformanceRecord{StartTime: time.Now(), Stream: true},
+			}
+			stream := &recordPerformanceStream{
+				ctx: context.Background(),
+				stream: streams.SliceStream([]*llm.Response{
+					{Choices: []llm.Choice{{Delta: &llm.Message{Content: llm.MessageContent{Content: &text}}}}},
+					{Choices: []llm.Choice{{FinishReason: lo.ToPtr(finishReason)}}},
+					llm.DoneResponse,
+				}),
+				state: state,
+			}
+
+			for stream.Next() {
+				_ = stream.Current()
+			}
+			require.NoError(t, stream.Close())
+			require.True(t, state.Perf.Success)
+			require.True(t, state.Perf.RequestCompleted)
+			require.Zero(t, state.Perf.ResponseStatusCode)
+		})
+	}
+}
+
+func TestRecordPerformanceStream_ExplicitResponsesIncompleteWithContentIsHealthy(t *testing.T) {
+	text := "partial but usable"
+	state := &PersistenceState{Perf: &biz.PerformanceRecord{StartTime: time.Now(), Stream: true}}
+	stream := &recordPerformanceStream{
+		ctx: context.Background(),
+		stream: streams.SliceStream([]*llm.Response{
+			{Choices: []llm.Choice{{Delta: &llm.Message{Content: llm.MessageContent{Content: &text}}}}},
+			{ProtocolStatus: "incomplete", IncompleteReason: "max_output_tokens", Choices: []llm.Choice{{FinishReason: lo.ToPtr("length")}}},
+		}),
+		state: state,
+	}
+
+	for stream.Next() {
+		_ = stream.Current()
+	}
+	require.NoError(t, stream.Close())
+	require.True(t, state.Perf.Success)
+	require.True(t, state.Perf.RequestCompleted)
 }

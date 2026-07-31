@@ -603,30 +603,63 @@ func TestShouldForceStreamingForCandidate(t *testing.T) {
 	})
 }
 
-func TestIsCompletedAggregatedOutboundResponse(t *testing.T) {
-	t.Run("usage with completion tokens means completed", func(t *testing.T) {
-		require.True(t, isCompletedAggregated(llm.ResponseMeta{Usage: &llm.Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15}}))
+func TestIsTerminalAggregatedOutboundResponse(t *testing.T) {
+	t.Run("usage with completion tokens is not a terminal signal", func(t *testing.T) {
+		require.False(t, isTerminalAggregated(llm.ResponseMeta{Usage: &llm.Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15}}))
 	})
 
 	t.Run("usage with zero completion tokens is not completed", func(t *testing.T) {
-		require.False(t, isCompletedAggregated(llm.ResponseMeta{Usage: &llm.Usage{PromptTokens: 10, CompletionTokens: 0, TotalTokens: 10}}))
+		require.False(t, isTerminalAggregated(llm.ResponseMeta{Usage: &llm.Usage{PromptTokens: 10, CompletionTokens: 0, TotalTokens: 10}}))
 	})
 
 	t.Run("response id without usage is not completed", func(t *testing.T) {
-		require.False(t, isCompletedAggregated(llm.ResponseMeta{ID: "resp_123"}))
+		require.False(t, isTerminalAggregated(llm.ResponseMeta{ID: "resp_123"}))
 	})
 
 	t.Run("explicit completed flag is completed", func(t *testing.T) {
-		require.True(t, isCompletedAggregated(llm.ResponseMeta{ID: llm.SpeechStreamResponseID, Completed: true}))
+		require.True(t, isTerminalAggregated(llm.ResponseMeta{ID: llm.SpeechStreamResponseID, Completed: true}))
+	})
+
+	t.Run("incomplete response is terminal without being completed", func(t *testing.T) {
+		require.True(t, isTerminalAggregated(llm.ResponseMeta{ID: "resp_incomplete", Terminal: true}))
 	})
 
 	t.Run("speech stream aggregate id alone is not completed", func(t *testing.T) {
-		require.False(t, isCompletedAggregated(llm.ResponseMeta{ID: llm.SpeechStreamResponseID}))
+		require.False(t, isTerminalAggregated(llm.ResponseMeta{ID: llm.SpeechStreamResponseID}))
 	})
 
 	t.Run("missing usage and id is not completed", func(t *testing.T) {
-		require.False(t, isCompletedAggregated(llm.ResponseMeta{}))
+		require.False(t, isTerminalAggregated(llm.ResponseMeta{}))
 	})
+}
+
+func TestIsSuccessfulOutboundTerminalStreamEvent(t *testing.T) {
+	require.True(t, isSuccessfulOutboundTerminalStreamEvent(
+		llm.APIFormatOpenAIChatCompletion,
+		&httpclient.StreamEvent{Data: []byte("  [DONE]\n")},
+	))
+	require.False(t, isSuccessfulOutboundTerminalStreamEvent(
+		llm.APIFormatOpenAIResponse,
+		&httpclient.StreamEvent{Data: []byte("[DONE]")},
+	))
+	require.False(t, isSuccessfulOutboundTerminalStreamEvent(
+		llm.APIFormatOpenAIResponse,
+		&httpclient.StreamEvent{Type: "response.completed"},
+	))
+	require.True(t, isSuccessfulOutboundTerminalStreamEvent(
+		llm.APIFormatOpenAIResponse,
+		&httpclient.StreamEvent{
+			Type: "response.completed",
+			Data: []byte(`{"type":"response.completed","response":{"id":"resp_ok","status":"completed"}}`),
+		},
+	))
+	require.False(t, isSuccessfulOutboundTerminalStreamEvent(
+		llm.APIFormatOpenAIResponse,
+		&httpclient.StreamEvent{
+			Type: "response.completed",
+			Data: []byte(`{"type":"response.completed","response":{"id":"resp_partial","status":"incomplete"}}`),
+		},
+	))
 }
 
 type sliceEventStream struct {
@@ -715,8 +748,189 @@ func TestOutboundPersistentStream_Close_AggregatedResponsesCompletionHandling(t 
 		require.NoError(t, err)
 		require.NotEqual(t, requestexecution.StatusCompleted, dbExec.Status)
 		require.Equal(t, requestexecution.StatusFailed, dbExec.Status)
-		require.Contains(t, dbExec.ErrorMessage, "stream ended without terminal event or completed response")
-		require.False(t, state.StreamCompleted)
+		require.Contains(t, dbExec.ErrorMessage, "empty response detected")
+		require.False(t, state.OutboundStreamCompleted)
+	})
+
+	t.Run("response incomplete is terminal but execution remains failed", func(t *testing.T) {
+		client := enttest.NewEntClient(t, "sqlite3", "file:ent?mode=memory&_fk=0")
+		defer client.Close()
+
+		ctx := ent.NewContext(ctx, client)
+		project := createTestProject(t, ctx, client)
+		ch := createTestChannel(t, ctx, client)
+		_, requestService, _, usageLogService := setupTestServices(t, client)
+
+		req, err := client.Request.Create().
+			SetProjectID(project.ID).
+			SetChannelID(ch.ID).
+			SetModelID("gpt-5.6-sol").
+			SetStatus(request.StatusPending).
+			SetRequestBody([]byte(`{"stream":true}`)).
+			Save(ctx)
+		require.NoError(t, err)
+
+		exec, err := client.RequestExecution.Create().
+			SetRequestID(req.ID).
+			SetProjectID(project.ID).
+			SetChannelID(ch.ID).
+			SetModelID("gpt-5.6-sol").
+			SetRequestBody([]byte(`{"stream":true}`)).
+			SetFormat("openai/responses").
+			SetStatus(requestexecution.StatusPending).
+			SetStream(true).
+			Save(ctx)
+		require.NoError(t, err)
+
+		stream := &sliceEventStream{events: []*httpclient.StreamEvent{
+			{
+				Type: "response.output_text.delta",
+				Data: []byte(`{"type":"response.output_text.delta","delta":"partial"}`),
+			},
+			{
+				Type: "response.incomplete",
+				Data: []byte(`{"type":"response.incomplete","response":{"id":"resp_partial","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}`),
+			},
+		}}
+		transformer := &mockTransformer{
+			apiFormat:          llm.APIFormatOpenAIResponse,
+			aggregatedResponse: []byte(`{"id":"resp_partial","status":"incomplete"}`),
+			aggregatedMeta: llm.ResponseMeta{
+				ID:               "resp_partial",
+				Terminal:         true,
+				Completed:        false,
+				ProtocolStatus:   "incomplete",
+				IncompleteReason: "max_output_tokens",
+				Usage: &llm.Usage{
+					PromptTokens:     10,
+					CompletionTokens: 2,
+					TotalTokens:      12,
+				},
+			},
+		}
+		state := &PersistenceState{AttemptAccepted: true, AttemptSemanticOutput: true}
+		persistent := NewOutboundPersistentStream(ctx, stream, req, exec, requestService, usageLogService, transformer, nil, state)
+		for persistent.Next() {
+			_ = persistent.Current()
+		}
+		require.NoError(t, persistent.Close())
+
+		stored, err := client.RequestExecution.Get(ctx, exec.ID)
+		require.NoError(t, err)
+		require.Equal(t, requestexecution.StatusFailed, stored.Status)
+		require.Contains(t, stored.ErrorMessage, "upstream response incomplete: max_output_tokens")
+		require.Contains(t, stored.ErrorMessage, "response_incomplete")
+		require.False(t, state.OutboundStreamCompleted)
+		usageCount, err := client.UsageLog.Query().Count(ctx)
+		require.NoError(t, err)
+		require.Equal(t, 1, usageCount, "accepted partial output must still settle its real upstream usage")
+	})
+
+	t.Run("responses transport done without protocol terminal remains failed", func(t *testing.T) {
+		client := enttest.NewEntClient(t, "sqlite3", "file:ent?mode=memory&_fk=0")
+		defer client.Close()
+
+		ctx := ent.NewContext(ctx, client)
+		project := createTestProject(t, ctx, client)
+		ch := createTestChannel(t, ctx, client)
+		_, requestService, _, usageLogService := setupTestServices(t, client)
+
+		req, err := client.Request.Create().
+			SetProjectID(project.ID).
+			SetChannelID(ch.ID).
+			SetModelID("gpt-5.6-sol").
+			SetStatus(request.StatusPending).
+			SetRequestBody([]byte(`{"stream":true}`)).
+			Save(ctx)
+		require.NoError(t, err)
+		exec, err := client.RequestExecution.Create().
+			SetRequestID(req.ID).
+			SetProjectID(project.ID).
+			SetChannelID(ch.ID).
+			SetModelID("gpt-5.6-sol").
+			SetRequestBody([]byte(`{"stream":true}`)).
+			SetFormat("openai/responses").
+			SetStatus(requestexecution.StatusPending).
+			SetStream(true).
+			Save(ctx)
+		require.NoError(t, err)
+
+		stream := &sliceEventStream{events: []*httpclient.StreamEvent{
+			{Type: "response.created", Data: []byte(`{"type":"response.created","response":{"id":"resp_cut","status":"in_progress"}}`)},
+			{Type: "response.output_text.delta", Data: []byte(`{"type":"response.output_text.delta","delta":"partial"}`)},
+			{Data: []byte("[DONE]")},
+		}}
+		transformer := &mockTransformer{
+			apiFormat:          llm.APIFormatOpenAIResponse,
+			aggregatedResponse: []byte(`{"id":"resp_cut","status":"in_progress"}`),
+			aggregatedMeta: llm.ResponseMeta{
+				ID:             "resp_cut",
+				ProtocolStatus: "in_progress",
+				Usage: &llm.Usage{
+					PromptTokens:     20,
+					CompletionTokens: 1,
+					TotalTokens:      21,
+				},
+			},
+		}
+		state := &PersistenceState{AttemptAccepted: true, AttemptSemanticOutput: true}
+		persistent := NewOutboundPersistentStream(ctx, stream, req, exec, requestService, usageLogService, transformer, nil, state)
+		for persistent.Next() {
+			_ = persistent.Current()
+		}
+		require.NoError(t, persistent.Close())
+
+		stored, err := client.RequestExecution.Get(ctx, exec.ID)
+		require.NoError(t, err)
+		require.Equal(t, requestexecution.StatusFailed, stored.Status)
+		require.Contains(t, stored.ErrorMessage, llm.ErrStreamIncomplete.Error())
+		require.False(t, state.OutboundStreamCompleted)
+		usageCount, err := client.UsageLog.Query().Count(ctx)
+		require.NoError(t, err)
+		require.Equal(t, 1, usageCount, "already-delivered partial output remains metered")
+	})
+
+	t.Run("terminal and usage without semantic output do not settle", func(t *testing.T) {
+		client := enttest.NewEntClient(t, "sqlite3", "file:ent?mode=memory&_fk=0")
+		defer client.Close()
+
+		ctx := ent.NewContext(ctx, client)
+		project := createTestProject(t, ctx, client)
+		ch := createTestChannel(t, ctx, client)
+		_, requestService, _, usageLogService := setupTestServices(t, client)
+
+		req, err := client.Request.Create().SetProjectID(project.ID).SetChannelID(ch.ID).
+			SetModelID("gpt-4.1").SetStatus(request.StatusPending).SetRequestBody([]byte(`{"stream":true}`)).Save(ctx)
+		require.NoError(t, err)
+		exec, err := client.RequestExecution.Create().SetRequestID(req.ID).SetProjectID(project.ID).
+			SetChannelID(ch.ID).SetModelID("gpt-4.1").SetRequestBody([]byte(`{"stream":true}`)).
+			SetFormat("openai/chat_completions").SetStatus(requestexecution.StatusPending).SetStream(true).Save(ctx)
+		require.NoError(t, err)
+
+		stream := &sliceEventStream{events: []*httpclient.StreamEvent{{Data: []byte("[DONE]")}}}
+		transformer := &mockTransformer{
+			apiFormat:          llm.APIFormatOpenAIChatCompletion,
+			aggregatedResponse: []byte(`{"id":"chat_empty","choices":[]}`),
+			aggregatedMeta: llm.ResponseMeta{
+				ID:        "chat_empty",
+				Completed: true,
+				Usage:     &llm.Usage{PromptTokens: 10, TotalTokens: 10},
+			},
+		}
+		state := &PersistenceState{AttemptAccepted: true}
+		persistent := NewOutboundPersistentStream(ctx, stream, req, exec, requestService, usageLogService, transformer, nil, state)
+		for persistent.Next() {
+			_ = persistent.Current()
+		}
+		require.NoError(t, persistent.Close())
+
+		stored, err := client.RequestExecution.Get(ctx, exec.ID)
+		require.NoError(t, err)
+		require.Equal(t, requestexecution.StatusFailed, stored.Status)
+		require.Contains(t, stored.ErrorMessage, pipeline.ErrEmptyResponse.Error())
+		usageCount, err := client.UsageLog.Query().Count(ctx)
+		require.NoError(t, err)
+		require.Zero(t, usageCount, "empty pre-commit attempt must leave usage settlement to failover")
 	})
 
 	t.Run("aggregated completed response without terminal event is completed", func(t *testing.T) {
@@ -757,7 +971,9 @@ func TestOutboundPersistentStream_Close_AggregatedResponsesCompletionHandling(t 
 			apiFormat:          llm.APIFormatOpenAIResponse,
 			aggregatedResponse: aggregated,
 			aggregatedMeta: llm.ResponseMeta{
-				ID: "resp_456",
+				ID:        "resp_456",
+				Terminal:  true,
+				Completed: true,
 				Usage: &llm.Usage{
 					PromptTokens:     10,
 					CompletionTokens: 2,
@@ -765,7 +981,7 @@ func TestOutboundPersistentStream_Close_AggregatedResponsesCompletionHandling(t 
 				},
 			},
 		}
-		state := &PersistenceState{}
+		state := &PersistenceState{AttemptAccepted: true, AttemptSemanticOutput: true}
 
 		persistentStream := NewOutboundPersistentStream(ctx, stream, req, exec, requestService, usageLogService, transformer, nil, state)
 		for persistentStream.Next() {
@@ -778,7 +994,7 @@ func TestOutboundPersistentStream_Close_AggregatedResponsesCompletionHandling(t 
 		require.Equal(t, requestexecution.StatusCompleted, dbExec.Status)
 		require.JSONEq(t, string(aggregated), string(dbExec.ResponseBody))
 		require.Equal(t, "resp_456", dbExec.ExternalID)
-		require.True(t, state.StreamCompleted)
+		require.True(t, state.OutboundStreamCompleted)
 	})
 
 	t.Run("canceled client with aggregated completed response is still completed", func(t *testing.T) {
@@ -820,7 +1036,9 @@ func TestOutboundPersistentStream_Close_AggregatedResponsesCompletionHandling(t 
 			apiFormat:          llm.APIFormatOpenAIResponse,
 			aggregatedResponse: aggregated,
 			aggregatedMeta: llm.ResponseMeta{
-				ID: "resp_codex_like",
+				ID:        "resp_codex_like",
+				Terminal:  true,
+				Completed: true,
 				Usage: &llm.Usage{
 					PromptTokens:     20,
 					CompletionTokens: 1,
@@ -828,7 +1046,7 @@ func TestOutboundPersistentStream_Close_AggregatedResponsesCompletionHandling(t 
 				},
 			},
 		}
-		state := &PersistenceState{}
+		state := &PersistenceState{AttemptAccepted: true, AttemptSemanticOutput: true}
 
 		requestCtx, cancel := context.WithCancel(baseCtx)
 		cancel()
@@ -844,8 +1062,55 @@ func TestOutboundPersistentStream_Close_AggregatedResponsesCompletionHandling(t 
 		require.Equal(t, requestexecution.StatusCompleted, dbExec.Status)
 		require.JSONEq(t, string(aggregated), string(dbExec.ResponseBody))
 		require.Equal(t, "resp_codex_like", dbExec.ExternalID)
-		require.True(t, state.StreamCompleted)
+		require.True(t, state.OutboundStreamCompleted)
 	})
+}
+
+func TestPersistRequestExecutionMiddleware_IncompleteProtocolResponseRemainsFailed(t *testing.T) {
+	ctx := authz.WithTestBypass(context.Background())
+	client := enttest.NewEntClient(t, "sqlite3", "file:ent?mode=memory&_fk=0")
+	defer client.Close()
+	ctx = ent.NewContext(ctx, client)
+	project := createTestProject(t, ctx, client)
+	channel := createTestChannel(t, ctx, client)
+	_, requestService, _, _ := setupTestServices(t, client)
+
+	req, err := client.Request.Create().
+		SetProjectID(project.ID).
+		SetChannelID(channel.ID).
+		SetModelID("gpt-5.6-sol").
+		SetStatus(request.StatusPending).
+		SetRequestBody([]byte(`{"stream":false}`)).
+		Save(ctx)
+	require.NoError(t, err)
+	exec, err := client.RequestExecution.Create().
+		SetRequestID(req.ID).
+		SetProjectID(project.ID).
+		SetChannelID(channel.ID).
+		SetModelID("gpt-5.6-sol").
+		SetRequestBody([]byte(`{"stream":false}`)).
+		SetFormat("openai/responses").
+		SetStatus(requestexecution.StatusPending).
+		SetStream(false).
+		Save(ctx)
+	require.NoError(t, err)
+
+	state := &PersistenceState{Request: req, RequestExec: exec, RequestService: requestService}
+	middleware := &persistRequestExecutionMiddleware{
+		outbound:    &PersistentOutboundTransformer{state: state},
+		rawResponse: &httpclient.Response{StatusCode: 200, Body: []byte(`{"id":"resp_partial","status":"incomplete"}`)},
+	}
+	_, err = middleware.OnOutboundLlmResponse(ctx, &llm.Response{
+		ID:               "resp_partial",
+		ProtocolStatus:   "incomplete",
+		IncompleteReason: "max_output_tokens",
+	})
+	require.NoError(t, err)
+
+	stored, err := client.RequestExecution.Get(ctx, exec.ID)
+	require.NoError(t, err)
+	require.Equal(t, requestexecution.StatusFailed, stored.Status)
+	require.Contains(t, stored.ErrorMessage, "upstream response incomplete: max_output_tokens")
 }
 
 func TestPersistentOutboundTransformer_TransformRequest_WithPrepopulatedState(t *testing.T) {
@@ -1141,8 +1406,61 @@ func TestPersistentOutboundTransformer_CanRetry_ChannelRetryableStatusCodes(t *t
 	}
 
 	require.True(t, outbound.CanRetry(&httpclient.Error{StatusCode: http.StatusBadRequest}))
-	require.True(t, outbound.CanRetry(&httpclient.Error{StatusCode: http.StatusForbidden}))
+	require.False(t, outbound.CanRetry(&httpclient.Error{StatusCode: http.StatusForbidden}))
 	require.False(t, outbound.CanRetry(&httpclient.Error{StatusCode: http.StatusUnauthorized}))
+}
+
+func TestPersistentOutboundTransformer_CanRetry_ChannelGlobalErrorsSkipModelFallback(t *testing.T) {
+	channel := &biz.Channel{
+		Channel: &ent.Channel{
+			ID:   1,
+			Name: "shared-codex-channel",
+			Settings: &objects.ChannelSettings{
+				RetryableStatusCodes: []int{
+					http.StatusUnauthorized,
+					http.StatusPaymentRequired,
+					http.StatusForbidden,
+					http.StatusTooManyRequests,
+				},
+			},
+		},
+		Outbound: &mockTransformer{},
+	}
+
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "http 401", err: &httpclient.Error{StatusCode: http.StatusUnauthorized}},
+		{name: "http 402", err: &httpclient.Error{StatusCode: http.StatusPaymentRequired}},
+		{name: "http 403", err: &httpclient.Error{StatusCode: http.StatusForbidden}},
+		{name: "http 429", err: &httpclient.Error{StatusCode: http.StatusTooManyRequests}},
+		{name: "transformed 401", err: &llm.ResponseError{StatusCode: http.StatusUnauthorized}},
+		{name: "transformed 402", err: &llm.ResponseError{StatusCode: http.StatusPaymentRequired}},
+		{name: "transformed 403", err: &llm.ResponseError{StatusCode: http.StatusForbidden}},
+		{name: "transformed 429", err: &llm.ResponseError{StatusCode: http.StatusTooManyRequests}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			outbound := &PersistentOutboundTransformer{
+				wrapped: &mockTransformer{},
+				state: &PersistenceState{
+					CurrentCandidate: &ChannelModelsCandidate{
+						Channel: channel,
+						Models: []biz.ChannelModelEntry{
+							{RequestModel: "gpt-5.6-sol", ActualModel: "gpt-5.6-sol"},
+							{RequestModel: "gpt-5.6-sol", ActualModel: "gpt-5.6-sol-fallback"},
+						},
+					},
+					CurrentModelIndex: 0,
+				},
+			}
+
+			require.False(t, outbound.CanRetry(tt.err))
+			require.Zero(t, outbound.state.CurrentModelIndex)
+		})
+	}
 }
 
 func TestPersistentOutboundTransformer_CanRetry_429_WithMultipleModels(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/samber/lo"
 	"github.com/stretchr/testify/require"
 
 	"github.com/looplj/axonhub/llm"
@@ -128,8 +129,10 @@ func TestOutboundTransformer_StreamTransformation_ErrorEvent(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = streams.All(transformedStream)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "Something went wrong")
+	var responseErr *llm.ResponseError
+	require.ErrorAs(t, err, &responseErr)
+	require.Equal(t, 502, responseErr.StatusCode)
+	require.Contains(t, responseErr.Detail.Message, "Something went wrong")
 }
 
 func TestOutboundTransformer_TransformStream_UsesFinalEncryptedContentPerReasoningItem(t *testing.T) {
@@ -172,28 +175,84 @@ func TestOutboundTransformer_TransformStream_UsesFinalEncryptedContentPerReasoni
 	require.Equal(t, []string{"rs_1", "rs_2"}, sourceIDs)
 }
 
-func TestOutboundTransformer_TransformStream_ResponseCancelledCompletes(t *testing.T) {
+func TestOutboundTransformer_TransformStream_ResponseCancelledReturnsBadGateway(t *testing.T) {
 	trans, err := NewOutboundTransformer("https://api.openai.com", "test-api-key")
 	require.NoError(t, err)
 
 	events := []*httpclient.StreamEvent{
 		{Type: "response.created", Data: []byte(`{"type":"response.created","response":{"id":"resp_cancelled","object":"response","created_at":1700000000,"model":"gpt-5","status":"in_progress","output":[]}}`)},
-		{Type: "response.cancelled", Data: []byte(`{"type":"response.cancelled","response":{"id":"resp_cancelled","object":"response","created_at":1700000000,"model":"gpt-5","status":"canceled","output":[]}}`)},
+		{Type: "response.cancelled", Data: []byte(`{"type":"response.cancelled","response":{"id":"resp_cancelled","object":"response","created_at":1700000000,"model":"gpt-5","status":"canceled","output":[],"error":{"type":"server_error","code":"account_unavailable","message":"account is unavailable"}}}`)},
 	}
 
 	stream, err := trans.TransformStream(t.Context(), nil, streams.SliceStream(events))
 	require.NoError(t, err)
 
+	_, err = streams.All(stream)
+	var responseErr *llm.ResponseError
+	require.ErrorAs(t, err, &responseErr)
+	require.Equal(t, 502, responseErr.StatusCode)
+	require.Equal(t, "account_unavailable", responseErr.Detail.Code)
+	require.Equal(t, "server_error", responseErr.Detail.Type)
+	require.Equal(t, "account is unavailable", responseErr.Detail.Message)
+}
+
+func TestOutboundTransformer_TransformStream_IncompleteStaysTerminalPartial(t *testing.T) {
+	trans, err := NewOutboundTransformer("https://api.openai.com", "test-api-key")
+	require.NoError(t, err)
+
+	events := []*httpclient.StreamEvent{
+		{Type: "response.created", Data: []byte(`{"type":"response.created","response":{"id":"resp_incomplete","object":"response","created_at":1700000000,"model":"gpt-5","status":"in_progress","output":[]}}`)},
+		{Type: "response.output_text.delta", Data: []byte(`{"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"partial"}`)},
+		{Type: "response.incomplete", Data: []byte(`{"type":"response.incomplete","response":{"id":"resp_incomplete","object":"response","created_at":1700000000,"model":"gpt-5","status":"incomplete","output":[],"incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":5,"output_tokens":1,"total_tokens":6}}}`)},
+	}
+
+	stream, err := trans.TransformStream(t.Context(), nil, streams.SliceStream(events))
+	require.NoError(t, err)
 	responses, err := streams.All(stream)
 	require.NoError(t, err)
-	require.Len(t, responses, 3)
-	require.Equal(t, llm.DoneResponse, responses[2])
-	require.Equal(t, "resp_cancelled", responses[1].ID)
-	require.Equal(t, "gpt-5", responses[1].Model)
-	require.Equal(t, int64(1700000000), responses[1].Created)
-	require.NotEmpty(t, responses[1].Choices)
-	require.NotNil(t, responses[1].Choices[0].FinishReason)
-	require.Equal(t, "cancelled", *responses[1].Choices[0].FinishReason)
+	require.Equal(t, llm.DoneResponse, responses[len(responses)-1])
+
+	var sawLength bool
+	var sawUsage bool
+	for _, response := range responses {
+		if len(response.Choices) > 0 && lo.FromPtr(response.Choices[0].FinishReason) == "length" {
+			sawLength = true
+			require.Equal(t, "incomplete", response.ProtocolStatus)
+			require.Equal(t, "max_output_tokens", response.IncompleteReason)
+		}
+		if response.Usage != nil && response.Usage.CompletionTokens == 1 {
+			sawUsage = true
+		}
+	}
+	require.True(t, sawLength)
+	require.True(t, sawUsage)
+}
+
+func TestOutboundTransformer_TransformStream_CompletedEventWithIncompleteSnapshotStaysIncomplete(t *testing.T) {
+	trans, err := NewOutboundTransformer("https://api.openai.com", "test-api-key")
+	require.NoError(t, err)
+
+	events := []*httpclient.StreamEvent{
+		{Type: "response.created", Data: []byte(`{"type":"response.created","response":{"id":"resp_mismatch","object":"response","created_at":1700000000,"model":"gpt-5","status":"in_progress","output":[]}}`)},
+		{Type: "response.output_text.delta", Data: []byte(`{"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"partial"}`)},
+		{Type: "response.completed", Data: []byte(`{"type":"response.completed","response":{"id":"resp_mismatch","object":"response","created_at":1700000000,"model":"gpt-5","status":"incomplete","output":[],"incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":5,"output_tokens":1,"total_tokens":6}}}`)},
+	}
+
+	stream, err := trans.TransformStream(t.Context(), nil, streams.SliceStream(events))
+	require.NoError(t, err)
+	responses, err := streams.All(stream)
+	require.NoError(t, err)
+
+	var terminal *llm.Response
+	for _, response := range responses {
+		if response.ProtocolStatus == "incomplete" {
+			terminal = response
+			break
+		}
+	}
+	require.NotNil(t, terminal)
+	require.Equal(t, "length", lo.FromPtr(terminal.Choices[0].FinishReason))
+	require.Equal(t, "max_output_tokens", terminal.IncompleteReason)
 }
 
 func TestOutboundTransformer_TransformStream_IncompleteWithoutTerminal(t *testing.T) {

@@ -349,3 +349,16 @@ func TestMergeHTTPHeaders_AcceptNotOverridden(t *testing.T) {
 	assert.Equal(t, "*/*", merged.Get("Accept"))
 	assert.Equal(t, "client-value", merged.Get("X-Custom"))
 }
+
+func TestMergeHTTPHeaders_ChatGPTAccountIDNotOverridden(t *testing.T) {
+	dest := http.Header{}
+	dest.Set("Chatgpt-Account-Id", "channel-account")
+
+	src := http.Header{}
+	src.Set("Chatgpt-Account-Id", "client-account")
+	src.Set("X-Custom", "client-value")
+
+	merged := MergeHTTPHeaders(dest, src)
+	assert.Equal(t, "channel-account", merged.Get("Chatgpt-Account-Id"))
+	assert.Equal(t, "client-value", merged.Get("X-Custom"))
+}

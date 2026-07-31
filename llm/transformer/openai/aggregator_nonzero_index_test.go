@@ -47,6 +47,20 @@ func TestAggregateStreamChunksNoUsage(t *testing.T) {
 	require.Equal(t, "hi", *got.Choices[0].Message.Content.Content)
 }
 
+func TestAggregateStreamChunksCompletionRequiresExplicitFinishReason(t *testing.T) {
+	withoutFinish := []*httpclient.StreamEvent{{Data: []byte(`{"id":"chatcmpl-partial","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"partial"}}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}`)}}
+	_, meta, err := AggregateStreamChunks(t.Context(), withoutFinish, DefaultTransformChunk)
+	require.NoError(t, err)
+	require.False(t, meta.Terminal)
+	require.False(t, meta.Completed)
+
+	withFinish := append(withoutFinish, &httpclient.StreamEvent{Data: []byte(`{"id":"chatcmpl-partial","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"length"}]}`)})
+	_, meta, err = AggregateStreamChunks(t.Context(), withFinish, DefaultTransformChunk)
+	require.NoError(t, err)
+	require.True(t, meta.Terminal)
+	require.True(t, meta.Completed)
+}
+
 func TestAggregateStreamChunksNonZeroToolCallIndex(t *testing.T) {
 	chunks := []*httpclient.StreamEvent{
 		{

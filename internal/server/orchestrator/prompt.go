@@ -69,6 +69,7 @@ func injectPrompts(inbound *PersistentInboundTransformer) pipeline.Middleware {
 		)
 
 		llmRequest = matcher.ApplyPrompts(llmRequest, matchingPrompts)
+		inbound.state.PromptPayloadMutated = true
 
 		return llmRequest, nil
 	})

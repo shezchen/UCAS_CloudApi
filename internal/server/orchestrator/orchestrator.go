@@ -266,7 +266,6 @@ func (processor *ChatCompletionOrchestrator) Process(ctx context.Context, reques
 		// Response pass-through middlewares run before persistRequest so the raw provider
 		// response is saved when pass-through is enabled.
 		applyPassThroughResponse(outbound, processor.SystemService),
-		applyPassThroughStream(outbound, processor.SystemService),
 		persistRequest(inbound),
 	)
 
@@ -308,6 +307,10 @@ func (processor *ChatCompletionOrchestrator) Process(ctx context.Context, reques
 		// so they run first in reverse order (before any other OnOutboundRawResponse/OnOutboundRawStream handlers).
 		captureRawProviderResponse(outbound, processor.SystemService),
 		captureRawProviderStream(outbound, processor.SystemService),
+		// Must remain last: once direct streaming is accepted this middleware may
+		// start a drain goroutine immediately. No later inbound stream middleware
+		// may fail and roll the accepted attempt back underneath that goroutine.
+		applyPassThroughStream(outbound, processor.SystemService),
 	)
 
 	pipelineOpts = append(pipelineOpts, pipeline.WithMiddlewares(middlewares...))
@@ -320,6 +323,8 @@ func (processor *ChatCompletionOrchestrator) Process(ctx context.Context, reques
 
 	result, err := pipe.Process(ctx, request)
 	if err != nil {
+		clientErr, lastExecutionErr := finalizeUpstreamCandidatesExhaustedError(err)
+
 		persistCtx, cancel := xcontext.DetachWithTimeout(ctx, time.Second*10)
 		defer cancel()
 
@@ -329,7 +334,7 @@ func (processor *ChatCompletionOrchestrator) Process(ctx context.Context, reques
 			if updateErr := processor.RequestService.UpdateRequestExecutionStatusFromError(
 				persistCtx,
 				requestExec.ID,
-				err,
+				lastExecutionErr,
 			); updateErr != nil {
 				log.Warn(persistCtx, "Failed to update request execution status from error", log.Cause(updateErr))
 			}
@@ -340,13 +345,13 @@ func (processor *ChatCompletionOrchestrator) Process(ctx context.Context, reques
 			if updateErr := processor.RequestService.UpdateRequestStatusFromError(
 				persistCtx,
 				request.ID,
-				err,
+				clientErr,
 			); updateErr != nil {
 				log.Warn(persistCtx, "Failed to update request status from error", log.Cause(updateErr))
 			}
 		}
 
-		return ChatCompletionResult{}, err
+		return ChatCompletionResult{}, clientErr
 	}
 
 	// Return result based on stream type

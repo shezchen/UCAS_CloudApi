@@ -16,8 +16,8 @@ import (
 	"github.com/looplj/axonhub/llm/transformer/shared"
 )
 
-// ErrStreamIncomplete is returned when the stream ends without a terminal event
-// (response.completed, response.failed, response.cancelled, or response.incomplete).
+// ErrStreamIncomplete is returned when the stream ends without a terminal event.
+// Failed and cancelled terminal events are surfaced as llm.ResponseError instead.
 var ErrStreamIncomplete = llm.ErrStreamIncomplete
 
 // TransformStream transforms OpenAI Responses API SSE events to unified llm.Response stream.
@@ -43,8 +43,8 @@ type responsesOutboundStream struct {
 	queueIndex int
 	err        error
 
-	// Track whether the response completed successfully
-	responseCompleted bool
+	// Track whether the response reached a non-error terminal event.
+	responseTerminal bool
 }
 
 // outboundStreamState holds the state for a streaming session.
@@ -103,7 +103,7 @@ func (s *responsesOutboundStream) Next() bool {
 	if !s.stream.Next() {
 		// Stream ended - check if we received a terminal event
 		// If not, this is an incomplete stream (e.g., upstream EOF)
-		if s.err == nil && !s.responseCompleted && s.stream.Err() == nil {
+		if s.err == nil && !s.responseTerminal && s.stream.Err() == nil {
 			// Only set this error if we had started receiving response data
 			// This distinguishes between "no response" and "incomplete response"
 			if s.state.responseID != "" {
@@ -136,10 +136,10 @@ func (s *responsesOutboundStream) transformStreamChunk(event *httpclient.StreamE
 
 	// Handle [DONE] marker. AppendStream always adds a synthetic [DONE] after the
 	// upstream SSE ends. A real Responses terminal event must already have set
-	// responseCompleted; otherwise this is an incomplete stream and must fail
+	// responseTerminal; otherwise this is an incomplete stream and must fail
 	// before the pipeline commits output to the client.
 	if string(event.Data) == "[DONE]" {
-		if !s.responseCompleted && s.state.responseID != "" {
+		if !s.responseTerminal && s.state.responseID != "" {
 			return ErrStreamIncomplete
 		}
 		s.enqueue(llm.DoneResponse)
@@ -153,6 +153,7 @@ func (s *responsesOutboundStream) transformStreamChunk(event *httpclient.StreamE
 	if err != nil {
 		return fmt.Errorf("failed to unmarshal responses api stream event: %w", err)
 	}
+	streamEvent.Type = normalizeResponseTerminalEventType(streamEvent.Type, streamEvent.Response)
 
 	if slog.Default().Enabled(context.Background(), slog.LevelDebug) {
 		slog.DebugContext(context.Background(), "received response stream event", slog.Any("event", streamEvent))
@@ -507,7 +508,10 @@ func (s *responsesOutboundStream) transformStreamChunk(event *httpclient.StreamE
 
 	case StreamEventTypeResponseCompleted:
 		// Response completed - emit two events: one with finish_reason, one with usage
-		s.responseCompleted = true
+		if responseErr := responseTerminalError(streamEvent.Response); responseErr != nil {
+			return responseErr
+		}
+		s.responseTerminal = true
 		if streamEvent.Response != nil {
 			s.state.previousResponseID = streamEvent.Response.PreviousResponseID
 			resp.PreviousResponseID = s.state.previousResponseID
@@ -551,46 +555,55 @@ func (s *responsesOutboundStream) transformStreamChunk(event *httpclient.StreamE
 		}
 
 	case StreamEventTypeResponseFailed:
-		// Response failed
-		s.responseCompleted = true
-		finishReason := "error"
-		resp.Choices = []llm.Choice{
-			{
-				Index:        0,
-				FinishReason: &finishReason,
-			},
-		}
+		return newUpstreamResponseError("failed", responseErrorFromSnapshot(streamEvent.Response))
 
 	case StreamEventTypeResponseIncomplete:
 		// Response incomplete (e.g., max tokens)
-		s.responseCompleted = true
+		if responseErr := responseTerminalError(streamEvent.Response); responseErr != nil {
+			return responseErr
+		}
+		s.responseTerminal = true
+		resp.ProtocolStatus = "incomplete"
+		if streamEvent.Response != nil {
+			s.state.previousResponseID = streamEvent.Response.PreviousResponseID
+			resp.PreviousResponseID = s.state.previousResponseID
+			if streamEvent.Response.IncompleteDetails != nil {
+				resp.IncompleteReason = strings.TrimSpace(streamEvent.Response.IncompleteDetails.Reason)
+			}
+		}
+		if len(s.state.transformerMetadata) > 0 && !s.state.transformerMetadataEmitted {
+			resp.TransformerMetadata = s.state.transformerMetadata
+			s.state.transformerMetadataEmitted = true
+		}
 		finishReason := "length"
 		resp.Choices = []llm.Choice{
 			{
 				Index:        0,
+				Delta:        &llm.Message{},
 				FinishReason: &finishReason,
 			},
+		}
+		if streamEvent.Response != nil && streamEvent.Response.Usage != nil {
+			s.state.usage = streamEvent.Response.Usage.ToUsage()
+			s.enqueue(resp)
+			s.enqueue(&llm.Response{
+				Object:             "chat.completion.chunk",
+				ID:                 s.state.responseID,
+				Model:              s.state.responseModel,
+				Created:            s.state.created,
+				PreviousResponseID: s.state.previousResponseID,
+				Choices:            []llm.Choice{},
+				Usage:              s.state.usage,
+			})
+
+			return nil
 		}
 
 	case StreamEventTypeResponseCancelled:
-		// Response cancelled
-		s.responseCompleted = true
-		finishReason := "cancelled"
-		resp.Choices = []llm.Choice{
-			{
-				Index:        0,
-				FinishReason: &finishReason,
-			},
-		}
+		return newUpstreamResponseError("cancelled", responseErrorFromSnapshot(streamEvent.Response))
 
 	case StreamEventTypeError:
-		return &llm.ResponseError{
-			Detail: llm.ErrorDetail{
-				Code:    streamEvent.Code,
-				Message: streamEvent.Message,
-				Param:   lo.FromPtr(streamEvent.Param),
-			},
-		}
+		return newUpstreamStreamEventError(&streamEvent)
 
 	case StreamEventTypeImageGenerationPartialImage,
 		StreamEventTypeImageGenerationGenerating,

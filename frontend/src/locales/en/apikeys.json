@@ -55,6 +55,7 @@
   "apikeys.activity.detail": "Troubleshooting detail",
   "apikeys.activity.success": "Success",
   "apikeys.activity.error": "Error",
+  "apikeys.activity.upstreamQuota": "Shared upstream channel quota exhausted (not your campus daily/weekly allowance or personal billing)",
   "apikeys.activity.latency": "{{value}} ms",
   "apikeys.dialogs.create.title": "Create API Key",
   "apikeys.dialogs.create.description": "Create a new API Key for system access.",

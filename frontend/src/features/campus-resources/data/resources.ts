@@ -140,6 +140,11 @@ export type CampusDonationBenefits = z.infer<typeof campusDonationBenefitsSchema
 export type CampusChannelProbeAttempt = z.infer<typeof campusChannelProbeAttemptSchema>;
 export type CampusChannelProbeResult = z.infer<typeof campusChannelProbeResultSchema>;
 
+export interface ProbeCampusChannelInput {
+  channelID: string;
+  modelID?: string;
+}
+
 export interface CampusModelCapabilityOverride {
   vision: boolean;
   toolCall: boolean;
@@ -182,12 +187,13 @@ export function useProbeCampusChannel() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (channelID: string) => {
+    mutationFn: async ({ channelID, modelID }: ProbeCampusChannelInput) => {
       if (!selectedProjectId) {
         throw new Error('A project must be selected before probing a channel.');
       }
 
-      const data = await apiRequest<unknown>(`/admin/campus/channels/${encodeURIComponent(channelID)}/probe`, {
+      const modelQuery = modelID ? `?model=${encodeURIComponent(modelID)}` : '';
+      const data = await apiRequest<unknown>(`/admin/campus/channels/${encodeURIComponent(channelID)}/probe${modelQuery}`, {
         method: 'POST',
         requireAuth: true,
         headers: { 'X-Project-ID': selectedProjectId },

@@ -712,6 +712,16 @@ type Response struct {
 	// TransformerMetadata stores metadata from transformers that process the response.
 	// This field is ignored when serializing to JSON and is only used internally by transformers.
 	TransformerMetadata map[string]any `json:"transformer_metadata,omitempty"`
+
+	// ProtocolStatus preserves an explicit upstream lifecycle state when a
+	// protocol exposes one (for example, completed or incomplete in the OpenAI
+	// Responses API). Generic Chat Completions finish reasons must not be used as
+	// a substitute for this field when deciding provider health.
+	ProtocolStatus string `json:"-"`
+
+	// IncompleteReason preserves the provider's reason for an explicit
+	// incomplete protocol terminal without leaking it into unrelated formats.
+	IncompleteReason string `json:"-"`
 }
 
 // Choice represents a choice in the response.
@@ -758,9 +768,18 @@ type TopLogprob struct {
 }
 
 type ResponseMeta struct {
-	ID        string `json:"id"`
-	Usage     *Usage `json:"usage"`
-	Completed bool   `json:"completed,omitempty"`
+	ID    string `json:"id"`
+	Usage *Usage `json:"usage"`
+	// Terminal reports that the aggregate contains an explicit protocol terminal
+	// event. It is distinct from Completed because Responses API may terminate as
+	// incomplete without failing or pretending to be completed.
+	Terminal  bool `json:"terminal,omitempty"`
+	Completed bool `json:"completed,omitempty"`
+	// ProtocolStatus and IncompleteReason preserve explicit terminal semantics
+	// for persistence. In particular, a Responses API response.incomplete event
+	// is terminal on the wire but must never be persisted as completed.
+	ProtocolStatus   string `json:"protocol_status,omitempty"`
+	IncompleteReason string `json:"incomplete_reason,omitempty"`
 }
 
 // Usage Represents the total token usage per request to OpenAI.

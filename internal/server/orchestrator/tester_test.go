@@ -118,3 +118,31 @@ func TestChannelStreamToolCallCountsAsHealthyOutput(t *testing.T) {
 	require.True(t, result.Success)
 	require.Empty(t, result.Error)
 }
+
+func TestChannelStreamLengthWithContentPassesHealthTest(t *testing.T) {
+	stream := streams.SliceStream([]*httpclient.StreamEvent{
+		{Data: []byte(`{"choices":[{"delta":{"content":"partial"}}]}`)},
+		{Data: []byte(`{"choices":[{"finish_reason":"length"}]}`)},
+	})
+
+	result, err := (&TestChannelOrchestrator{}).handleStreamResponse(context.Background(), stream, time.Now())
+	require.NoError(t, err)
+	require.True(t, result.Success)
+	require.Nil(t, result.Error)
+}
+
+func TestChannelLLMFailurePreservesStructuredDiagnostic(t *testing.T) {
+	response := &llm.Response{Error: &llm.ResponseError{
+		StatusCode: http.StatusBadGateway,
+		Detail: llm.ErrorDetail{
+			Type:    "invalid_request_error",
+			Code:    "unsupported_value",
+			Message: "reasoning.context must be all_turns",
+		},
+	}}
+
+	message, statusCode := testChannelLLMFailure(response)
+	require.Equal(t, "reasoning.context must be all_turns (code: unsupported_value, type: invalid_request_error)", message)
+	require.NotNil(t, statusCode)
+	require.Equal(t, http.StatusBadGateway, *statusCode)
+}

@@ -153,8 +153,10 @@ export function ApiKeyActivityPanel() {
                       const isError =
                         ['error', 'failed', 'canceled', 'cancelled'].includes(normalizedStatus) ||
                         (event.statusCode !== undefined && event.statusCode >= 400);
+                      const errorCategory =
+                        event.errorCategory === 'upstream_quota' ? t('apikeys.activity.upstreamQuota') : event.errorCategory;
                       const detail = isError
-                        ? [event.errorCategory, event.errorMessage].filter(Boolean).join(' · ')
+                        ? [errorCategory, event.errorMessage].filter(Boolean).join(' · ')
                         : event.latencyMs === undefined
                           ? t('apikeys.activity.success')
                           : t('apikeys.activity.latency', { value: Math.round(event.latencyMs) });

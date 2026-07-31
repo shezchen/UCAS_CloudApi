@@ -171,6 +171,13 @@ func (m *persistRequestExecutionMiddleware) OnOutboundLlmResponse(ctx context.Co
 	// Audio responses (binary TTS / non-JSON STT) must be converted to JSON-safe payloads
 	// before persisting into the JSON response_body column.
 	respBody := audioSafeResponseBody(llmResp.RequestType, m.rawResponse.Headers.Get("Content-Type"), m.rawResponse.Body)
+	if terminalErr := responseProtocolTerminalFailure(llmResp); terminalErr != nil {
+		if err := state.RequestService.UpdateRequestExecutionStatusFromError(persistCtx, state.RequestExec.ID, terminalErr); err != nil {
+			log.Warn(persistCtx, "Failed to update request execution from non-completed protocol terminal", log.Cause(err))
+		}
+
+		return llmResp, nil
+	}
 
 	err := state.RequestService.UpdateRequestExecutionCompleted(
 		persistCtx,

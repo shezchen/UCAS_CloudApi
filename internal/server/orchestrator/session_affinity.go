@@ -345,7 +345,8 @@ func (m *sessionAffinityRecording) Name() string {
 }
 
 func (m *sessionAffinityRecording) OnOutboundLlmResponse(ctx context.Context, response *llm.Response) (*llm.Response, error) {
-	if pipeline.HasResponseContent(response) {
+	terminal, successful := llmTerminalOutcome(response)
+	if pipeline.HasResponseContent(response) && (!terminal || successful) {
 		m.bindCurrent()
 	}
 
@@ -379,8 +380,9 @@ type sessionAffinityBindingStream struct {
 	state  *PersistenceState
 	bind   func()
 
-	semanticOutput bool
-	bound          bool
+	semanticOutput  bool
+	bound           bool
+	terminalFailure bool
 }
 
 func (s *sessionAffinityBindingStream) Next() bool {
@@ -392,7 +394,9 @@ func (s *sessionAffinityBindingStream) Current() *llm.Response {
 	if pipeline.HasResponseContent(event) {
 		s.semanticOutput = true
 	}
-	if !s.bound && s.semanticOutput && pipeline.IsTerminalLlmStreamEvent(event) {
+	if terminal, successful := llmTerminalOutcome(event); terminal && !successful {
+		s.terminalFailure = true
+	} else if !s.bound && successful && s.semanticOutput && s.state != nil && s.state.AttemptAccepted {
 		s.bindOnce()
 	}
 
@@ -404,7 +408,7 @@ func (s *sessionAffinityBindingStream) Err() error {
 }
 
 func (s *sessionAffinityBindingStream) Close() error {
-	if !s.bound && s.semanticOutput && s.state != nil && s.state.StreamCompleted {
+	if !s.bound && !s.terminalFailure && s.semanticOutput && s.state != nil && s.state.AttemptAccepted && s.state.OutboundStreamCompleted {
 		s.bindOnce()
 	}
 

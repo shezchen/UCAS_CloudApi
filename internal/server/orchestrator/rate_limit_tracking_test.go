@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -286,6 +287,25 @@ func TestRateLimitTracking_OnOutboundRawError_429(t *testing.T) {
 
 	// Verify channel is in cooldown
 	assert.True(t, tracker.IsCoolingDown(channel.ID))
+}
+
+func TestRateLimitTracking_OnOutboundRawError_402UsesBoundedChannelCooldown(t *testing.T) {
+	tracker := NewChannelRequestTracker()
+	channel := &biz.Channel{Channel: &ent.Channel{ID: 8, Name: "shared-coding-plan"}}
+	outbound := &PersistentOutboundTransformer{state: &PersistenceState{
+		CurrentCandidate: &ChannelModelsCandidate{Channel: channel},
+	}}
+	middleware := &rateLimitTracking{outbound: outbound, tracker: tracker}
+
+	startedAt := time.Now()
+	middleware.OnOutboundRawError(context.Background(), &httpclient.Error{
+		StatusCode: http.StatusPaymentRequired,
+		Body:       []byte(`{"error":{"message":"You have exceeded your monthly quota"}}`),
+	})
+
+	until, ok := tracker.GetCooldownUntil(channel.ID)
+	require.True(t, ok)
+	require.WithinDuration(t, startedAt.Add(upstreamPaymentRequiredCooldown), until, time.Second)
 }
 
 func TestRateLimitTracking_OnOutboundRawError_QueueErrorIgnored(t *testing.T) {

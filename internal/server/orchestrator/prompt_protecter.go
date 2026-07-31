@@ -7,5 +7,5 @@ import (
 )
 
 type PromptProtecter interface {
-	Protect(ctx context.Context, req *llm.Request) (*llm.Request, error)
+	ProtectWithMutation(ctx context.Context, req *llm.Request) (*llm.Request, bool, error)
 }

@@ -212,6 +212,11 @@ var blockedHeaders = map[string]bool{
 	// X-Initiator is used by specific channels (e.g. Copilot) for billing control.
 	// Block from auto-merge so it is only forwarded by the channel that explicitly needs it.
 	"X-Initiator": true,
+
+	// Chatgpt-Account-Id is derived from the selected Codex channel's OAuth
+	// credential. An inbound client value must never replace that account scope
+	// after the outbound transformer has paired it with the channel bearer token.
+	"Chatgpt-Account-Id": true,
 }
 
 // blockedHeaderPrefixes lists header prefixes that should not be forwarded to upstream.

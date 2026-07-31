@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -734,6 +735,12 @@ func TestSanitizeCampusDiagnosticErrorRedactsHeadersAndQueriesWithoutHidingDiagn
 	}
 }
 
+func TestCampusFailureCategoryDistinguishesSharedUpstreamQuota(t *testing.T) {
+	statusCode := http.StatusPaymentRequired
+
+	require.Equal(t, "upstream_quota", campusFailureCategory(&statusCode, "You have exceeded your monthly quota"))
+}
+
 func TestCampusProbeModelCandidatesPreferEvidenceOverArrayPosition(t *testing.T) {
 	ch := &ent.Channel{
 		DefaultTestModel: "gpt-5.5-codex",
@@ -820,9 +827,48 @@ func TestPrepareCampusChannelProbeUsesRecentProductionSuccessOnly(t *testing.T) 
 	requestCtx = contexts.WithProjectID(requestCtx, projectRow.ID)
 	svc := &CampusCatalogService{client: client}
 
-	guid, models, err := svc.PrepareChannelProbe(requestCtx, ch.ID)
+	guid, models, err := svc.PrepareChannelProbe(requestCtx, ch.ID, nil)
 	require.NoError(t, err)
 	require.Equal(t, ch.ID, guid.ID)
 	require.Equal(t, []string{"gpt-5", "gpt-5.4", "gpt-5.6-sol"}, models)
 	require.NotContains(t, models, "test-only-model")
+}
+
+func TestPrepareCampusChannelProbeUsesOnlyExplicitSupportedModel(t *testing.T) {
+	client := enttest.NewEntClient(t, "sqlite3", "file:campus_probe_explicit_model?mode=memory&_fk=1")
+	defer client.Close()
+
+	setupCtx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+	projectRow := client.Project.Create().
+		SetName("Campus").
+		SetStatus(project.StatusActive).
+		SaveX(setupCtx)
+	member := client.User.Create().
+		SetEmail("member@mails.ucas.ac.cn").
+		SetPassword("hash").
+		SaveX(setupCtx)
+	client.UserProject.Create().SetUser(member).SetProject(projectRow).SaveX(setupCtx)
+	ch := client.Channel.Create().
+		SetType(channel.TypeCodex).
+		SetName("Explicit model probe").
+		SetStatus(channel.StatusEnabled).
+		SetCredentials(objects.ChannelCredentials{APIKey: "provider-secret"}).
+		SetSupportedModels([]string{"gpt-5.6-sol", "gpt-5.6-terra"}).
+		SetDefaultTestModel("gpt-5.6-sol").
+		SaveX(setupCtx)
+
+	requestCtx := authz.NewUserContext(context.Background(), member.ID)
+	requestCtx = contexts.WithUser(requestCtx, member)
+	requestCtx = contexts.WithProjectID(requestCtx, projectRow.ID)
+	svc := &CampusCatalogService{client: client}
+	selected := "gpt-5.6-terra"
+
+	guid, models, err := svc.PrepareChannelProbe(requestCtx, ch.ID, &selected)
+	require.NoError(t, err)
+	require.Equal(t, ch.ID, guid.ID)
+	require.Equal(t, []string{"gpt-5.6-terra"}, models)
+
+	unsupported := "gpt-5"
+	_, _, err = svc.PrepareChannelProbe(requestCtx, ch.ID, &unsupported)
+	require.ErrorIs(t, err, ErrCampusCatalogInvalidInput)
 }

@@ -7,12 +7,16 @@ import (
 
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 
 	"github.com/looplj/axonhub/internal/ent"
 	"github.com/looplj/axonhub/internal/objects"
 	"github.com/looplj/axonhub/internal/server/biz"
 	"github.com/looplj/axonhub/llm"
 	"github.com/looplj/axonhub/llm/httpclient"
+	"github.com/looplj/axonhub/llm/pipeline"
+	openairesponses "github.com/looplj/axonhub/llm/transformer/openai/responses"
 )
 
 func TestDeriveLoadBalancerStrategy(t *testing.T) {
@@ -253,6 +257,75 @@ func TestIsExplicitUnsupportedModelError(t *testing.T) {
 			assert.Equal(t, tt.expected, isExplicitUnsupportedModelError(tt.err))
 		})
 	}
+}
+
+func TestFinalizeUpstreamCandidatesExhaustedError_TerraChainEndingIn402(t *testing.T) {
+	lastErr := &llm.ResponseError{
+		StatusCode: http.StatusPaymentRequired,
+		Detail: llm.ErrorDetail{
+			Message: "You have exceeded your monthly quota; access_token=sk-sensitive-token-123456; contact person@example.test",
+			Type:    "insufficient_quota",
+		},
+	}
+	err := &pipeline.UpstreamCandidatesExhaustedError{
+		AttemptCount: 5,
+		CategoryCounts: map[pipeline.UpstreamAttemptFailureCategory]int{
+			pipeline.UpstreamAttemptIncompleteStream: 3,
+			pipeline.UpstreamAttemptAuthentication:   1,
+			pipeline.UpstreamAttemptQuota:            1,
+		},
+		LastErr: lastErr,
+	}
+
+	clientErr, lastExecutionErr := finalizeUpstreamCandidatesExhaustedError(err)
+
+	require.ErrorIs(t, lastExecutionErr, lastErr)
+	assert.Equal(t, http.StatusPaymentRequired, ExtractStatusCodeFromError(lastExecutionErr))
+
+	var responseErr *llm.ResponseError
+	require.ErrorAs(t, clientErr, &responseErr)
+	assert.Equal(t, http.StatusServiceUnavailable, responseErr.StatusCode)
+	assert.Equal(t, upstreamCandidatesExhausted, responseErr.Detail.Type)
+	assert.Equal(t, upstreamCandidatesExhausted, responseErr.Detail.Code)
+	assert.Contains(t, responseErr.Detail.Message, "3 incomplete streams")
+	assert.Contains(t, responseErr.Detail.Message, "1 authentication failure")
+	assert.Contains(t, responseErr.Detail.Message, "1 upstream quota exhaustion")
+	assert.Contains(t, responseErr.Detail.Message, "Last upstream error (HTTP 402): You have exceeded your monthly quota")
+	assert.Contains(t, responseErr.Detail.Message, "shared provider channel's allowance")
+	assert.Contains(t, responseErr.Detail.Message, "not the caller's campus daily/weekly quota or billing")
+	assert.NotContains(t, responseErr.Detail.Message, "sk-sensitive-token-123456")
+	assert.NotContains(t, responseErr.Detail.Message, "person@example.test")
+	assert.Contains(t, responseErr.Detail.Message, "[REDACTED]")
+	assert.Contains(t, responseErr.Detail.Message, "[EMAIL]")
+
+	httpErr := openairesponses.NewInboundTransformer().TransformError(t.Context(), clientErr)
+	assert.Equal(t, http.StatusServiceUnavailable, httpErr.StatusCode)
+	assert.Equal(t, upstreamCandidatesExhausted, gjson.GetBytes(httpErr.Body, "error.type").String())
+	assert.Equal(t, upstreamCandidatesExhausted, gjson.GetBytes(httpErr.Body, "error.code").String())
+}
+
+func TestFinalizeUpstreamCandidatesExhaustedError_Single402ClarifiesQuotaScope(t *testing.T) {
+	upstreamErr := &llm.ResponseError{
+		StatusCode: http.StatusPaymentRequired,
+		Detail: llm.ErrorDetail{
+			Message: "You have exceeded your monthly quota; access_token=sk-sensitive-token-123456",
+		},
+	}
+
+	clientErr, lastExecutionErr := finalizeUpstreamCandidatesExhaustedError(upstreamErr)
+	require.ErrorIs(t, lastExecutionErr, upstreamErr)
+	assert.Equal(t, http.StatusPaymentRequired, ExtractStatusCodeFromError(lastExecutionErr))
+
+	var responseErr *llm.ResponseError
+	require.ErrorAs(t, clientErr, &responseErr)
+	assert.Equal(t, http.StatusServiceUnavailable, responseErr.StatusCode)
+	assert.Equal(t, upstreamSharedQuotaExhausted, responseErr.Detail.Type)
+	assert.Equal(t, upstreamSharedQuotaExhausted, responseErr.Detail.Code)
+	assert.Contains(t, responseErr.Detail.Message, "shared upstream provider channel")
+	assert.Contains(t, responseErr.Detail.Message, "not your campus daily/weekly quota or billing")
+	assert.Contains(t, responseErr.Detail.Message, "You have exceeded your monthly quota")
+	assert.NotContains(t, responseErr.Detail.Message, "sk-sensitive-token-123456")
+	assert.Contains(t, responseErr.Detail.Message, "[REDACTED]")
 }
 
 func TestIsRetryableError(t *testing.T) {

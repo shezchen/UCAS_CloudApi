@@ -319,6 +319,7 @@ func (p *pipeline) stream(
 	executor Executor,
 	request *httpclient.Request,
 	firstEventTimeout time.Duration,
+	acceptOnReady bool,
 ) (streams.Stream[*httpclient.StreamEvent], error) {
 	streamCtx, firstEventGuard := newFirstEventTimeoutGuard(ctx, firstEventTimeout)
 
@@ -428,11 +429,17 @@ func (p *pipeline) stream(
 
 		return nil, err
 	}
+	if acceptOnReady {
+		p.acceptStreamAttempt()
+	}
 
 	rawInboundStream := inboundStream
 
 	inboundStream, err = p.applyInboundRawStreamMiddlewares(ctx, inboundStream)
 	if err != nil {
+		if acceptOnReady {
+			p.rejectStreamAttempt()
+		}
 		rawInboundStream.Close()
 		firstEventGuard.cancelStream()
 		p.applyRawErrorResponseMiddlewares(ctx, err)

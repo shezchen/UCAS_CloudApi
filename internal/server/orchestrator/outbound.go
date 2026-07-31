@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -86,12 +87,40 @@ func (ts *OutboundPersistentStream) Current() *httpclient.StreamEvent {
 		// Check if this is a terminal event, which indicates the stream completed successfully.
 		// For Chat Completions API this is the raw [DONE] event; for Responses API this is
 		// response.completed; for Anthropic Messages API this is message_stop.
-		if isTerminalStreamEvent(event) {
-			ts.state.StreamCompleted = true
+		if isSuccessfulOutboundTerminalStreamEvent(ts.transformer.APIFormat(), event) {
+			ts.state.OutboundStreamCompleted = true
 		}
 	}
 
 	return event
+}
+
+// isSuccessfulOutboundTerminalStreamEvent applies provider-format terminal
+// semantics. Responses streams require a real, parseable response.completed
+// JSON event; their optional transport [DONE] marker (or a bare event type with
+// no payload) never proves model completion.
+func isSuccessfulOutboundTerminalStreamEvent(apiFormat llm.APIFormat, event *httpclient.StreamEvent) bool {
+	if !isResponsesFormat(apiFormat) {
+		return isSuccessfulTerminalStreamEvent(event)
+	}
+	if event == nil || len(event.Data) == 0 {
+		return false
+	}
+
+	var payload struct {
+		Type     string `json:"type"`
+		Response *struct {
+			Status *string         `json:"status"`
+			Error  json.RawMessage `json:"error"`
+		} `json:"response"`
+	}
+	if err := json.Unmarshal(event.Data, &payload); err != nil || payload.Type != "response.completed" || payload.Response == nil {
+		return false
+	}
+
+	normalized := *event
+	normalized.Type = payload.Type
+	return isSuccessfulTerminalStreamEvent(&normalized)
 }
 
 func (ts *OutboundPersistentStream) Err() error {
@@ -106,60 +135,54 @@ func (ts *OutboundPersistentStream) Close() error {
 	ts.closed = true
 	ctx := ts.ctx
 
-	log.Debug(ctx, "Closing persistent stream", log.Int("chunk_count", len(ts.responseChunks)), log.Bool("received_done", ts.state.StreamCompleted))
+	log.Debug(ctx, "Closing persistent stream", log.Int("chunk_count", len(ts.responseChunks)), log.Bool("received_done", ts.state.OutboundStreamCompleted))
 
 	streamErr := ts.stream.Err()
 	ctxErr := ctx.Err()
 
-	// If we received the [DONE] event, treat the stream as successfully completed
-	// even if there's a context cancellation error. This handles the case where
-	// the client disconnects immediately after receiving the last chunk.
-	if ts.state.StreamCompleted {
-		ts.logFinalizationDecision(ctx, "terminal_event_completed", streamErr, ctxErr, true, nil)
-		// Stream completed successfully - perform final persistence
-		log.Debug(ctx, "Stream completed successfully (received [DONE]), performing final persistence")
-		ts.persistResponseChunks(ctx)
-
-		return ts.stream.Close()
-	}
-
-	// If there's an explicit stream error (not just context cancellation), treat as failure
-	// regardless of what chunks we have. Stream errors indicate the upstream response
-	// was incomplete or corrupted.
-	if streamErr != nil && !errors.Is(streamErr, context.Canceled) && !errors.Is(streamErr, context.DeadlineExceeded) {
-		ts.logFinalizationDecision(ctx, "explicit_stream_error", streamErr, ctxErr, false, nil)
-		persistCtx, cancel := xcontext.DetachWithTimeout(ctx, 10*time.Second)
-		defer cancel()
-
-		if ts.requestExec != nil {
-			if err := ts.RequestService.UpdateRequestExecutionStatusFromError(persistCtx, ts.requestExec.ID, streamErr); err != nil {
-				log.Warn(persistCtx, "Failed to update request execution status from error", log.Cause(err))
-			}
-		}
-
-		return ts.stream.Close()
-	}
-
 	var responseBody []byte
 	var meta llm.ResponseMeta
 	var aggErr error
+	aggregatedTerminal := false
 	aggregatedCompleted := false
 
 	if len(ts.responseChunks) > 0 {
 		responseBody, meta, aggErr = ts.transformer.AggregateStreamChunks(context.WithoutCancel(ctx), ts.state.RawProviderRequest, ts.responseChunks)
-		aggregatedCompleted = aggErr == nil && isCompletedAggregated(meta)
+		aggregatedTerminal = aggErr == nil && isTerminalAggregated(meta)
+		aggregatedCompleted = aggregatedTerminal && meta.Completed
 		ts.logFinalizationDecision(ctx, "aggregated_outbound_chunks", streamErr, ctxErr, aggregatedCompleted, aggErr)
 		if aggregatedCompleted {
 			log.Debug(ctx, "Stream has valid complete response without terminal event, treating as completed")
-			ts.state.StreamCompleted = true
+			ts.state.OutboundStreamCompleted = true
 		}
 	} else {
 		ts.logFinalizationDecision(ctx, "no_outbound_chunks_to_aggregate", streamErr, ctxErr, false, nil)
 	}
 
-	// ended without a terminal event / complete aggregated response.
-	if (ctxErr != nil || streamErr != nil) && !ts.state.StreamCompleted {
-		ts.logFinalizationDecision(ctx, "incomplete_stream_with_error", streamErr, ctxErr, aggregatedCompleted, aggErr)
+	if aggErr == nil && aggregatedTerminal && !aggregatedCompleted {
+		terminalErr := aggregatedTerminalFailure(meta)
+		if terminalErr == nil {
+			terminalErr = errors.New("upstream stream reached a non-completed terminal state")
+		}
+		persistCtx, cancel := xcontext.DetachWithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		ts.persistAggregatedFailure(persistCtx, meta, terminalErr)
+
+		return ts.stream.Close()
+	}
+
+	acceptedSemanticOutput := ts.state.AttemptAccepted && ts.state.AttemptSemanticOutput
+	providerCompleted := ts.state.OutboundStreamCompleted || aggregatedCompleted
+	if aggErr != nil || !acceptedSemanticOutput || !providerCompleted {
+		decision := "incomplete_stream_without_terminal_event"
+		if aggErr != nil {
+			decision = "stream_aggregation_failed"
+		} else if !acceptedSemanticOutput {
+			decision = "stream_not_accepted_or_empty"
+		} else if streamErr != nil || ctxErr != nil {
+			decision = "incomplete_stream_with_error"
+		}
+		ts.logFinalizationDecision(ctx, decision, streamErr, ctxErr, aggregatedCompleted, aggErr)
 		persistCtx, cancel := xcontext.DetachWithTimeout(ctx, 10*time.Second)
 		defer cancel()
 
@@ -168,29 +191,15 @@ func (ts *OutboundPersistentStream) Close() error {
 			errToReport = ctxErr
 		}
 		if errToReport == nil {
-			errToReport = errors.New("stream ended without terminal event or completed response")
+			errToReport = aggErr
 		}
-
-		if ts.requestExec != nil {
-			if err := ts.RequestService.UpdateRequestExecutionStatusFromError(persistCtx, ts.requestExec.ID, errToReport); err != nil {
-				log.Warn(persistCtx, "Failed to update request execution status from error", log.Cause(err))
-			}
+		if errToReport == nil && !acceptedSemanticOutput {
+			errToReport = pipeline.ErrEmptyResponse
 		}
-
-		return ts.stream.Close()
-	}
-
-	if !ts.state.StreamCompleted {
-		ts.logFinalizationDecision(ctx, "incomplete_stream_without_terminal_event", streamErr, ctxErr, aggregatedCompleted, aggErr)
-		persistCtx, cancel := xcontext.DetachWithTimeout(ctx, 10*time.Second)
-		defer cancel()
-
-		errToReport := errors.New("stream ended without terminal event or completed response")
-		if ts.requestExec != nil {
-			if err := ts.RequestService.UpdateRequestExecutionStatusFromError(persistCtx, ts.requestExec.ID, errToReport); err != nil {
-				log.Warn(persistCtx, "Failed to update request execution status from error", log.Cause(err))
-			}
+		if errToReport == nil {
+			errToReport = llm.ErrStreamIncomplete
 		}
+		ts.persistAggregatedFailure(persistCtx, meta, errToReport)
 
 		return ts.stream.Close()
 	}
@@ -215,7 +224,9 @@ func (ts *OutboundPersistentStream) Close() error {
 func (ts *OutboundPersistentStream) logFinalizationDecision(ctx context.Context, decision string, streamErr error, ctxErr error, aggregatedCompleted bool, aggregatedErr error) {
 	fields := []log.Field{
 		log.String("decision", decision),
-		log.Bool("terminal_event_seen", ts.state.StreamCompleted),
+		log.Bool("terminal_event_seen", ts.state.OutboundStreamCompleted),
+		log.Bool("attempt_accepted", ts.state.AttemptAccepted),
+		log.Bool("semantic_output", ts.state.AttemptSemanticOutput),
 		log.Int("chunk_count", len(ts.responseChunks)),
 		log.String("api_format", string(ts.transformer.APIFormat())),
 		log.Bool("aggregated_completed", aggregatedCompleted),
@@ -250,6 +261,13 @@ func (ts *OutboundPersistentStream) persistResponseChunks(ctx context.Context) {
 		responseBody, meta, err := ts.transformer.AggregateStreamChunks(persistCtx, ts.state.RawProviderRequest, ts.responseChunks)
 		if err != nil {
 			log.Warn(persistCtx, "Failed to aggregate chunks using transformer", log.Cause(err))
+			if updateErr := ts.RequestService.UpdateRequestExecutionStatusFromError(persistCtx, ts.requestExec.ID, err); updateErr != nil {
+				log.Warn(persistCtx, "Failed to update request execution status from aggregation error", log.Cause(updateErr))
+			}
+			return
+		}
+		if terminalErr := aggregatedTerminalFailure(meta); terminalErr != nil {
+			ts.persistAggregatedFailure(persistCtx, meta, terminalErr)
 			return
 		}
 
@@ -257,8 +275,37 @@ func (ts *OutboundPersistentStream) persistResponseChunks(ctx context.Context) {
 	}
 }
 
+func (ts *OutboundPersistentStream) persistAggregatedFailure(ctx context.Context, meta llm.ResponseMeta, terminalErr error) {
+	ts.state.OutboundStreamCompleted = false
+	if ts.requestExec == nil {
+		return
+	}
+
+	// A partial stream that was already accepted and delivered consumed real
+	// upstream resources and must be metered. A pre-commit failure remains
+	// eligible for failover, so it must not claim the logical request's one usage
+	// record or steal attribution from a later successful attempt.
+	if ts.state.AttemptAccepted && ts.state.AttemptSemanticOutput {
+		if usage := meta.Usage; usage != nil {
+			if _, err := ts.UsageLogService.CreateUsageLogFromRequest(ctx, ts.request, ts.requestExec, usage); err != nil {
+				log.Warn(ctx, "Failed to create usage log from accepted partial request", log.Cause(err))
+			}
+		}
+	}
+	if err := ts.RequestService.UpdateRequestExecutionStatusFromError(ctx, ts.requestExec.ID, terminalErr); err != nil {
+		log.Warn(ctx, "Failed to update request execution from incomplete terminal", log.Cause(err))
+	}
+	if err := ts.RequestService.SaveRequestExecutionChunks(ctx, ts.requestExec.ID, ts.responseChunks); err != nil {
+		log.Warn(ctx, "Failed to save incomplete request execution chunks", log.Cause(err))
+	}
+}
+
 func (ts *OutboundPersistentStream) persistAggregatedResponse(ctx context.Context, responseBody []byte, meta llm.ResponseMeta) {
 	if ts.requestExec == nil {
+		return
+	}
+	if terminalErr := aggregatedTerminalFailure(meta); terminalErr != nil {
+		ts.persistAggregatedFailure(ctx, meta, terminalErr)
 		return
 	}
 
@@ -305,9 +352,8 @@ func (ts *OutboundPersistentStream) persistAggregatedResponse(ctx context.Contex
 	}
 }
 
-func isCompletedAggregated(meta llm.ResponseMeta) bool {
-	return meta.Completed ||
-		(meta.Usage != nil && meta.Usage.CompletionTokens > 0)
+func isTerminalAggregated(meta llm.ResponseMeta) bool {
+	return meta.Terminal || meta.Completed
 }
 
 var errSkipCandidateByCircuitBreaker = errors.New("skip candidate by circuit breaker")
@@ -353,6 +399,24 @@ func (p *PersistentOutboundTransformer) APIFormat() llm.APIFormat {
 	return p.wrapped.APIFormat()
 }
 
+// SetStreamAttemptAccepted is called by the pipeline at the point where a
+// streaming attempt can no longer be transparently replaced by another route.
+func (p *PersistentOutboundTransformer) SetStreamAttemptAccepted(accepted bool) {
+	if p == nil || p.state == nil {
+		return
+	}
+	p.state.AttemptAccepted = accepted
+}
+
+func (p *PersistentOutboundTransformer) resetProviderAttemptState() {
+	if p == nil || p.state == nil {
+		return
+	}
+	p.state.OutboundStreamCompleted = false
+	p.state.AttemptAccepted = false
+	p.state.AttemptSemanticOutput = false
+}
+
 func (p *PersistentOutboundTransformer) TransformError(ctx context.Context, rawErr *httpclient.Error) *llm.ResponseError {
 	return p.wrapped.TransformError(ctx, rawErr)
 }
@@ -373,6 +437,7 @@ func (p *PersistentOutboundTransformer) TransformRequest(ctx context.Context, ll
 
 	p.state.CurrentCandidate = candidate
 	p.state.StreamCompleted = false
+	p.resetProviderAttemptState()
 
 	p.wrapped = selectOutboundForCandidate(candidate)
 
@@ -528,6 +593,7 @@ func (p *PersistentOutboundTransformer) NextChannel(ctx context.Context) error {
 	// Cancel any in-flight pass-through stream goroutine from the previous attempt
 	// so it exits promptly and releases its upstream HTTP connection.
 	p.resetPassThroughStreamState()
+	p.resetProviderAttemptState()
 
 	p.state.CurrentCandidateIndex++
 
@@ -589,16 +655,19 @@ func (p *PersistentOutboundTransformer) CanRetry(err error) bool {
 		return true
 	}
 
-	// 429 Too Many Requests: always skip same-channel retry.
-	// The upstream is explicitly rate-limiting this channel, so retrying the same
-	// channel would just burn a retry attempt without any chance of success.
-	// Instead, force a channel switch so the next candidate (e.g. a backup channel)
-	// is tried immediately. The load balancer (e.g. ErrorAware strategy) will
-	// deprioritize this channel for subsequent requests and it will naturally
-	// recover as the rate-limit window resets.
-	if ExtractStatusCodeFromError(err) == http.StatusTooManyRequests {
-		log.Debug(context.Background(), "429 rate limit, skipping same-channel retry to switch to next channel",
+	// Credential, account quota, permission, and rate-limit failures apply to the
+	// channel rather than one model mapping. Do not consume the same-channel
+	// retry budget by trying another model with the same unusable credential;
+	// let the pipeline move directly to the next channel candidate.
+	statusCode := ExtractStatusCodeFromError(err)
+	switch statusCode {
+	case http.StatusUnauthorized,
+		http.StatusPaymentRequired,
+		http.StatusForbidden,
+		http.StatusTooManyRequests:
+		log.Debug(context.Background(), "channel-global upstream error, skipping same-channel retry",
 			log.Int("channel_id", p.state.CurrentCandidate.Channel.ID),
+			log.Int("status_code", statusCode),
 		)
 
 		return false
@@ -645,6 +714,7 @@ func (p *PersistentOutboundTransformer) PrepareForRetry(ctx context.Context) err
 	// Reset request execution for the same channel.
 	p.state.RequestExec = nil
 	p.state.PassThroughApplied = false
+	p.resetProviderAttemptState()
 
 	// Cancel any in-flight pass-through stream goroutine from the previous attempt
 	// so it exits promptly and releases its upstream HTTP connection.

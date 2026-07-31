@@ -15,6 +15,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
 
+	"github.com/looplj/axonhub/llm"
 	"github.com/looplj/axonhub/llm/auth"
 	"github.com/looplj/axonhub/llm/httpclient"
 	"github.com/looplj/axonhub/llm/transformer/shared"
@@ -261,10 +262,14 @@ func TestWebSocketExecutorDoReturnsErrorForTopLevelErrorEvent(t *testing.T) {
 	})
 
 	require.Nil(t, resp)
-	require.ErrorContains(t, err, "bad_request: invalid websocket request")
+	var responseErr *llm.ResponseError
+	require.ErrorAs(t, err, &responseErr)
+	require.Equal(t, http.StatusBadGateway, responseErr.StatusCode)
+	require.Equal(t, "bad_request", responseErr.Detail.Code)
+	require.Equal(t, "invalid websocket request", responseErr.Detail.Message)
 }
 
-func TestWebSocketExecutorDoAggregatesFailedResponseEvent(t *testing.T) {
+func TestWebSocketExecutorDoReturnsFailedResponseEventAsBadGateway(t *testing.T) {
 	upgrader := websocket.Upgrader{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
@@ -283,7 +288,8 @@ func TestWebSocketExecutorDoAggregatesFailedResponseEvent(t *testing.T) {
 				"model":      "gpt-5",
 				"status":     status,
 				"error": map[string]any{
-					"code":    "server_error",
+					"type":    "server_error",
+					"code":    "account_unavailable",
 					"message": "upstream failed",
 				},
 			},
@@ -298,17 +304,13 @@ func TestWebSocketExecutorDoAggregatesFailedResponseEvent(t *testing.T) {
 		Auth:   &httpclient.AuthConfig{Type: httpclient.AuthTypeBearer, APIKey: "test-key"},
 		Body:   []byte(`{"model":"gpt-5"}`),
 	})
-	require.NoError(t, err)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-
-	var body Response
-	require.NoError(t, json.Unmarshal(resp.Body, &body))
-	require.Equal(t, "resp_failed", body.ID)
-	require.NotNil(t, body.Status)
-	require.Equal(t, "failed", *body.Status)
-	require.NotNil(t, body.Error)
-	require.Equal(t, "server_error", body.Error.Code)
-	require.Equal(t, "upstream failed", body.Error.Message)
+	require.Nil(t, resp)
+	var responseErr *llm.ResponseError
+	require.ErrorAs(t, err, &responseErr)
+	require.Equal(t, http.StatusBadGateway, responseErr.StatusCode)
+	require.Equal(t, "server_error", responseErr.Detail.Type)
+	require.Equal(t, "account_unavailable", responseErr.Detail.Code)
+	require.Equal(t, "upstream failed", responseErr.Detail.Message)
 }
 
 func TestWebSocketExecutorDoAggregatesCancelledAndIncompleteResponseEvents(t *testing.T) {
@@ -318,6 +320,7 @@ func TestWebSocketExecutorDoAggregatesCancelledAndIncompleteResponseEvents(t *te
 		status     string
 		responseID string
 		response   map[string]any
+		wantError  bool
 		assertBody func(*testing.T, Response)
 	}{
 		{
@@ -326,6 +329,7 @@ func TestWebSocketExecutorDoAggregatesCancelledAndIncompleteResponseEvents(t *te
 			status:     "canceled",
 			responseID: "resp_cancelled",
 			response:   map[string]any{},
+			wantError:  true,
 		},
 		{
 			name:       "incomplete",
@@ -378,6 +382,13 @@ func TestWebSocketExecutorDoAggregatesCancelledAndIncompleteResponseEvents(t *te
 				Auth:   &httpclient.AuthConfig{Type: httpclient.AuthTypeBearer, APIKey: "test-key"},
 				Body:   []byte(`{"model":"gpt-5"}`),
 			})
+			if tt.wantError {
+				require.Nil(t, resp)
+				var responseErr *llm.ResponseError
+				require.ErrorAs(t, err, &responseErr)
+				require.Equal(t, http.StatusBadGateway, responseErr.StatusCode)
+				return
+			}
 			require.NoError(t, err)
 			require.Equal(t, http.StatusOK, resp.StatusCode)
 

@@ -213,6 +213,20 @@ func (processor *TestChannelOrchestrator) TestChannel(
 			StatusCode: &statusCode,
 		}, nil
 	}
+	if terminal, successful := llmTerminalOutcome(&response); terminal && !successful {
+		message, failureStatus := testChannelLLMFailure(&response)
+		if failureStatus == nil {
+			failureStatus = &statusCode
+		}
+
+		return &TestChannelResult{
+			Latency:    latency,
+			Success:    false,
+			Message:    new(""),
+			Error:      &message,
+			StatusCode: failureStatus,
+		}, nil
+	}
 
 	if len(response.Choices) == 0 {
 		return &TestChannelResult{
@@ -269,6 +283,44 @@ func testChannelNonStreamOutput(response *llm.Response) (*string, bool) {
 	}
 
 	return nil, false
+}
+
+func testChannelLLMFailure(response *llm.Response) (string, *int) {
+	if response != nil && response.Error != nil {
+		statusCode := response.Error.StatusCode
+		if statusCode == 0 {
+			statusCode = http.StatusBadGateway
+		}
+
+		message := strings.TrimSpace(response.Error.Detail.Message)
+		if message == "" {
+			message = "Upstream response failed"
+		}
+		metadata := make([]string, 0, 2)
+		if response.Error.Detail.Code != "" {
+			metadata = append(metadata, "code: "+response.Error.Detail.Code)
+		}
+		if response.Error.Detail.Type != "" {
+			metadata = append(metadata, "type: "+response.Error.Detail.Type)
+		}
+		if len(metadata) > 0 {
+			message += " (" + strings.Join(metadata, ", ") + ")"
+		}
+
+		return message, &statusCode
+	}
+
+	if response != nil {
+		for _, choice := range response.Choices {
+			if choice.FinishReason != nil {
+				statusCode := http.StatusBadGateway
+				return "Upstream ended with finish_reason: " + *choice.FinishReason, &statusCode
+			}
+		}
+	}
+
+	statusCode := http.StatusBadGateway
+	return "Upstream response failed", &statusCode
 }
 
 func testChannelHTTPError(rawErr *httpclient.Error, actualStatusCode int, cause error) (*int, string) {
@@ -377,6 +429,7 @@ func (processor *TestChannelOrchestrator) handleStreamResponse(
 	// Accumulate stream chunks
 	var accumulatedContent string
 	hasMeaningfulOutput := false
+	var terminalFailure *llm.Response
 
 	for stream.Next() {
 		select {
@@ -405,6 +458,9 @@ func (processor *TestChannelOrchestrator) handleStreamResponse(
 		if err := json.Unmarshal(event.Data, &chunk); err != nil {
 			log.Warn(ctx, "failed to unmarshal stream event data", log.Cause(err), log.ByteString("data", event.Data))
 			continue
+		}
+		if terminal, successful := llmTerminalOutcome(&chunk); terminal && !successful {
+			terminalFailure = &chunk
 		}
 
 		// Accumulate content from the first choice
@@ -450,6 +506,16 @@ func (processor *TestChannelOrchestrator) handleStreamResponse(
 				actualStatusCode,
 				testChannelModelErrorEvidence(rawErr, message),
 			),
+		}, nil
+	}
+	if terminalFailure != nil {
+		message, statusCode := testChannelLLMFailure(terminalFailure)
+		return &TestChannelResult{
+			Latency:    latency,
+			Success:    false,
+			Message:    lo.ToPtr(accumulatedContent),
+			Error:      &message,
+			StatusCode: statusCode,
 		}, nil
 	}
 

@@ -20,7 +20,7 @@ func protectPrompts(inbound *PersistentInboundTransformer) pipeline.Middleware {
 			return llmRequest, nil
 		}
 
-		protected, err := inbound.state.PromptProtecter.Protect(ctx, llmRequest)
+		protected, mutated, err := inbound.state.PromptProtecter.ProtectWithMutation(ctx, llmRequest)
 		if err != nil {
 			if errors.Is(err, biz.ErrPromptProtectionRejected) {
 				return nil, fmt.Errorf("%w: %s", transformer.ErrInvalidRequest, promptProtectionRejectedMessage)
@@ -33,6 +33,10 @@ func protectPrompts(inbound *PersistentInboundTransformer) pipeline.Middleware {
 
 		if protected == nil {
 			return llmRequest, nil
+		}
+
+		if mutated {
+			inbound.state.PromptPayloadMutated = true
 		}
 
 		return protected, nil

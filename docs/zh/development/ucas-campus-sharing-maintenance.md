@@ -233,6 +233,8 @@ Owner 在用户管理页修改的是这两个对所有账户统一生效的默�
 
 - 空响应、可重试 HTTP 状态和没有状态码的 TLS/连接/解码/超时故障可重试。
 - 同一渠道重试一次，仍失败再切换健康渠道。
+- 流在首个语义内容提交前结束且没有终态事件时，按不完整流失败处理并进入同请求故障转移。
+- 明确的 `model not supported` 会先跳过当前渠道中指向同一实际模型的重复映射，再尝试其他模型或渠道；`429` 配额/限流直接进入跨渠道选择，不在同一渠道反复消耗重试预算。
 - 默认未配置的 `401/403` 不自动重试或故障转移，避免把认证错误放大到其他渠道。
 - 已经提交给客户端的流式输出不能透明重放；应记录渠道不健康，但不能伪造无感重试。
 - 解码成功却没有任何语义输出仍视为失败；纯工具调用不能误判为空响应。
@@ -240,11 +242,18 @@ Owner 在用户管理页修改的是这两个对所有账户统一生效的默�
 
 首次迁移会设置轮询、单渠道最多重试一次和空响应检测。迁移标记为 `campus_sharing_policy_v1`，只执行一次，之后不会覆盖 Owner 的主动修改。
 
+正式服务采用单渠道重试 `1` 次、跨渠道最多 `10` 次、首事件超时 `90` 秒。超时只约束首个上游事件，用于结束无响应的挂起连接；它不会截断已经开始正常输出的长响应。
+
+### 8.3 Codex Responses Lite 兼容
+
+Codex 的 Responses Lite 请求头与 `reasoning.context: "all_turns"` 是一个不可拆分的不变量。网关在 Responses 类型转换中保留该字段，并在渠道 body/header 覆盖全部执行后再次校正，因此 HTTP/SSE 与 WebSocket 都不会把“有 Lite 请求头、无对应 context”的非法请求发给上游。若仍出现 `unsupported_value`，应先核对最终上游请求元数据和客户端版本，不要归因于代理出口。
+
 关键实现：
 
 - 轮换评分：`internal/server/orchestrator/lb_strategy_rr.go`
 - 会话亲和：`internal/server/orchestrator/session_affinity.go`
 - 重试分类：`internal/server/orchestrator/retry.go`
+- Responses Lite 不变量：`llm/transformer/openai/codex/outbound.go`、`internal/server/orchestrator/override.go`
 - 语义成功与健康：`internal/server/orchestrator/performance.go`
 - 捐赠渠道禁用保护：`internal/server/orchestrator/channel_auto_disable.go`
 - 一次性策略迁移：`internal/server/biz/system.go`

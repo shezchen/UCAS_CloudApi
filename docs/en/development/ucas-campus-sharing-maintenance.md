@@ -233,6 +233,8 @@ Affinity and fairness counters are process-local. Horizontal scaling needs share
 
 - Empty responses, configured retryable HTTP statuses, and status-less TLS/connection/decode/timeout failures can be retried.
 - Retry the same channel once, then fail over to a healthy channel.
+- If a stream ends without a terminal event before its first semantic content is committed, treat it as incomplete and enter same-request failover.
+- An explicit `model not supported` skips duplicate mappings to the same actual model within that channel before trying another model or channel. A `429` quota/rate-limit response moves directly to cross-channel selection instead of consuming repeated same-channel attempts.
 - Unconfigured `401/403` failures do not automatically retry or fail over, preventing an authentication error from being amplified across channels.
 - A stream already committed to the client cannot be replayed transparently. Mark the channel unhealthy without faking a seamless retry.
 - A decoded response with no semantic output is a failure; a tool-only response is not empty.
@@ -240,11 +242,18 @@ Affinity and fairness counters are process-local. Horizontal scaling needs share
 
 The one-time `campus_sharing_policy_v1` migration selects round robin, one same-channel retry, and empty-response detection. It does not overwrite later Owner changes.
 
+Production uses `1` same-channel retry, up to `10` cross-channel retries, and a `90`-second first-event timeout. The timeout only bounds a connection that produces no upstream event; it does not truncate a long response after normal output begins.
+
+### 8.3 Codex Responses Lite compatibility
+
+The Codex Responses Lite header and `reasoning.context: "all_turns"` form one invariant. The gateway preserves the field through Responses transformations and enforces it again after every channel body/header override, so both HTTP/SSE and WebSocket avoid sending the invalid “Lite header without context” combination upstream. If `unsupported_value` still appears, inspect final outbound metadata and the client version before blaming the proxy egress.
+
 Key implementation:
 
 - Rotation score: `internal/server/orchestrator/lb_strategy_rr.go`
 - Session affinity: `internal/server/orchestrator/session_affinity.go`
 - Retry classification: `internal/server/orchestrator/retry.go`
+- Responses Lite invariant: `llm/transformer/openai/codex/outbound.go`, `internal/server/orchestrator/override.go`
 - Semantic success and health: `internal/server/orchestrator/performance.go`
 - Donated-channel disable protection: `internal/server/orchestrator/channel_auto_disable.go`
 - One-time migration: `internal/server/biz/system.go`

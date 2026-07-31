@@ -475,6 +475,12 @@ docker compose -f <base-compose> -f <production-override> up -d --no-deps --forc
 
 `/health` 不检查数据库，也不能证明前端静态资源完整，所以不能单独作为上线依据。
 
+### 15.6 生产出口粘滞策略
+
+服务器本地 sing-box URLTest 组使用 `tolerance: 30000` 毫秒、`interval: 61s` 和 `interrupt_exist_connections: false`。当前出口的健康探测成功时保持不变，仅在该探测失败后故障转移；恢复或延迟更低的节点不得抢占仍然健康的当前出口。
+
+生产代理配置和全部凭据只保留在服务器本地，绝不提交。代理配置热重载后，必须确认 sing-box 的 PID、重启次数和监听端口均未变化，并确认受保护的 FRP/HY2 服务及 AxonHub 均未受影响。
+
 ## 16. 回滚
 
 1. 只停止失败的新 AxonHub。

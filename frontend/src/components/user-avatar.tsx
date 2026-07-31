@@ -11,6 +11,9 @@ type UserAvatarProps = Omit<ComponentProps<typeof Avatar>, 'children'> & {
   alt?: string;
 };
 
+/** Session-scoped object URL cache so list rows share one fetch per avatar source. */
+const avatarObjectUrlCache = new Map<string, Promise<string>>();
+
 function getAvatarFallback(label?: string | null): string {
   const normalized = label?.trim();
   if (!normalized) return 'U';
@@ -41,6 +44,42 @@ function isAdminAvatarPath(source: string): boolean {
   return source.startsWith('/admin/');
 }
 
+function isCampusAvatarPath(source: string): boolean {
+  return source.startsWith('/admin/avatars/campus/');
+}
+
+function avatarCacheKey(source: string, projectId: string | null): string {
+  // Campus aliases collide across projects; user avatar bytes do not.
+  if (isCampusAvatarPath(source)) {
+    return `${projectId ?? ''}::${source}`;
+  }
+  return source;
+}
+
+function loadAdminAvatar(source: string, projectId: string | null): Promise<string> {
+  const cacheKey = avatarCacheKey(source, projectId);
+  const cached = avatarObjectUrlCache.get(cacheKey);
+  if (cached) return cached;
+
+  const headers: Record<string, string> = {};
+  if (projectId) {
+    headers['X-Project-ID'] = projectId;
+  }
+
+  const pending = apiRequestBlob(source, {
+    requireAuth: true,
+    headers,
+  })
+    .then((blob) => URL.createObjectURL(blob))
+    .catch((error) => {
+      avatarObjectUrlCache.delete(cacheKey);
+      throw error;
+    });
+
+  avatarObjectUrlCache.set(cacheKey, pending);
+  return pending;
+}
+
 export function UserAvatar({ avatar, userId, label, alt, className, ...props }: UserAvatarProps) {
   const projectId = useSelectedProjectId();
   const source = resolveAvatarSource(avatar, userId);
@@ -50,7 +89,6 @@ export function UserAvatar({ avatar, userId, label, alt, className, ...props }: 
 
   useEffect(() => {
     let cancelled = false;
-    let objectUrl: string | undefined;
 
     if (!source) {
       setResolvedSrc(undefined);
@@ -62,20 +100,22 @@ export function UserAvatar({ avatar, userId, label, alt, className, ...props }: 
       return;
     }
 
-    if (!isAdminAvatarPath(source) || !projectId) {
+    if (!isAdminAvatarPath(source)) {
+      setResolvedSrc(undefined);
+      return;
+    }
+
+    // Campus aliases are project-scoped; user avatars may be fetched without a
+    // project header (system /users for owners).
+    if (isCampusAvatarPath(source) && !projectId) {
       setResolvedSrc(undefined);
       return;
     }
 
     setResolvedSrc(undefined);
-    void apiRequestBlob(source, {
-      requireAuth: true,
-      headers: { 'X-Project-ID': projectId },
-    })
-      .then((blob) => {
-        if (cancelled) return;
-        objectUrl = URL.createObjectURL(blob);
-        setResolvedSrc(objectUrl);
+    void loadAdminAvatar(source, projectId)
+      .then((objectUrl) => {
+        if (!cancelled) setResolvedSrc(objectUrl);
       })
       .catch(() => {
         if (!cancelled) setResolvedSrc(undefined);
@@ -83,7 +123,7 @@ export function UserAvatar({ avatar, userId, label, alt, className, ...props }: 
 
     return () => {
       cancelled = true;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      // Shared cache owns object URLs for the session; do not revoke on unmount.
     };
   }, [projectId, source]);
 

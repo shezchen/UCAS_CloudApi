@@ -33,6 +33,8 @@ func NewAvatarHandlers(params AvatarHandlersParams) *AvatarHandlers {
 }
 
 // GetUserAvatar serves a user's avatar by numeric user ID.
+// Owners may load any user avatar without a project header (system /users).
+// Non-owners must send X-Project-ID and may only load avatars of project members.
 func (h *AvatarHandlers) GetUserAvatar(c *gin.Context) {
 	ctx := c.Request.Context()
 
@@ -42,33 +44,34 @@ func (h *AvatarHandlers) GetUserAvatar(c *gin.Context) {
 		return
 	}
 
-	projectID, ok := contexts.GetProjectID(ctx)
-	if !ok || projectID <= 0 {
-		JSONError(c, http.StatusBadRequest, errors.New("project ID not found in context"))
-		return
-	}
-
 	userID, err := strconv.Atoi(c.Param("user_id"))
 	if err != nil || userID <= 0 {
 		JSONError(c, http.StatusBadRequest, errors.New("invalid user id"))
 		return
 	}
 
-	isMember, err := h.client.UserProject.Query().
-		Where(
-			userproject.ProjectIDEQ(projectID),
-			userproject.UserIDEQ(userID),
-		).
-		Exist(ctx)
-	if err != nil {
-		log.Error(ctx, "failed to verify avatar subject membership", log.Cause(err))
-		JSONError(c, http.StatusInternalServerError, errors.New("failed to load avatar"))
-		return
-	}
-	if !isMember && !currentUser.IsOwner {
-		// Non-owners only see avatars of users in the current project.
-		JSONError(c, http.StatusNotFound, biz.ErrAvatarNotFound)
-		return
+	if !currentUser.IsOwner {
+		projectID, hasProject := contexts.GetProjectID(ctx)
+		if !hasProject || projectID <= 0 {
+			JSONError(c, http.StatusBadRequest, errors.New("project ID not found in context"))
+			return
+		}
+
+		isMember, membershipErr := h.client.UserProject.Query().
+			Where(
+				userproject.ProjectIDEQ(projectID),
+				userproject.UserIDEQ(userID),
+			).
+			Exist(ctx)
+		if membershipErr != nil {
+			log.Error(ctx, "failed to verify avatar subject membership", log.Cause(membershipErr))
+			JSONError(c, http.StatusInternalServerError, errors.New("failed to load avatar"))
+			return
+		}
+		if !isMember {
+			JSONError(c, http.StatusNotFound, biz.ErrAvatarNotFound)
+			return
+		}
 	}
 
 	u, err := h.client.User.Query().

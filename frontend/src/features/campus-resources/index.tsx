@@ -43,7 +43,6 @@ import { Header } from '@/components/layout/header';
 import { Main } from '@/components/layout/main';
 import { UserAvatar } from '@/components/user-avatar';
 import { getProviderQuotaUsagePercentage, type ProviderQuotaChannel, useProviderQuotaStatuses } from '@/features/system/data/quotas';
-import { getProviderQuotaUsagePercentage, type ProviderQuotaChannel, useProviderQuotaStatuses } from '@/features/system/data/quotas';
 import {
   type CampusManagedChannel,
   type CampusChannelProbeResult,

@@ -2,7 +2,7 @@
 
 > 本文只描述 `shezchen/UCAS_CloudApi` 的校内共享扩展。上游 AxonHub 的通用行为仍以本仓库其他文档为准。
 >
-> 最后核对：2026-07-28。分支、提交、镜像和生产进程都可能继续变化；维护时必须先读取实际 Git 与运行态，不能把示例当成当前状态。
+> 最后核对：2026-07-31。分支、提交、镜像和生产进程都可能继续变化；维护时必须先读取实际 Git 与运行态，不能把示例当成当前状态。
 
 ## 1. 项目目标与不可漂移的原则
 
@@ -234,8 +234,11 @@ Owner 在用户管理页修改的是这两个对所有账户统一生效的默�
 - 空响应、可重试 HTTP 状态和没有状态码的 TLS/连接/解码/超时故障可重试。
 - 同一渠道重试一次，仍失败再切换健康渠道。
 - 流在首个语义内容提交前结束且没有终态事件时，按不完整流失败处理并进入同请求故障转移。
-- 明确的 `model not supported` 会先跳过当前渠道中指向同一实际模型的重复映射，再尝试其他模型或渠道；`429` 配额/限流直接进入跨渠道选择，不在同一渠道反复消耗重试预算。
-- 默认未配置的 `401/403` 不自动重试或故障转移，避免把认证错误放大到其他渠道。
+- 明确的 `model not supported` 会先跳过当前渠道中指向同一实际模型的重复映射，再尝试其他模型或渠道；它不能据此宣布其他账号或渠道上的同名模型不可用。
+- `429` 配额/限流直接进入跨渠道选择，不在同一渠道反复消耗重试预算。共享上游返回 `402` 时，该渠道立即进入有界的 5 分钟临时冷却，之后自动恢复探测；这不是调用者自己的校内额度或账单。
+- 默认未配置的 `401/403` 不在同一渠道重复请求，但仍可继续跨渠道故障转移，避免一个失效或无权限的共享凭据直接终止用户请求。
+- 多次尝试全部耗尽时返回 HTTP `503` 和 `upstream_candidates_exhausted`，列出各类失败次数、最后的上游 HTTP 状态和脱敏原文；每条 execution 仍保留真实状态，不能让最后一个 `400` 或 `402` 遮住此前的断流和认证失败。
+- Responses 流只有 `response.completed` 才是成功终态；`response.incomplete` 必须原样保留，`response.failed`、`response.cancelled` 和顶层错误必须成为诚实失败，Token 用量或通用 finish reason 不能覆盖终态。
 - 已经提交给客户端的流式输出不能透明重放；应记录渠道不健康，但不能伪造无感重试。
 - 解码成功却没有任何语义输出仍视为失败；纯工具调用不能误判为空响应。
 - 捐赠渠道发生波动时进入冷却或断路器并暂时退出候选；恢复后重新参与轮换，不自动永久禁用。
@@ -246,15 +249,15 @@ Owner 在用户管理页修改的是这两个对所有账户统一生效的默�
 
 ### 8.3 Codex Responses Lite 兼容
 
-Codex 的 Responses Lite 请求头与 `reasoning.context: "all_turns"` 是一个不可拆分的不变量。网关在 Responses 类型转换中保留该字段，并在渠道 body/header 覆盖全部执行后再次校正，因此 HTTP/SSE 与 WebSocket 都不会把“有 Lite 请求头、无对应 context”的非法请求发给上游。若仍出现 `unsupported_value`，应先核对最终上游请求元数据和客户端版本，不要归因于代理出口。
+Codex 的 Responses Lite 请求头与 `reasoning.context: "all_turns"` 是一个不可拆分的不变量。Codex 渠道收到真实 Responses Lite 请求时，网关只保留客户端的 Lite 请求信封，避免通用结构重建丢失 Lite 专有字段；响应仍经过 AxonHub 的正常转换和终态校验。模型映射、由网关掌控的认证与 `Chatgpt-Account-Id`、渠道覆盖、提示词注入/保护、`store: false`、`stream: true` 和 `reasoning.context: "all_turns"` 具有更高优先级。普通 Responses 请求和非 Codex 渠道不会获得这项限定请求兼容。若仍出现 `unsupported_value`，应先核对最终上游请求元数据和客户端版本，不要归因于代理出口。
 
 关键实现：
 
 - 轮换评分：`internal/server/orchestrator/lb_strategy_rr.go`
 - 会话亲和：`internal/server/orchestrator/session_affinity.go`
-- 重试分类：`internal/server/orchestrator/retry.go`
-- Responses Lite 不变量：`llm/transformer/openai/codex/outbound.go`、`internal/server/orchestrator/override.go`
-- 语义成功与健康：`internal/server/orchestrator/performance.go`
+- 重试分类与候选耗尽摘要：`internal/server/orchestrator/retry.go`、`llm/pipeline/upstream_error.go`
+- Responses Lite 不变量与限定请求信封兼容：`llm/transformer/openai/codex/outbound.go`、`internal/server/orchestrator/override.go`、`internal/server/orchestrator/pass_through.go`
+- Responses 终态与健康：`llm/transformer/openai/responses/`、`internal/server/orchestrator/performance.go`
 - 捐赠渠道禁用保护：`internal/server/orchestrator/channel_auto_disable.go`
 - 一次性策略迁移：`internal/server/biz/system.go`
 
@@ -268,7 +271,7 @@ Codex 的 Responses Lite 请求头与 `reasoning.context: "all_turns"` 是一个
 - `recovering`：冷却结束后的恢复观察阶段；
 - `unknown`：没有足够生产或测试证据。
 
-所有项目成员都能测试公开渠道。测试由服务端在授权后使用该渠道真实配置执行，不要求普通用户拥有或读取渠道密钥。
+所有项目成员都能测试公开渠道。测试由服务端在授权后使用该渠道真实配置执行，不要求普通用户拥有或读取渠道密钥。成员可以显式选择一个同步模型并只测试该模型，也可以保留“自动”使用安全回退链；服务端会拒绝不在该渠道公开同步列表中的模型名。
 
 模型候选不是固定拿列表第一个，而是：
 
@@ -278,7 +281,7 @@ Codex 的 Responses Lite 请求头与 `reasoning.context: "all_turns"` 是一个
 
 只有明确的“模型不存在/不支持/参数无效”类 `400`、`404`、`422` 才尝试下一个模型。认证、限流、TLS、网络和上游故障必须诚实呈现，不用模型回退遮盖。
 
-测试响应展示实际模型、总延迟、HTTP 状态码、尝试链和脱敏后的上游错误原文。每个用户对每个渠道有 30 秒点击冷却。测试：
+测试响应展示实际模型、总延迟、HTTP 状态码、尝试链和脱敏后的上游错误原文。UI 会把绿色结果严格限定为实际测试模型，不把它描述成整个渠道所有模型都可用。每个用户对每个渠道有 30 秒点击冷却。测试：
 
 - 不计入用户日/周额度；
 - 不计入排行或公平轮换；

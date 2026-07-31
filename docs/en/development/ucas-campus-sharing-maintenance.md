@@ -2,7 +2,7 @@
 
 > This document covers the campus-sharing extensions in `shezchen/UCAS_CloudApi`. Refer to the other documentation in this repository for general upstream AxonHub behavior.
 >
-> Last audited: 2026-07-28. Branches, commits, images, and production processes can drift. Always inspect the actual Git and runtime state before maintenance.
+> Last audited: 2026-07-31. Branches, commits, images, and production processes can drift. Always inspect the actual Git and runtime state before maintenance.
 
 ## 1. Purpose and non-negotiable principles
 
@@ -234,8 +234,11 @@ Affinity and fairness counters are process-local. Horizontal scaling needs share
 - Empty responses, configured retryable HTTP statuses, and status-less TLS/connection/decode/timeout failures can be retried.
 - Retry the same channel once, then fail over to a healthy channel.
 - If a stream ends without a terminal event before its first semantic content is committed, treat it as incomplete and enter same-request failover.
-- An explicit `model not supported` skips duplicate mappings to the same actual model within that channel before trying another model or channel. A `429` quota/rate-limit response moves directly to cross-channel selection instead of consuming repeated same-channel attempts.
-- Unconfigured `401/403` failures do not automatically retry or fail over, preventing an authentication error from being amplified across channels.
+- An explicit `model not supported` skips duplicate mappings to the same actual model within that channel before trying another model or channel. It does not declare that model unavailable on other accounts or channels.
+- A `429` quota/rate-limit response moves directly to cross-channel selection instead of consuming repeated same-channel attempts. An upstream `402` puts that shared provider channel into a bounded five-minute cooldown before automatic recovery probing; it is not the caller's campus allowance or bill.
+- Unconfigured `401/403` failures are not repeated on the same channel. Cross-channel failover may still continue so one invalid or unauthorized shared credential does not terminate the user's request.
+- When multiple attempts are exhausted, return HTTP `503` with code `upstream_candidates_exhausted`, category counts, the final upstream HTTP status, and sanitized final provider text. Keep each execution's real status; do not let the final `400` or `402` hide the preceding incomplete streams or authentication failures.
+- For Responses streams, only `response.completed` is a successful terminal. Preserve `response.incomplete`, and convert `response.failed`, `response.cancelled`, and top-level errors into honest failures; token usage or a generic finish reason must not overwrite that terminal state.
 - A stream already committed to the client cannot be replayed transparently. Mark the channel unhealthy without faking a seamless retry.
 - A decoded response with no semantic output is a failure; a tool-only response is not empty.
 - Transiently failing donated channels enter cooldown/circuit-breaking, leave the candidate set temporarily, and rejoin after recovery. They are not permanently auto-disabled.
@@ -246,15 +249,15 @@ Production uses `1` same-channel retry, up to `10` cross-channel retries, and a 
 
 ### 8.3 Codex Responses Lite compatibility
 
-The Codex Responses Lite header and `reasoning.context: "all_turns"` form one invariant. The gateway preserves the field through Responses transformations and enforces it again after every channel body/header override, so both HTTP/SSE and WebSocket avoid sending the invalid “Lite header without context” combination upstream. If `unsupported_value` still appears, inspect final outbound metadata and the client version before blaming the proxy egress.
+The Codex Responses Lite header and `reasoning.context: "all_turns"` form one invariant. For a Codex channel receiving a real Responses Lite request, the gateway preserves only the client's request envelope instead of rebuilding away Lite-only fields. Responses still pass through AxonHub's normal transformer and terminal validation. Model mapping, gateway-owned authentication and `Chatgpt-Account-Id`, channel overrides, prompt injection/protection, `store: false`, `stream: true`, and `reasoning.context: "all_turns"` take precedence. Ordinary Responses requests and non-Codex channels do not receive this scoped request compatibility. If `unsupported_value` still appears, inspect final outbound metadata and the client version before blaming the proxy egress.
 
 Key implementation:
 
 - Rotation score: `internal/server/orchestrator/lb_strategy_rr.go`
 - Session affinity: `internal/server/orchestrator/session_affinity.go`
-- Retry classification: `internal/server/orchestrator/retry.go`
-- Responses Lite invariant: `llm/transformer/openai/codex/outbound.go`, `internal/server/orchestrator/override.go`
-- Semantic success and health: `internal/server/orchestrator/performance.go`
+- Retry classification and exhausted-candidate summary: `internal/server/orchestrator/retry.go`, `llm/pipeline/upstream_error.go`
+- Responses Lite invariant and scoped request-envelope compatibility: `llm/transformer/openai/codex/outbound.go`, `internal/server/orchestrator/override.go`, `internal/server/orchestrator/pass_through.go`
+- Responses terminal semantics and health: `llm/transformer/openai/responses/`, `internal/server/orchestrator/performance.go`
 - Donated-channel disable protection: `internal/server/orchestrator/channel_auto_disable.go`
 - One-time migration: `internal/server/biz/system.go`
 
@@ -268,7 +271,7 @@ The Shared Resources UI supports five states:
 - `recovering`: the observation period after cooldown;
 - `unknown`: insufficient production or probe evidence.
 
-Every project member may probe a public channel. The server authorizes the member and uses the real channel configuration internally; the member never needs or receives its credential.
+Every project member may probe a public channel. The server authorizes the member and uses the real channel configuration internally; the member never needs or receives its credential. A member may select one synchronized model to test exactly that model, or leave the selector on Auto for the safe fallback chain. The server rejects model IDs outside the channel's public synchronized list.
 
 The model candidate order is adaptive:
 
@@ -278,7 +281,7 @@ The model candidate order is adaptive:
 
 Only explicit model-not-found, unsupported-model, or invalid-model failures such as `400`, `404`, and `422` try another model. Authentication, rate limiting, TLS, networking, and provider failures remain honest and are not hidden by model fallback.
 
-The response includes actual model, total latency, HTTP status, attempt chain, and sanitized upstream error text. Each user/channel pair has a 30-second click cooldown. Probes:
+The response includes actual model, total latency, HTTP status, attempt chain, and sanitized upstream error text. The UI scopes a green result to the actual tested model and never presents it as proof that every model on the channel works. Each user/channel pair has a 30-second click cooldown. Probes:
 
 - do not consume daily or weekly allowance;
 - do not enter rankings or fair-rotation accounting;

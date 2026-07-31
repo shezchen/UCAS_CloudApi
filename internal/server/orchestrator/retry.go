@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"errors"
+	"net/http"
 	"regexp"
 	"slices"
 	"strings"
@@ -20,6 +21,63 @@ func isRetryableError(err error) bool {
 	}
 
 	return httpclient.IsHTTPStatusCodeRetryable(ExtractStatusCodeFromError(err))
+}
+
+func isExplicitUnsupportedModelError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	statusCode := ExtractStatusCodeFromError(err)
+	return isExplicitUnsupportedModel(statusCode, unsupportedModelErrorEvidence(err))
+}
+
+func unsupportedModelErrorEvidence(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	parts := []string{err.Error()}
+
+	var httpErr *httpclient.Error
+	if errors.As(err, &httpErr) {
+		parts = append(parts, string(httpErr.Body), httpErr.Status)
+	}
+
+	var llmErr *llm.ResponseError
+	if errors.As(err, &llmErr) {
+		parts = append(parts, llmErr.Detail.Message, llmErr.Detail.Code, llmErr.Detail.Type)
+	}
+
+	return strings.ToLower(strings.Join(parts, " "))
+}
+
+func isExplicitUnsupportedModel(statusCode int, message string) bool {
+	switch statusCode {
+	case http.StatusBadRequest, http.StatusNotFound, http.StatusUnprocessableEntity:
+	default:
+		return false
+	}
+
+	message = strings.ToLower(message)
+	if !strings.Contains(message, "model") {
+		return false
+	}
+	for _, signal := range []string{
+		"not supported",
+		"unsupported",
+		"not found",
+		"does not exist",
+		"unknown model",
+		"invalid model",
+		"model_not_found",
+	} {
+		if strings.Contains(message, signal) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func isRetryableErrorForChannel(err error, ch *biz.Channel) bool {

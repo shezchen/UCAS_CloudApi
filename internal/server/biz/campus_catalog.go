@@ -1138,6 +1138,9 @@ func campusFailureCategory(statusCode *int, message string) string {
 	switch {
 	case strings.Contains(lower, "timeout"), strings.Contains(lower, "deadline"):
 		return "timeout"
+	case strings.Contains(lower, "stream ended without terminal"),
+		strings.Contains(lower, "incomplete stream"):
+		return "upstream_unavailable"
 	case strings.Contains(lower, "connection"), strings.Contains(lower, "tls"), strings.Contains(lower, "network"):
 		return "network"
 	case strings.Contains(lower, "unauthorized"), strings.Contains(lower, "invalid token"), strings.Contains(lower, "authentication"):

@@ -496,6 +496,8 @@ func TestPersistentOutboundTransformer_CanRetry(t *testing.T) {
 			fmt.Errorf("failed to auto-aggregate streaming response: %w", pipeline.ErrEmptyResponse),
 			fmt.Errorf("failed to auto-aggregate streaming response: %w", pipeline.ErrEmptyStreamChunks),
 			fmt.Errorf("failed to auto-aggregate streaming response: %w", pipeline.ErrEmptyAggregatedBody),
+			fmt.Errorf("upstream stream failed: %w", pipeline.ErrStreamIncomplete),
+			fmt.Errorf("upstream stream failed: %w", llm.ErrStreamIncomplete),
 		} {
 			outbound := &PersistentOutboundTransformer{
 				wrapped: &mockTransformer{},
@@ -508,8 +510,48 @@ func TestPersistentOutboundTransformer_CanRetry(t *testing.T) {
 				},
 			}
 
-			require.True(t, outbound.CanRetry(retryErr))
+			require.True(t, outbound.CanRetry(retryErr), "expected retryable: %v", retryErr)
 		}
+	})
+
+	t.Run("unsupported model skips same actual model and allows different model", func(t *testing.T) {
+		unsupportedErr := &httpclient.Error{
+			StatusCode: http.StatusBadRequest,
+			Body:       []byte(`The requested model is not supported.`),
+		}
+
+		sameOnly := &PersistentOutboundTransformer{
+			wrapped: &mockTransformer{},
+			state: &PersistenceState{
+				CurrentCandidate: &ChannelModelsCandidate{
+					Channel: channel,
+					Models: []biz.ChannelModelEntry{
+						{RequestModel: "gpt-5.6-sol", ActualModel: "gpt-5.6-sol"},
+						{RequestModel: "gpt-5.6-sol", ActualModel: "gpt-5.6-sol"},
+					},
+				},
+				CurrentModelIndex: 0,
+			},
+		}
+		require.False(t, sameOnly.CanRetry(unsupportedErr))
+
+		withFallback := &PersistentOutboundTransformer{
+			wrapped: &mockTransformer{},
+			state: &PersistenceState{
+				CurrentCandidate: &ChannelModelsCandidate{
+					Channel: channel,
+					Models: []biz.ChannelModelEntry{
+						{RequestModel: "gpt-5.6-sol", ActualModel: "gpt-5.6-sol"},
+						{RequestModel: "gpt-5.6-sol", ActualModel: "gpt-5.6-sol-fallback"},
+					},
+				},
+				CurrentModelIndex: 0,
+			},
+		}
+		require.True(t, withFallback.CanRetry(unsupportedErr))
+		require.NoError(t, withFallback.PrepareForRetry(context.Background()))
+		require.Equal(t, 1, withFallback.state.CurrentModelIndex)
+		require.Equal(t, "gpt-5.6-sol-fallback", withFallback.state.CurrentCandidate.Models[1].ActualModel)
 	})
 }
 

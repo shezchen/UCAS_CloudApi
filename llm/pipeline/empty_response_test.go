@@ -340,6 +340,79 @@ func TestPipeline_Process_StreamEmptyResponseDetection(t *testing.T) {
 		require.True(t, res.Stream)
 		require.Equal(t, 1, streamCalls)
 	})
+
+	t.Run("retries on incomplete stream without terminal event", func(t *testing.T) {
+		// Role-only / metadata chunks followed by a clean upstream EOF used to be
+		// committed to the client and then marked failed in Close() with
+		// "stream ended without terminal event". Fail that attempt pre-commit so
+		// channel failover can still recover the request.
+		streamCalls := 0
+		executor := &mockExecutor{
+			doStream: func(ctx context.Context, req *httpclient.Request) (streams.Stream[*httpclient.StreamEvent], error) {
+				streamCalls++
+				return streams.SliceStream([]*httpclient.StreamEvent{{}}), nil
+			},
+		}
+
+		prepareCalls := 0
+		channelSwitches := 0
+		outbound := &mockOutbound{
+			transformStream: func(ctx context.Context, req *httpclient.Request, stream streams.Stream[*httpclient.StreamEvent]) (streams.Stream[*llm.Response], error) {
+				if streamCalls == 1 {
+					return streams.SliceStream([]*llm.Response{
+						{Object: "chat.completion.chunk", Choices: []llm.Choice{{
+							Delta: &llm.Message{Role: "assistant"},
+						}}},
+					}), nil
+				}
+
+				return streams.SliceStream([]*llm.Response{
+					{Choices: []llm.Choice{{
+						Delta: &llm.Message{
+							Content: llm.MessageContent{Content: lo.ToPtr("recovered")},
+						},
+					}}},
+					llm.DoneResponse,
+				}), nil
+			},
+			canRetry: func(err error) bool {
+				return errors.Is(err, ErrStreamIncomplete)
+			},
+			prepareForRetry: func(ctx context.Context) error {
+				prepareCalls++
+				return nil
+			},
+			hasMoreChannels: func() bool { return true },
+			nextChannel: func(ctx context.Context) error {
+				channelSwitches++
+				return nil
+			},
+		}
+
+		streamFlag := true
+		streamInbound := &mockInbound{
+			transformRequest: func(ctx context.Context, req *httpclient.Request) (*llm.Request, error) {
+				return &llm.Request{Stream: &streamFlag}, nil
+			},
+		}
+
+		p := &pipeline{
+			Executor:               executor,
+			Inbound:                streamInbound,
+			Outbound:               outbound,
+			maxSameChannelRetries:  0,
+			maxChannelRetries:      1,
+			emptyResponseDetection: true,
+		}
+
+		res, err := p.Process(ctx, &httpclient.Request{})
+		require.NoError(t, err)
+		require.NotNil(t, res)
+		require.True(t, res.Stream)
+		require.Equal(t, 2, streamCalls)
+		require.Equal(t, 0, prepareCalls)
+		require.Equal(t, 1, channelSwitches)
+	})
 }
 
 func TestPipeline_Process_NonStreamEmptyResponseDetection(t *testing.T) {

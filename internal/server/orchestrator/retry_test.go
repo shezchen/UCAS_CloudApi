@@ -194,6 +194,56 @@ func TestExtractStatusCodeFromError(t *testing.T) {
 	}
 }
 
+func TestIsExplicitUnsupportedModelError(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{
+			name: "http body model not supported",
+			err: &httpclient.Error{
+				StatusCode: http.StatusBadRequest,
+				Body:       []byte(`The requested model is not supported.`),
+			},
+			expected: true,
+		},
+		{
+			name: "llm response error model_not_found",
+			err: &llm.ResponseError{
+				StatusCode: http.StatusNotFound,
+				Detail: llm.ErrorDetail{
+					Message: "Request rejected",
+					Code:    "model_not_found",
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "auth error is not unsupported model",
+			err: &httpclient.Error{
+				StatusCode: http.StatusUnauthorized,
+				Body:       []byte(`model is not supported`),
+			},
+			expected: false,
+		},
+		{
+			name: "generic 400 is not unsupported model",
+			err: &httpclient.Error{
+				StatusCode: http.StatusBadRequest,
+				Body:       []byte(`invalid authentication token`),
+			},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, isExplicitUnsupportedModelError(tt.err))
+		})
+	}
+}
+
 func TestIsRetryableError(t *testing.T) {
 	tests := []struct {
 		name     string

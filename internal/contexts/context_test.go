@@ -2,12 +2,47 @@ package contexts
 
 import (
 	"context"
+	"sync"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/looplj/axonhub/internal/ent"
 	"github.com/looplj/axonhub/internal/ent/request"
 	"github.com/looplj/axonhub/internal/ent/user"
 )
+
+func TestDetachedAsyncContainerDoesNotShareSelectedCredential(t *testing.T) {
+	production := WithChannelAPIKey(WithSource(t.Context(), request.SourceAPI), "production-initial")
+	background := DetachForAsync(production)
+
+	var group sync.WaitGroup
+	group.Add(2)
+	go func() {
+		defer group.Done()
+		for range 1000 {
+			WithChannelAPIKey(production, "production-next-route")
+			WithSource(production, request.SourceAPI)
+		}
+	}()
+	go func() {
+		defer group.Done()
+		for range 1000 {
+			WithChannelAPIKey(background, "programmatic-test-route")
+			WithSource(background, request.SourceTest)
+		}
+	}()
+	group.Wait()
+
+	productionKey, _ := GetChannelAPIKey(production)
+	backgroundKey, _ := GetChannelAPIKey(background)
+	require.Equal(t, "production-next-route", productionKey)
+	require.Equal(t, "programmatic-test-route", backgroundKey)
+	productionSource, _ := GetSource(production)
+	backgroundSource, _ := GetSource(background)
+	require.Equal(t, request.SourceAPI, productionSource)
+	require.Equal(t, request.SourceTest, backgroundSource)
+}
 
 func TestWithAPIKey(t *testing.T) {
 	ctx := t.Context()

@@ -13,6 +13,7 @@ import (
 	"github.com/tidwall/gjson"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/looplj/axonhub/internal/contexts"
 	"github.com/looplj/axonhub/internal/log"
 	"github.com/looplj/axonhub/internal/objects"
 	"github.com/looplj/axonhub/internal/pkg/xjson"
@@ -36,9 +37,7 @@ type TestChannelOrchestrator struct {
 	usageLogService             *biz.UsageLogService
 	promptProtectionRuleService *biz.PromptProtectionRuleService
 	httpClient                  *httpclient.HttpClient
-	modelCircuitBreaker         *biz.ModelCircuitBreaker
 	modelMapper                 *ModelMapper
-	loadBalancer                *LoadBalancer
 	channelLimiterManager       *ChannelLimiterManager
 }
 
@@ -58,9 +57,7 @@ func NewTestChannelOrchestrator(
 		usageLogService:             usageLogService,
 		promptProtectionRuleService: promptProtectionRuleService,
 		httpClient:                  httpClient,
-		modelCircuitBreaker:         biz.NewModelCircuitBreaker(),
 		modelMapper:                 NewModelMapper(),
-		loadBalancer:                NewLoadBalancer(systemService, channelService, NewWeightStrategy()),
 		channelLimiterManager:       NewChannelLimiterManager(),
 	}
 }
@@ -79,6 +76,7 @@ type TestChannelResult struct {
 	Error            *string
 	StatusCode       *int
 	ModelUnsupported bool
+	routeKey         *biz.RouteKey
 }
 
 // TestChannel tests a specific channel with a simple request.
@@ -87,29 +85,72 @@ func (processor *TestChannelOrchestrator) TestChannel(
 	channelID objects.GUID,
 	modelID *string,
 	proxy *httpclient.ProxyConfig,
-) (*TestChannelResult, error) {
+) (result *TestChannelResult, resultErr error) {
+	return processor.testChannel(ctx, channelID, modelID, proxy, nil, true)
+}
+
+// TestChannelRoute exercises the exact production protocol/model route. It is
+// intentionally separate from the manual UI test, whose normal default-model
+// selection remains unchanged.
+func (processor *TestChannelOrchestrator) TestChannelRoute(
+	ctx context.Context,
+	channelID objects.GUID,
+	modelID *string,
+	proxy *httpclient.ProxyConfig,
+	route biz.RouteKey,
+) (result *TestChannelResult, resultErr error) {
+	if route.ChannelID != channelID.ID {
+		return nil, fmt.Errorf("route channel %d does not match requested channel %d", route.ChannelID, channelID.ID)
+	}
+	// TriggerTest owns the only generation/write for programmatic exact-route
+	// probes. Recording here as well would allocate a newer inner generation and
+	// make TriggerTest's outer write lose as stale.
+	return processor.testChannel(ctx, channelID, modelID, proxy, &route, false)
+}
+
+func (processor *TestChannelOrchestrator) testChannel(
+	ctx context.Context,
+	channelID objects.GUID,
+	modelID *string,
+	proxy *httpclient.ProxyConfig,
+	forcedRoute *biz.RouteKey,
+	recordVerdict bool,
+) (result *TestChannelResult, resultErr error) {
+	ctx = contexts.WithIsolatedContainer(ctx)
+	var testGeneration uint64
+	if recordVerdict {
+		testGeneration = processor.channelService.UnifiedRouteState().NextTestGeneration()
+	}
 	inbound := openai.NewInboundTransformer()
+	streamVerdict := &testChannelStreamVerdict{}
+	var promptProtecter PromptProtecter
+	if processor.promptProtectionRuleService != nil {
+		promptProtecter = processor.promptProtectionRuleService
+	}
+	selector := NewSpecifiedChannelSelector(processor.channelService, channelID)
+	if forcedRoute != nil {
+		selector.ForcedAPIFormat = forcedRoute.APIFormat
+		selector.ForcedActualModel = forcedRoute.ActualModel
+	}
 	// Create ChatCompletionOrchestrator for this test request
 	chatProcessor := &ChatCompletionOrchestrator{
-		channelSelector: NewSpecifiedChannelSelector(processor.channelService, channelID),
+		channelSelector: selector,
 		RequestService:  processor.requestService,
 		ChannelService:  processor.channelService,
 		PromptProvider:  &stubPromptProvider{},
-		PromptProtecter: processor.promptProtectionRuleService,
+		PromptProtecter: promptProtecter,
 		PipelineFactory: pipeline.NewFactory(processor.httpClient),
 		Middlewares: []pipeline.Middleware{
 			stream.EnsureUsage(),
+			&testChannelStreamVerdictMiddleware{verdict: streamVerdict},
 		},
-		Inbound:                    inbound,
-		SystemService:              processor.systemService,
-		UsageLogService:            processor.usageLogService,
-		proxy:                      proxy,
-		ModelMapper:                processor.modelMapper,
-		adaptiveLoadBalancer:       processor.loadBalancer,
-		failoverLoadBalancer:       processor.loadBalancer,
-		circuitBreakerLoadBalancer: processor.loadBalancer,
-		channelLimiterManager:      processor.channelLimiterManager,
-		modelCircuitBreaker:        processor.modelCircuitBreaker,
+		Inbound:               inbound,
+		SystemService:         processor.systemService,
+		UsageLogService:       processor.usageLogService,
+		proxy:                 proxy,
+		ModelMapper:           processor.modelMapper,
+		channelLimiterManager: processor.channelLimiterManager,
+		singleRouteOnly:       true,
 	}
 
 	channel, err := processor.channelService.GetChannel(ctx, channelID.ID)
@@ -121,6 +162,15 @@ func (processor *TestChannelOrchestrator) TestChannel(
 	if testModel == "" {
 		testModel = channel.DefaultTestModel
 	}
+	var testRoute *biz.RouteKey
+	defer func() {
+		if result != nil {
+			result.routeKey = testRoute
+		}
+		if recordVerdict {
+			processor.recordCompletedTestVerdict(ctx, testGeneration, testRoute, result, resultErr)
+		}
+	}()
 
 	// Check if the channel requires streaming
 	useStream := channel != nil && channel.Policies.Stream == objects.CapabilityPolicyRequire
@@ -168,6 +218,7 @@ func (processor *TestChannelOrchestrator) TestChannel(
 		},
 		Body: body,
 	})
+	testRoute = rawResponse.RouteKey
 
 	if err != nil {
 		rawErr := inbound.TransformError(ctx, err)
@@ -193,7 +244,7 @@ func (processor *TestChannelOrchestrator) TestChannel(
 
 	// Handle streaming response
 	if rawResponse.ChatCompletionStream != nil {
-		result, handleErr := processor.handleStreamResponse(ctx, rawResponse.ChatCompletionStream, startTime)
+		result, handleErr := processor.handleStreamResponse(ctx, rawResponse.ChatCompletionStream, startTime, streamVerdict)
 		if result != nil && result.StatusCode == nil {
 			result.StatusCode = &statusCode
 		}
@@ -227,7 +278,6 @@ func (processor *TestChannelOrchestrator) TestChannel(
 			StatusCode: failureStatus,
 		}, nil
 	}
-
 	if len(response.Choices) == 0 {
 		return &TestChannelResult{
 			Latency:    latency,
@@ -281,7 +331,6 @@ func testChannelNonStreamOutput(response *llm.Response) (*string, bool) {
 			return message.Content.Content, true
 		}
 	}
-
 	return nil, false
 }
 
@@ -416,31 +465,127 @@ func isExplicitUnsupportedTestModel(statusCode int, message string) bool {
 	return isExplicitUnsupportedModel(statusCode, message)
 }
 
+// testChannelStreamVerdict captures the provider-side unified stream semantics
+// before the inbound transformer can erase protocol-only fields such as a
+// Responses API response.incomplete status.
+type testChannelStreamVerdict struct {
+	hasMeaningfulOutput bool
+	terminal            bool
+	successful          bool
+	err                 error
+}
+
+type testChannelStreamVerdictMiddleware struct {
+	pipeline.DummyMiddleware
+	verdict *testChannelStreamVerdict
+}
+
+func (m *testChannelStreamVerdictMiddleware) Name() string {
+	return "test-channel-stream-verdict"
+}
+
+func (m *testChannelStreamVerdictMiddleware) OnOutboundLlmStream(
+	_ context.Context,
+	stream streams.Stream[*llm.Response],
+) (streams.Stream[*llm.Response], error) {
+	return &testChannelVerdictStream{stream: stream, verdict: m.verdict}, nil
+}
+
+type testChannelVerdictStream struct {
+	stream  streams.Stream[*llm.Response]
+	verdict *testChannelStreamVerdict
+	current *llm.Response
+	err     error
+}
+
+func (s *testChannelVerdictStream) Next() bool {
+	if s.err != nil {
+		return false
+	}
+	if !s.stream.Next() {
+		if sourceErr := s.stream.Err(); sourceErr != nil {
+			s.err = sourceErr
+			if s.verdict != nil {
+				s.verdict.err = sourceErr
+				s.verdict.successful = false
+			}
+			return false
+		}
+		if s.verdict == nil || !s.verdict.terminal || !s.verdict.successful {
+			s.err = pipeline.ErrStreamIncomplete
+			if s.verdict != nil {
+				s.verdict.err = s.err
+				s.verdict.successful = false
+			}
+		}
+		return false
+	}
+
+	s.current = s.stream.Current()
+	if s.verdict != nil && pipeline.HasResponseContent(s.current) {
+		s.verdict.hasMeaningfulOutput = true
+	}
+	if outcome := pipeline.ResponseTerminalOutcome(s.current); outcome.Terminal {
+		if s.verdict != nil {
+			s.verdict.terminal = true
+			s.verdict.successful = outcome.Successful
+			s.verdict.err = outcome.Err
+		}
+		if !outcome.Successful {
+			s.err = outcome.Err
+			if s.err == nil {
+				s.err = fmt.Errorf("upstream stream reached an unsuccessful terminal state")
+			}
+			return false
+		}
+	}
+
+	return true
+}
+
+func (s *testChannelVerdictStream) Current() *llm.Response {
+	return s.current
+}
+
+func (s *testChannelVerdictStream) Err() error {
+	if s.err != nil {
+		return s.err
+	}
+	return s.stream.Err()
+}
+
+func (s *testChannelVerdictStream) Close() error {
+	err := s.stream.Close()
+	if err != nil && s.verdict != nil {
+		s.verdict.err = err
+		s.verdict.successful = false
+	}
+	return err
+}
+
 // handleStreamResponse processes a streaming response and accumulates the content.
 func (processor *TestChannelOrchestrator) handleStreamResponse(
 	ctx context.Context,
 	stream streams.Stream[*httpclient.StreamEvent],
 	startTime time.Time,
+	providerVerdicts ...*testChannelStreamVerdict,
 ) (*TestChannelResult, error) {
-	defer func() {
-		_ = stream.Close()
-	}()
-
-	// Accumulate stream chunks
 	var accumulatedContent string
 	hasMeaningfulOutput := false
+	hasSuccessfulTerminal := false
 	var terminalFailure *llm.Response
+	var malformedEventErr error
+	var canceledErr error
 
 	for stream.Next() {
 		select {
 		case <-ctx.Done():
-			return &TestChannelResult{
-				Latency: time.Since(startTime).Seconds(),
-				Success: false,
-				Message: lo.ToPtr(accumulatedContent),
-				Error:   lo.ToPtr(ctx.Err().Error()),
-			}, nil
+			canceledErr = ctx.Err()
+			break
 		default:
+		}
+		if canceledErr != nil {
+			break
 		}
 
 		event := stream.Current()
@@ -448,51 +593,62 @@ func (processor *TestChannelOrchestrator) handleStreamResponse(
 			continue
 		}
 
-		// The stream may end with a "[DONE]" message which is not valid JSON.
-		if string(event.Data) == "[DONE]" {
+		// [DONE] is a valid Chat Completions terminal, but never sufficient by
+		// itself: meaningful output is required too, and the provider-side verdict
+		// wrapper above prevents a synthetic Responses [DONE] from hiding an
+		// earlier response.incomplete/failed event.
+		if strings.TrimSpace(string(event.Data)) == "[DONE]" {
+			hasSuccessfulTerminal = true
 			continue
 		}
 
-		// Parse the stream event data
 		var chunk llm.Response
 		if err := json.Unmarshal(event.Data, &chunk); err != nil {
 			log.Warn(ctx, "failed to unmarshal stream event data", log.Cause(err), log.ByteString("data", event.Data))
+			if malformedEventErr == nil {
+				malformedEventErr = fmt.Errorf("malformed stream event: %w", err)
+			}
 			continue
 		}
-		if terminal, successful := llmTerminalOutcome(&chunk); terminal && !successful {
-			terminalFailure = &chunk
+		if outcome := pipeline.ResponseTerminalOutcome(&chunk); outcome.Terminal {
+			if outcome.Successful {
+				hasSuccessfulTerminal = true
+			} else {
+				terminalFailure = &chunk
+			}
 		}
 
-		// Accumulate content from the first choice
-		if len(chunk.Choices) > 0 && chunk.Choices[0].Delta != nil {
-			delta := chunk.Choices[0].Delta
+		if pipeline.HasResponseContent(&chunk) {
+			hasMeaningfulOutput = true
+		}
+		for _, choice := range chunk.Choices {
+			delta := choice.Delta
+			if delta == nil {
+				continue
+			}
 			if delta.Content.Content != nil {
 				accumulatedContent += *delta.Content.Content
-				if strings.TrimSpace(*delta.Content.Content) != "" {
-					hasMeaningfulOutput = true
-				}
-			}
-			if len(delta.ToolCalls) > 0 ||
-				strings.TrimSpace(lo.FromPtr(delta.ReasoningContent)) != "" ||
-				strings.TrimSpace(delta.Refusal) != "" {
-				hasMeaningfulOutput = true
 			}
 		}
 	}
 
-	// Calculate latency after processing all stream events
 	latency := time.Since(startTime).Seconds()
+	streamErr := stream.Err()
+	closeErr := stream.Close()
 
-	if err := ctx.Err(); err != nil {
+	if canceledErr == nil {
+		canceledErr = ctx.Err()
+	}
+	if canceledErr != nil {
 		return &TestChannelResult{
 			Latency: latency,
 			Success: false,
 			Message: lo.ToPtr(accumulatedContent),
-			Error:   lo.ToPtr(err.Error()),
+			Error:   lo.ToPtr(canceledErr.Error()),
 		}, nil
 	}
 
-	if streamErr := stream.Err(); streamErr != nil {
+	if streamErr != nil {
 		actualStatusCode := ExtractStatusCodeFromError(streamErr)
 		rawErr := openai.NewInboundTransformer().TransformError(ctx, streamErr)
 		statusCode, message := testChannelHTTPError(rawErr, actualStatusCode, streamErr)
@@ -508,6 +664,33 @@ func (processor *TestChannelOrchestrator) handleStreamResponse(
 			),
 		}, nil
 	}
+	if closeErr != nil {
+		return &TestChannelResult{
+			Latency: latency,
+			Success: false,
+			Message: lo.ToPtr(accumulatedContent),
+			Error:   lo.ToPtr(closeErr.Error()),
+		}, nil
+	}
+	if len(providerVerdicts) > 0 && providerVerdicts[0] != nil {
+		providerVerdict := providerVerdicts[0]
+		if providerVerdict.err != nil {
+			return &TestChannelResult{
+				Latency: latency,
+				Success: false,
+				Message: lo.ToPtr(accumulatedContent),
+				Error:   lo.ToPtr(providerVerdict.err.Error()),
+			}, nil
+		}
+		if !providerVerdict.hasMeaningfulOutput || !providerVerdict.terminal || !providerVerdict.successful {
+			return &TestChannelResult{
+				Latency: latency,
+				Success: false,
+				Message: lo.ToPtr(accumulatedContent),
+				Error:   lo.ToPtr("Provider stream did not produce meaningful output and a successful terminal event"),
+			}, nil
+		}
+	}
 	if terminalFailure != nil {
 		message, statusCode := testChannelLLMFailure(terminalFailure)
 		return &TestChannelResult{
@@ -518,6 +701,14 @@ func (processor *TestChannelOrchestrator) handleStreamResponse(
 			StatusCode: statusCode,
 		}, nil
 	}
+	if malformedEventErr != nil {
+		return &TestChannelResult{
+			Latency: latency,
+			Success: false,
+			Message: lo.ToPtr(accumulatedContent),
+			Error:   lo.ToPtr(malformedEventErr.Error()),
+		}, nil
+	}
 
 	if !hasMeaningfulOutput {
 		return &TestChannelResult{
@@ -525,6 +716,14 @@ func (processor *TestChannelOrchestrator) handleStreamResponse(
 			Success: false,
 			Message: lo.ToPtr(""),
 			Error:   lo.ToPtr("No content in stream response"),
+		}, nil
+	}
+	if !hasSuccessfulTerminal {
+		return &TestChannelResult{
+			Latency: latency,
+			Success: false,
+			Message: lo.ToPtr(accumulatedContent),
+			Error:   lo.ToPtr("Stream ended without a successful terminal event"),
 		}, nil
 	}
 
@@ -543,6 +742,7 @@ type TestAPIKeyResult struct {
 	Latency   float64
 	Error     *string
 	Disabled  bool
+	routeKey  *biz.RouteKey
 }
 
 // TestChannelAPIKeysResult represents the aggregated result of testing all API keys.
@@ -614,7 +814,7 @@ func (processor *TestChannelOrchestrator) TestChannelAPIKeys(
 			default:
 			}
 
-			result := processor.testSingleKey(groupCtx, channelID, apiKey, testModel, useStream, proxy)
+			result := processor.testSingleKey(groupCtx, channelID, apiKey, testModel, useStream, proxy, nil, true)
 			_, isDisabled := disabledSet[apiKey]
 			result.Disabled = isDisabled
 			results[index] = result
@@ -651,7 +851,39 @@ func (processor *TestChannelOrchestrator) TestSingleAPIKey(
 	key string,
 	modelID *string,
 	proxy *httpclient.ProxyConfig,
-) (*TestAPIKeyResult, error) {
+) (result *TestAPIKeyResult, resultErr error) {
+	return processor.testSingleAPIKey(ctx, channelID, key, modelID, proxy, nil, true)
+}
+
+// TestSingleAPIKeyRoute verifies one exact credential/model/protocol route.
+func (processor *TestChannelOrchestrator) TestSingleAPIKeyRoute(
+	ctx context.Context,
+	channelID objects.GUID,
+	key string,
+	modelID *string,
+	proxy *httpclient.ProxyConfig,
+	route biz.RouteKey,
+) (result *TestAPIKeyResult, resultErr error) {
+	channel, err := processor.channelService.GetChannel(ctx, channelID.ID)
+	if err != nil {
+		return nil, err
+	}
+	if route.ChannelID != channelID.ID || route.CredentialID != biz.RouteCredentialFingerprint(channel, key) {
+		return nil, fmt.Errorf("credential route does not match requested channel/key")
+	}
+	// The surrounding TriggerTest call owns the route verdict generation/write.
+	return processor.testSingleAPIKey(ctx, channelID, key, modelID, proxy, &route, false)
+}
+
+func (processor *TestChannelOrchestrator) testSingleAPIKey(
+	ctx context.Context,
+	channelID objects.GUID,
+	key string,
+	modelID *string,
+	proxy *httpclient.ProxyConfig,
+	forcedRoute *biz.RouteKey,
+	recordVerdict bool,
+) (result *TestAPIKeyResult, resultErr error) {
 	ch, err := processor.channelService.GetChannel(ctx, channelID.ID)
 	if err != nil {
 		return nil, err
@@ -672,7 +904,6 @@ func (processor *TestChannelOrchestrator) TestSingleAPIKey(
 	if testModel == "" {
 		testModel = ch.DefaultTestModel
 	}
-
 	useStream := ch.Policies.Stream == objects.CapabilityPolicyRequire
 
 	disabledSet := make(map[string]struct{}, len(ch.DisabledAPIKeys))
@@ -680,11 +911,32 @@ func (processor *TestChannelOrchestrator) TestSingleAPIKey(
 		disabledSet[dk.Key] = struct{}{}
 	}
 
-	result := processor.testSingleKey(ctx, channelID, key, testModel, useStream, proxy)
+	result = processor.testSingleKey(ctx, channelID, key, testModel, useStream, proxy, forcedRoute, recordVerdict)
 	_, isDisabled := disabledSet[key]
 	result.Disabled = isDisabled
 
 	return result, nil
+}
+
+func (processor *TestChannelOrchestrator) recordCompletedTestVerdict(
+	ctx context.Context,
+	generation uint64,
+	key *biz.RouteKey,
+	result *TestChannelResult,
+	err error,
+) {
+	if err != nil || result == nil || ctx.Err() != nil || key == nil || key.ChannelID <= 0 {
+		return
+	}
+	detail := ""
+	if result.Error != nil {
+		detail = biz.SanitizeCampusDiagnosticError(*result.Error)
+	}
+	processor.channelService.UnifiedRouteState().RecordTestVerdictGeneration(*key, generation, biz.RouteTestVerdict{
+		Completed: true,
+		Pass:      result.Success,
+		Error:     detail,
+	})
 }
 
 // testSingleKey tests a single API key by forcing the use of a specific key via SetAPIKey.
@@ -695,35 +947,69 @@ func (processor *TestChannelOrchestrator) testSingleKey(
 	testModel string,
 	useStream bool,
 	proxy *httpclient.ProxyConfig,
-) *TestAPIKeyResult {
+	forcedRoute *biz.RouteKey,
+	recordVerdict bool,
+) (result *TestAPIKeyResult) {
+	ctx = contexts.WithIsolatedContainer(ctx)
+	var testGeneration uint64
+	if recordVerdict {
+		testGeneration = processor.channelService.UnifiedRouteState().NextTestGeneration()
+	}
 	keyPrefix := maskAPIKey(key)
+	var routeKey *biz.RouteKey
+	defer func() {
+		if result != nil {
+			result.routeKey = routeKey
+		}
+		if !recordVerdict || result == nil || routeKey == nil || ctx.Err() != nil {
+			return
+		}
+		detail := ""
+		if result.Error != nil {
+			detail = biz.SanitizeCampusDiagnosticError(*result.Error)
+		}
+		processor.channelService.UnifiedRouteState().RecordTestVerdictGeneration(*routeKey, testGeneration, biz.RouteTestVerdict{
+			Completed: true,
+			Pass:      result.Success,
+			Error:     detail,
+		})
+	}()
 
 	inbound := openai.NewInboundTransformer()
+	streamVerdict := &testChannelStreamVerdict{}
+	var promptProtecter PromptProtecter
+	if processor.promptProtectionRuleService != nil {
+		promptProtecter = processor.promptProtectionRuleService
+	}
+
+	selector := &SpecifiedChannelSelector{
+		ChannelService: processor.channelService,
+		ChannelID:      channelID,
+		SelectedAPIKey: key,
+	}
+	if forcedRoute != nil {
+		selector.ForcedAPIFormat = forcedRoute.APIFormat
+		selector.ForcedActualModel = forcedRoute.ActualModel
+	}
 
 	chatProcessor := &ChatCompletionOrchestrator{
-		channelSelector: &SpecifiedChannelSelector{
-			ChannelService: processor.channelService,
-			ChannelID:      channelID,
-			SelectedAPIKey: key,
-		},
+		channelSelector: selector,
 		RequestService:  processor.requestService,
 		ChannelService:  processor.channelService,
 		PromptProvider:  &stubPromptProvider{},
-		PromptProtecter: processor.promptProtectionRuleService,
+		PromptProtecter: promptProtecter,
 		PipelineFactory: pipeline.NewFactory(processor.httpClient),
 		Middlewares: []pipeline.Middleware{
 			stream.EnsureUsage(),
+			&testChannelStreamVerdictMiddleware{verdict: streamVerdict},
 		},
-		Inbound:                    inbound,
-		SystemService:              processor.systemService,
-		UsageLogService:            processor.usageLogService,
-		proxy:                      proxy,
-		ModelMapper:                processor.modelMapper,
-		adaptiveLoadBalancer:       processor.loadBalancer,
-		failoverLoadBalancer:       processor.loadBalancer,
-		circuitBreakerLoadBalancer: processor.loadBalancer,
-		channelLimiterManager:      processor.channelLimiterManager,
-		modelCircuitBreaker:        processor.modelCircuitBreaker,
+		Inbound:               inbound,
+		SystemService:         processor.systemService,
+		UsageLogService:       processor.usageLogService,
+		proxy:                 proxy,
+		ModelMapper:           processor.modelMapper,
+		channelLimiterManager: processor.channelLimiterManager,
+		singleRouteOnly:       true,
 	}
 
 	llmRequest := &llm.Request{
@@ -774,9 +1060,10 @@ func (processor *TestChannelOrchestrator) testSingleKey(
 		},
 		Body: body,
 	})
+	routeKey = rawResponse.RouteKey
 	if err != nil {
 		rawErr := inbound.TransformError(ctx, err)
-		message := gjson.GetBytes(rawErr.Body, "error.message").String()
+		_, message := testChannelHTTPError(rawErr, ExtractStatusCodeFromError(err), err)
 
 		return &TestAPIKeyResult{
 			KeyPrefix: keyPrefix,
@@ -788,7 +1075,7 @@ func (processor *TestChannelOrchestrator) testSingleKey(
 
 	// Handle streaming response
 	if rawResponse.ChatCompletionStream != nil {
-		streamResult, _ := processor.handleStreamResponse(ctx, rawResponse.ChatCompletionStream, startTime)
+		streamResult, _ := processor.handleStreamResponse(ctx, rawResponse.ChatCompletionStream, startTime, streamVerdict)
 
 		return &TestAPIKeyResult{
 			KeyPrefix: keyPrefix,
@@ -812,10 +1099,28 @@ func (processor *TestChannelOrchestrator) testSingleKey(
 			Error:     &errMsg,
 		}
 	}
+	if terminal, successful := llmTerminalOutcome(&response); terminal && !successful {
+		message, _ := testChannelLLMFailure(&response)
+		return &TestAPIKeyResult{
+			KeyPrefix: keyPrefix,
+			Success:   false,
+			Latency:   latency,
+			Error:     &message,
+		}
+	}
 
 	if len(response.Choices) == 0 {
 		errMsg := "No message in response"
 
+		return &TestAPIKeyResult{
+			KeyPrefix: keyPrefix,
+			Success:   false,
+			Latency:   latency,
+			Error:     &errMsg,
+		}
+	}
+	if _, meaningful := testChannelNonStreamOutput(&response); !meaningful {
+		errMsg := "No content in response"
 		return &TestAPIKeyResult{
 			KeyPrefix: keyPrefix,
 			Success:   false,

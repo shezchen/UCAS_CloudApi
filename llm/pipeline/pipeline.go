@@ -50,6 +50,15 @@ type StreamAttemptAcceptor interface {
 	SetStreamAttemptAccepted(bool)
 }
 
+// AttemptObserver receives the outcome of each concrete upstream route
+// attempt. It is intentionally independent from retry classification: an
+// observer may trigger diagnostics, but it must not block failover or infer
+// global channel health from a client request.
+type AttemptObserver interface {
+	OnAttemptFailure(context.Context, error)
+	OnAttemptSuccess(context.Context)
+}
+
 // Option defines a pipeline configuration option.
 type Option func(*pipeline)
 
@@ -292,7 +301,16 @@ func (p *pipeline) Process(ctx context.Context, request *httpclient.Request) (*R
 
 		result, err := p.processRequest(ctx, llmRequest)
 		if err == nil {
+			// A streaming attempt is not successful merely because a client stream
+			// was returned. Its concrete stream wrapper owns the single final
+			// success/failure notification after semantic terminal validation.
+			if observer, ok := p.Outbound.(AttemptObserver); ok && (result == nil || !result.Stream) {
+				observer.OnAttemptSuccess(ctx)
+			}
 			return result, nil
+		}
+		if observer, ok := p.Outbound.(AttemptObserver); ok {
+			observer.OnAttemptFailure(ctx, err)
 		}
 
 		lastErr = err

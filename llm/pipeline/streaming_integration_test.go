@@ -23,6 +23,15 @@ type streamUpgradeOutboundWrapper struct {
 	transformer.Outbound
 }
 
+type attemptObserverOutboundWrapper struct {
+	transformer.Outbound
+	successes int
+	failures  int
+}
+
+func (w *attemptObserverOutboundWrapper) OnAttemptSuccess(context.Context)        { w.successes++ }
+func (w *attemptObserverOutboundWrapper) OnAttemptFailure(context.Context, error) { w.failures++ }
+
 type emptyAggregateInboundWrapper struct {
 	transformer.Inbound
 }
@@ -53,8 +62,9 @@ func TestPipeline_Streaming_OpenAI_to_OpenAI(t *testing.T) {
 
 	// Create transformers
 	inbound := openai.NewInboundTransformer()
-	outbound, err := openai.NewOutboundTransformer("https://api.openai.com", "test-api-key")
+	baseOutbound, err := openai.NewOutboundTransformer("https://api.openai.com", "test-api-key")
 	require.NoError(t, err)
+	outbound := &attemptObserverOutboundWrapper{Outbound: baseOutbound}
 
 	// Load test data using xtest
 	streamEvents, err := xtest.LoadStreamChunks(t, "openai-tool.stream.jsonl")
@@ -128,6 +138,8 @@ func TestPipeline_Streaming_OpenAI_to_OpenAI(t *testing.T) {
 	require.NotNil(t, result)
 	require.True(t, result.Stream)
 	require.NotNil(t, result.EventStream)
+	require.Zero(t, outbound.successes, "returning a client stream is not a terminal success")
+	require.Zero(t, outbound.failures)
 
 	// Collect all events from the stream
 	var collectedEvents []*httpclient.StreamEvent
@@ -668,7 +680,6 @@ func TestPipeline_NonStreaming_AutoAggregateUpgradedStream_EmptyAggregatedBody(t
 	require.ErrorContains(t, err, "failed to auto-aggregate streaming response")
 	require.ErrorContains(t, err, "empty aggregated body")
 }
-
 
 func TestPipeline_NonStreaming_AutoAggregateUpgradedStream_EmptyJSONObjectAggregatedBodyAllowed(t *testing.T) {
 	ctx := context.Background()

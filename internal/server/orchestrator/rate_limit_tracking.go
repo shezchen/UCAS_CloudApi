@@ -2,17 +2,12 @@ package orchestrator
 
 import (
 	"context"
-	"net/http"
-	"time"
 
 	"github.com/looplj/axonhub/internal/log"
 	"github.com/looplj/axonhub/llm"
-	"github.com/looplj/axonhub/llm/httpclient"
 	"github.com/looplj/axonhub/llm/pipeline"
 	"github.com/looplj/axonhub/llm/streams"
 )
-
-const upstreamPaymentRequiredCooldown = 5 * time.Minute
 
 // withRateLimitTracking creates a middleware that tracks token usage and
 // provider cooldown signals for rate limiting.
@@ -71,57 +66,6 @@ func (m *rateLimitTracking) OnOutboundLlmStream(ctx context.Context, stream stre
 		tracker:  m.tracker,
 		outbound: m.outbound,
 	}, nil
-}
-
-// OnOutboundRawError handles explicit upstream quota and cooldown signals.
-// A 402 immediately cools down the shared provider channel for a bounded period;
-// a 429 only does so when the provider supplies Retry-After.
-func (m *rateLimitTracking) OnOutboundRawError(ctx context.Context, err error) {
-	if m.outbound == nil {
-		return
-	}
-
-	// Local admission rejections never reached upstream — they must not trigger cooldown.
-	if isChannelQueueError(err) || isLocalRPMExhaustedError(err) {
-		return
-	}
-
-	channel := m.outbound.GetCurrentChannel()
-	if channel == nil {
-		return
-	}
-
-	if ExtractStatusCodeFromError(err) == http.StatusPaymentRequired {
-		m.tracker.SetCooldown(channel.ID, time.Now().Add(upstreamPaymentRequiredCooldown))
-
-		log.Warn(ctx, "channel cooling down due to upstream payment or quota rejection",
-			log.Int("channel_id", channel.ID),
-			log.String("channel_name", channel.Name),
-			log.Duration("cooldown", upstreamPaymentRequiredCooldown),
-		)
-
-		return
-	}
-
-	// Only cool down a channel when the upstream explicitly provides a cooldown.
-	if !httpclient.HasRetryAfterHeader(err) {
-		return
-	}
-
-	// Parse Retry-After header from 429 error
-	cooldown, ok := httpclient.ParseRetryAfter(err)
-	if !ok {
-		return
-	}
-
-	// Set cooldown for this channel
-	m.tracker.SetCooldown(channel.ID, time.Now().Add(cooldown))
-
-	log.Warn(ctx, "channel cooling down due to 429",
-		log.Int("channel_id", channel.ID),
-		log.String("channel_name", channel.Name),
-		log.Duration("cooldown", cooldown),
-	)
 }
 
 // rateLimitTrackingStream wraps a stream to track token usage for rate limiting.

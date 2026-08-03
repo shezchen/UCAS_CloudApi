@@ -97,7 +97,15 @@ func TestEnforceCodexResponsesLiteInvariant(t *testing.T) {
 		headers.Set("X-OpenAI-Internal-Codex-Responses-Lite", "true")
 		request := &httpclient.Request{
 			Headers: headers,
-			Body:    []byte(`{"model":"gpt-5.6-sol","reasoning":{"context":"current_turn"}}`),
+			Body: []byte(`{
+				"model":"gpt-5.6-sol",
+				"reasoning":{"context":"current_turn"},
+				"input":[
+					{"type":"message","id":"item_invalid","role":"assistant","content":[]},
+					{"type":"message","id":"msg_valid","role":"assistant","content":[]},
+					{"type":"reasoning","id":"rs_valid","summary":[]}
+				]
+			}`),
 		}
 
 		processed, err := enforceCodexResponsesLiteInvariant(newCodexOutbound()).OnOutboundRawRequest(t.Context(), request)
@@ -105,6 +113,9 @@ func TestEnforceCodexResponsesLiteInvariant(t *testing.T) {
 		require.Equal(t, "all_turns", gjson.GetBytes(processed.Body, "reasoning.context").String())
 		require.False(t, gjson.GetBytes(processed.Body, "store").Bool())
 		require.True(t, gjson.GetBytes(processed.Body, "stream").Bool())
+		require.False(t, gjson.GetBytes(processed.Body, "input.0.id").Exists())
+		require.Equal(t, "msg_valid", gjson.GetBytes(processed.Body, "input.1.id").String())
+		require.Equal(t, "rs_valid", gjson.GetBytes(processed.Body, "input.2.id").String())
 	})
 
 	t.Run("header absent leaves body unchanged", func(t *testing.T) {

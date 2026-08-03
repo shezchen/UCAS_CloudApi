@@ -106,3 +106,27 @@ func TestTransformRequest_PreservesReasoningContext(t *testing.T) {
 	require.NoError(t, err)
 	require.JSONEq(t, `{"effort":"high","context":"all_turns"}`, gjson.GetBytes(outboundReq.Body, "reasoning").Raw)
 }
+
+func TestTransformRequest_NormalizesReplayMessageIDs(t *testing.T) {
+	inboundTransformer := NewInboundTransformer()
+	outboundTransformer, err := NewOutboundTransformer("https://api.openai.com", "test-api-key")
+	require.NoError(t, err)
+
+	input := []byte(`{
+		"model":"gpt-5.6-sol",
+		"input":[
+			{"type":"message","id":"msg_provider_123","role":"assistant","content":[{"type":"output_text","text":"valid"}]},
+			{"type":"message","id":"item_legacy","role":"assistant","content":[{"type":"output_text","text":"legacy"}]}
+		]
+	}`)
+	chatReq, err := inboundTransformer.TransformRequest(t.Context(), &httpclient.Request{
+		Headers: http.Header{"Content-Type": []string{"application/json"}},
+		Body:    input,
+	})
+	require.NoError(t, err)
+
+	outboundReq, err := outboundTransformer.TransformRequest(t.Context(), chatReq)
+	require.NoError(t, err)
+	require.Equal(t, "msg_provider_123", gjson.GetBytes(outboundReq.Body, "input.0.id").String())
+	require.False(t, gjson.GetBytes(outboundReq.Body, "input.1.id").Exists())
+}

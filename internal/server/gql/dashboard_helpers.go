@@ -186,7 +186,10 @@ func (r *queryResolver) getTopModelsForAPIKeys(ctx context.Context, apiKeyIDs []
 	}
 
 	query := r.client.UsageLog.Query().
-		Where(usagelog.APIKeyIDIn(apiKeyIDs...))
+		Where(
+			usagelog.APIKeyIDIn(apiKeyIDs...),
+			usagelog.SourceNEQ(usagelog.SourceTest),
+		)
 
 	if input != nil {
 		if input.CreatedAtGTE != nil {

@@ -292,23 +292,30 @@ func TestPersistentOutboundTransformer_NextChannel_UsesCandidateAPIFormatOutboun
 		},
 	}
 
-	processor := &PersistentOutboundTransformer{
-		wrapped: primaryOutbound,
-		state: &PersistenceState{
-			CurrentCandidateIndex: 0,
-			ChannelModelsCandidates: []*ChannelModelsCandidate{
-				{
-					Channel: chatChannel,
-					Models:  []biz.ChannelModelEntry{{RequestModel: "gpt-4o-mini", ActualModel: "gpt-4o-mini"}},
-				},
-				{
-					Channel:   embeddingChannel,
-					APIFormat: llm.APIFormatOpenAIEmbedding.String(),
-					Models:    []biz.ChannelModelEntry{{RequestModel: "text-embedding-3-small", ActualModel: "text-embedding-3-small"}},
-				},
+	state := &PersistenceState{
+		OriginalModel:         "gpt-4o-mini",
+		UnifiedRoutes:         biz.NewUnifiedRouteState(),
+		AttemptedRoutes:       make(map[biz.RouteKey]struct{}),
+		CurrentCandidateIndex: 0,
+		CurrentModelIndex:     0,
+		ChannelModelsCandidates: []*ChannelModelsCandidate{
+			{
+				Channel: chatChannel,
+				Models:  []biz.ChannelModelEntry{{RequestModel: "gpt-4o-mini", ActualModel: "gpt-4o-mini"}},
+			},
+			{
+				Channel:   embeddingChannel,
+				APIFormat: llm.APIFormatOpenAIEmbedding.String(),
+				Models:    []biz.ChannelModelEntry{{RequestModel: "text-embedding-3-small", ActualModel: "text-embedding-3-small"}},
 			},
 		},
 	}
+	state.CurrentCandidate = state.ChannelModelsCandidates[0]
+	processor := &PersistentOutboundTransformer{
+		wrapped: primaryOutbound,
+		state:   state,
+	}
+	processor.captureCurrentRoute(ctx)
 
 	err := processor.NextChannel(ctx)
 	require.NoError(t, err)
@@ -491,7 +498,7 @@ func TestPersistentOutboundTransformer_CanRetry(t *testing.T) {
 		require.False(t, outbound.CanRetry(errSkipCandidateByCircuitBreaker))
 	})
 
-	t.Run("auto-aggregate empty errors are retryable", func(t *testing.T) {
+	t.Run("all failures are handled by exact-route rescue, not same-route retry", func(t *testing.T) {
 		for _, retryErr := range []error{
 			fmt.Errorf("failed to auto-aggregate streaming response: %w", pipeline.ErrEmptyResponse),
 			fmt.Errorf("failed to auto-aggregate streaming response: %w", pipeline.ErrEmptyStreamChunks),
@@ -510,7 +517,7 @@ func TestPersistentOutboundTransformer_CanRetry(t *testing.T) {
 				},
 			}
 
-			require.True(t, outbound.CanRetry(retryErr), "expected retryable: %v", retryErr)
+			require.False(t, outbound.CanRetry(retryErr), "same-route retry must stay disabled: %v", retryErr)
 		}
 	})
 
@@ -548,11 +555,56 @@ func TestPersistentOutboundTransformer_CanRetry(t *testing.T) {
 				CurrentModelIndex: 0,
 			},
 		}
-		require.True(t, withFallback.CanRetry(unsupportedErr))
-		require.NoError(t, withFallback.PrepareForRetry(context.Background()))
-		require.Equal(t, 1, withFallback.state.CurrentModelIndex)
-		require.Equal(t, "gpt-5.6-sol-fallback", withFallback.state.CurrentCandidate.Models[1].ActualModel)
+		require.False(t, withFallback.CanRetry(unsupportedErr), "alternate actual models are exact rescue routes, not same-route retries")
 	})
+}
+
+func TestOutboundPersistentStream_NotifiesOnlyFinalSemanticOutcome(t *testing.T) {
+	tests := []struct {
+		name     string
+		events   []*httpclient.StreamEvent
+		meta     llm.ResponseMeta
+		expected bool
+	}{
+		{
+			name: "terminal stream succeeds",
+			events: []*httpclient.StreamEvent{
+				{Data: []byte(`{"choices":[{"delta":{"content":"ok"}}]}`)},
+				{Data: []byte(`[DONE]`)},
+			},
+			meta:     llm.ResponseMeta{Terminal: true, Completed: true},
+			expected: true,
+		},
+		{
+			name:     "semantic content without terminal fails",
+			events:   []*httpclient.StreamEvent{{Data: []byte(`{"choices":[{"delta":{"content":"partial"}}]}`)}},
+			meta:     llm.ResponseMeta{},
+			expected: false,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			state := &PersistenceState{AttemptAccepted: true, AttemptSemanticOutput: true}
+			var outcomes []bool
+			persistent := NewOutboundPersistentStream(
+				context.Background(),
+				streams.SliceStream(test.events),
+				nil,
+				nil,
+				nil,
+				nil,
+				&mockTransformer{aggregatedResponse: []byte(`{}`), aggregatedMeta: test.meta},
+				nil,
+				state,
+				func(_ context.Context, success bool) { outcomes = append(outcomes, success) },
+			)
+			for persistent.Next() {
+				_ = persistent.Current()
+			}
+			require.NoError(t, persistent.Close())
+			require.Equal(t, []bool{test.expected}, outcomes, "attempt observer must fire exactly once at Close")
+		})
+	}
 }
 
 func TestShouldForceStreamingForCandidate(t *testing.T) {
@@ -1405,7 +1457,9 @@ func TestPersistentOutboundTransformer_CanRetry_ChannelRetryableStatusCodes(t *t
 		},
 	}
 
-	require.True(t, outbound.CanRetry(&httpclient.Error{StatusCode: http.StatusBadRequest}))
+	// Per-channel status lists no longer form a second retry policy. Every
+	// abnormal attempt is handed to the unified cross-route rescue queue.
+	require.False(t, outbound.CanRetry(&httpclient.Error{StatusCode: http.StatusBadRequest}))
 	require.False(t, outbound.CanRetry(&httpclient.Error{StatusCode: http.StatusForbidden}))
 	require.False(t, outbound.CanRetry(&httpclient.Error{StatusCode: http.StatusUnauthorized}))
 }

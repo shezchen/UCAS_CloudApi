@@ -823,13 +823,12 @@ func TestChatCompletionOrchestrator_Process_QueueRejectionDoesNotConsumeRPM(t *t
 
 	_, err = orchestrator.Process(ctx, httpRequest)
 	require.Error(t, err)
-
-	var queueErr *ChannelQueueError
-	require.ErrorAs(t, err, &queueErr, "expected channel queue rejection")
-	assert.Equal(t, channelQueueReasonTimeout, queueErr.Reason)
+	require.Contains(t, err.Error(), "queue_timeout")
+	require.Contains(t, err.Error(), "at capacity")
 
 	assert.Zero(t, rateLimitTracker.GetRequestCount(ch.ID),
 		"queue rejection must not consume RPM budget — middleware order regression")
+	assert.Zero(t, executor.requestCalls.Load(), "queue rejection must not reach upstream")
 }
 
 func TestChatCompletionOrchestrator_Process_RPMAdmissionBlocksBeforeUpstream(t *testing.T) {
@@ -904,11 +903,7 @@ func TestChatCompletionOrchestrator_Process_RPMAdmissionBlocksBeforeUpstream(t *
 	secondRequest := buildTestRequest("gpt-4", "rpm test", false)
 	_, err = orchestrator.Process(ctx, secondRequest)
 	require.Error(t, err)
-	require.ErrorIs(t, err, ErrLocalRPMExhausted)
-
-	var rpmErr *LocalRPMExhaustedError
-	require.ErrorAs(t, err, &rpmErr)
-	assert.Equal(t, ch.ID, rpmErr.ChannelID)
+	require.Contains(t, err.Error(), "local RPM limit 1")
 	assert.Equal(t, int64(1), rateLimitTracker.GetRequestCount(ch.ID))
 	assert.Equal(t, int64(1), executor.requestCalls.Load(), "RPM rejection must not reach upstream")
 }

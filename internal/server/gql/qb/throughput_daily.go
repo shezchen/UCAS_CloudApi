@@ -180,6 +180,7 @@ func buildDailyRowNumberQuery(dateExpr string, config DailyQueryFragmentConfig, 
 		"    JOIN usage_logs ul ON se.request_id = ul.request_id\n" +
 		"    " + config.JoinClause + "\n" +
 		"    WHERE se.rn = 1\n" +
+		"        AND ul.source <> 'test'\n" +
 		"    GROUP BY " + dateExpr + ", " + config.GroupByFields + "\n" +
 		")\n" +
 		"SELECT date, id, " + config.NameAlias + ", tokens_count, request_count, throughput\n" +
@@ -205,6 +206,7 @@ func buildDailyMaxIDQuery(dateExpr string, config DailyQueryFragmentConfig, limi
 		"    JOIN usage_logs ul ON se.request_id = ul.request_id\n" +
 		"    " + config.JoinClause + "\n" +
 		"    WHERE se.status = 'completed'\n" +
+		"        AND ul.source <> 'test'\n" +
 		"        AND se.metrics_latency_ms > 0\n" +
 		"        AND se.created_at >= " + startDatePlaceholder + "\n" +
 		"        AND se.id = (\n" +
@@ -294,6 +296,7 @@ func buildDailyPerformanceStatsRowNumberQuery(dateExpr string, config DailyQuery
 		"    FROM successful_execs se\n" +
 		"    JOIN usage_logs ul ON se.request_id = ul.request_id\n" +
 		"    WHERE se.rn = 1\n" +
+		"        AND ul.source <> 'test'\n" +
 		"    GROUP BY exec_date, se." + getIDColumnName(queryType) + "\n" +
 		")\n" +
 		"SELECT date, id, tokens_count, latency_ms, ttft_ms, request_count, throughput\n" +
@@ -345,6 +348,7 @@ func buildDailyPerformanceStatsMaxIDQuery(dateExpr string, config DailyQueryFrag
 		"        " + throughputSQL + " as throughput\n" +
 		"    FROM latest_execs se\n" +
 		"    JOIN usage_logs ul ON se.request_id = ul.request_id\n" +
+		"    WHERE ul.source <> 'test'\n" +
 		"    GROUP BY exec_date, se." + getIDColumnName(queryType) + "\n" +
 		")\n" +
 		"SELECT date, id, tokens_count, latency_ms, ttft_ms, request_count, throughput\n" +

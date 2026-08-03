@@ -142,6 +142,115 @@ func TestInboundTransformer_StreamTransformation_WithTestData(t *testing.T) {
 	}
 }
 
+func TestInboundTransformer_TransformStream_PreservesProviderMessageID(t *testing.T) {
+	trans := NewInboundTransformer()
+	finishReason := "stop"
+
+	stream, err := trans.TransformStream(t.Context(), streams.SliceStream([]*llm.Response{
+		{
+			ID: "resp_id_round_trip", Object: "chat.completion.chunk", Model: "gpt-5", Created: 1700000000,
+			Choices: []llm.Choice{{Index: 0, Delta: &llm.Message{Role: "assistant"}}},
+		},
+		{
+			ID: "resp_id_round_trip", Object: "chat.completion.chunk", Model: "gpt-5", Created: 1700000000,
+			Choices: []llm.Choice{{Index: 0, Delta: &llm.Message{
+				ID:      "msg_provider_123",
+				Content: llm.MessageContent{Content: lo.ToPtr("hello")},
+			}}},
+		},
+		{
+			ID: "resp_id_round_trip", Object: "chat.completion.chunk", Model: "gpt-5", Created: 1700000000,
+			Choices: []llm.Choice{{Index: 0, Delta: &llm.Message{}, FinishReason: &finishReason}},
+		},
+	}))
+	require.NoError(t, err)
+
+	var events []StreamEvent
+	for stream.Next() {
+		var event StreamEvent
+		require.NoError(t, json.Unmarshal(stream.Current().Data, &event))
+		events = append(events, event)
+	}
+	require.NoError(t, stream.Err())
+
+	for _, event := range events {
+		if event.Item != nil && event.Item.Type == "message" {
+			require.Equal(t, "msg_provider_123", event.Item.ID)
+		}
+		if event.ItemID != nil && (event.Type == StreamEventTypeOutputTextDelta || event.Type == StreamEventTypeOutputTextDone) {
+			require.Equal(t, "msg_provider_123", *event.ItemID)
+		}
+	}
+}
+
+func TestInboundTransformer_TransformStream_GeneratesReplayableMessageID(t *testing.T) {
+	trans := NewInboundTransformer()
+	finishReason := "stop"
+
+	stream, err := trans.TransformStream(t.Context(), streams.SliceStream([]*llm.Response{
+		{
+			ID: "resp_generated_id", Object: "chat.completion.chunk", Model: "gpt-5",
+			Choices: []llm.Choice{{Index: 0, Delta: &llm.Message{Content: llm.MessageContent{Content: lo.ToPtr("hello")}}}},
+		},
+		{
+			ID: "resp_generated_id", Object: "chat.completion.chunk", Model: "gpt-5",
+			Choices: []llm.Choice{{Index: 0, Delta: &llm.Message{}, FinishReason: &finishReason}},
+		},
+	}))
+	require.NoError(t, err)
+
+	var messageID string
+	for stream.Next() {
+		var event StreamEvent
+		require.NoError(t, json.Unmarshal(stream.Current().Data, &event))
+		if event.Item != nil && event.Item.Type == "message" {
+			messageID = event.Item.ID
+		}
+	}
+	require.NoError(t, stream.Err())
+	require.True(t, isValidMessageItemID(messageID), messageID)
+	require.NotContains(t, messageID, "item_")
+}
+
+func TestInboundTransformer_TransformStream_EmitsRefusalLifecycle(t *testing.T) {
+	trans := NewInboundTransformer()
+	finishReason := "stop"
+
+	stream, err := trans.TransformStream(t.Context(), streams.SliceStream([]*llm.Response{
+		{
+			ID: "resp_refusal", Object: "chat.completion.chunk", Model: "gpt-5",
+			Choices: []llm.Choice{{Index: 0, Delta: &llm.Message{ID: "msg_refusal", Refusal: "I cannot help."}}},
+		},
+		{
+			ID: "resp_refusal", Object: "chat.completion.chunk", Model: "gpt-5",
+			Choices: []llm.Choice{{Index: 0, Delta: &llm.Message{}, FinishReason: &finishReason}},
+		},
+	}))
+	require.NoError(t, err)
+
+	var (
+		deltaSeen bool
+		doneSeen  bool
+	)
+	for stream.Next() {
+		var event StreamEvent
+		require.NoError(t, json.Unmarshal(stream.Current().Data, &event))
+		switch event.Type {
+		case StreamEventTypeRefusalDelta:
+			deltaSeen = true
+			require.Equal(t, "I cannot help.", event.Delta)
+			require.Equal(t, "msg_refusal", lo.FromPtr(event.ItemID))
+		case StreamEventTypeRefusalDone:
+			doneSeen = true
+			require.Equal(t, "I cannot help.", event.Refusal)
+			require.Equal(t, "msg_refusal", lo.FromPtr(event.ItemID))
+		}
+	}
+	require.NoError(t, stream.Err())
+	require.True(t, deltaSeen)
+	require.True(t, doneSeen)
+}
+
 func TestInboundTransformer_TransformStream_KeepsResponsesReasoningItemsSeparate(t *testing.T) {
 	trans := NewInboundTransformer()
 

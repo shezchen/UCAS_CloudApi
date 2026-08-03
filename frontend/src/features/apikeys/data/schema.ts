@@ -225,7 +225,7 @@ export const updateApiKeyProfilesInputSchemaFactory = (t: (key: string) => strin
             ),
             channelIDs: z.array(z.number()).optional().nullable(),
             channelTags: z.array(z.string()).optional().nullable(),
-            channelTagsMatchMode: channelTagsMatchModeFieldSchema,
+            channelTagsMatchMode: channelTagsMatchModeSchema.optional().nullable(),
             modelIDs: z.array(z.string()).optional().nullable(),
             loadBalanceStrategy: z.string().optional().nullable(),
             quota: z
@@ -325,7 +325,7 @@ export const updateApiKeyProfilesInputSchema = z.object({
       ),
       channelIDs: z.array(z.number()).optional().nullable(),
       channelTags: z.array(z.string()).optional().nullable(),
-      channelTagsMatchMode: channelTagsMatchModeFieldSchema,
+      channelTagsMatchMode: channelTagsMatchModeSchema.optional().nullable(),
       modelIDs: z.array(z.string()).optional().nullable(),
       loadBalanceStrategy: z.string().optional().nullable(),
       quota: z

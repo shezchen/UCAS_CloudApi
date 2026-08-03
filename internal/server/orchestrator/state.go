@@ -9,20 +9,29 @@ import (
 	"github.com/looplj/axonhub/llm/httpclient"
 )
 
+// routeAttempt is an immutable snapshot of the concrete provider route chosen
+// for one upstream attempt. The raw credential is request-local and is never
+// logged or exposed; RouteKey retains only its fingerprint.
+type routeAttempt struct {
+	Key          biz.RouteKey
+	Credential   string
+	RequestModel string
+}
+
 // PersistenceState holds shared state with channel management and retry capabilities.
 // TODO: move the dependencies out of the state to make it a real state.
 type PersistenceState struct {
 	APIKey *ent.APIKey
 
-	RequestService      *biz.RequestService
-	UsageLogService     *biz.UsageLogService
-	ChannelService      *biz.ChannelService
-	PromptProvider      PromptProvider
-	PromptProtecter     PromptProtecter
-	RetryPolicyProvider RetryPolicyProvider
-	CandidateSelector   CandidateSelector
-	LoadBalancer        *LoadBalancer
-	SessionAffinity     *SessionAffinityTracker
+	RequestService     *biz.RequestService
+	UsageLogService    *biz.UsageLogService
+	ChannelService     *biz.ChannelService
+	PromptProvider     PromptProvider
+	PromptProtecter    PromptProtecter
+	CandidateSelector  CandidateSelector
+	SessionAffinity    *SessionAffinityTracker
+	UnifiedRoutes      *biz.UnifiedRouteState
+	ProgrammaticTester *TestChannelOrchestrator
 
 	// Request state
 	ModelMapper *ModelMapper
@@ -58,6 +67,17 @@ type PersistenceState struct {
 	CurrentCandidate *ChannelModelsCandidate
 	// CurrentModelIndex is the current model index in CurrentCandidate.Models
 	CurrentModelIndex int
+	// AttemptedRoutes is exact (channel, credential, actual model, protocol)
+	// history. PASS rescue exhausts untried exact routes before any repetition.
+	AttemptedRoutes map[biz.RouteKey]struct{}
+	// CurrentRouteAttempt freezes the credential selected during TransformRequest.
+	// Observers and background tests must not recover it later from a mutable
+	// context container because failover may already be selecting another key.
+	CurrentRouteAttempt *routeAttempt
+	// ForcedCredential is set only by the TestChannel-PASS rescue selector. The
+	// next outbound is rebuilt with this exact key so a passed credential cannot
+	// accidentally route through a different key in the same channel.
+	ForcedCredential string
 
 	// Perf is the performance record for the current request.
 	Perf *biz.PerformanceRecord

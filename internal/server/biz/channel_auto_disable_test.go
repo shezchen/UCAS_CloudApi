@@ -177,6 +177,38 @@ func TestChannelService_DonatedFailureAffectsTransientHealthButNeverPersistentDi
 		"a later semantic success must restore the donated channel to healthy rotation")
 }
 
+func TestChannelService_ProductionFailureNeverExecutesLegacyAutoDisable(t *testing.T) {
+	client := enttest.NewEntClient(t, "sqlite3", "file:ent?mode=memory&_fk=0")
+	defer client.Close()
+
+	ctx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+	svc := newTestChannelService(client)
+	ch := createTestChannelWithAPIKeys(t, client, ctx, "owner-channel", []string{"owner-key"})
+	require.NoError(t, svc.SystemService.SetRetryPolicy(ctx, &RetryPolicy{
+		AutoDisableChannel: AutoDisableChannel{
+			Enabled:  true, // stale pre-migration database value
+			Statuses: []AutoDisableChannelStatus{{Status: 401, Times: 1}},
+		},
+	}))
+
+	now := time.Now()
+	svc.RecordPerformance(ctx, &PerformanceRecord{
+		ChannelID:          ch.ID,
+		APIKey:             "owner-key",
+		StartTime:          now.Add(-time.Second),
+		EndTime:            now,
+		Success:            false,
+		RequestCompleted:   true,
+		ResponseStatusCode: 401,
+	})
+
+	updated, err := client.Channel.Get(ctx, ch.ID)
+	require.NoError(t, err)
+	require.Equal(t, channel.StatusEnabled, updated.Status)
+	require.Empty(t, updated.DisabledAPIKeys,
+		"legacy auto-disable settings are compatibility data, not a production routing authority")
+}
+
 func TestChannelService_checkAndHandleAPIKeyError(t *testing.T) {
 	client := enttest.NewEntClient(t, "sqlite3", "file:ent?mode=memory&_fk=0")
 	defer client.Close()

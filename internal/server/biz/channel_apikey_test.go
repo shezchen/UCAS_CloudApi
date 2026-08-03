@@ -235,6 +235,24 @@ func TestTraceStickyKeyProvider_RemoveKey_Stable(t *testing.T) {
 	}
 }
 
+func TestTraceStickyKeyProvider_RemovedCachedKeyIsNeverReused(t *testing.T) {
+	keys := []string{"key-1", "key-2", "key-3"}
+	channel := &Channel{
+		Channel:              &ent.Channel{Credentials: objects.ChannelCredentials{APIKeys: keys}},
+		cachedEnabledAPIKeys: keys,
+	}
+	provider := NewTraceStickyKeyProvider(channel)
+	ctx := contexts.WithTrace(context.Background(), &ent.Trace{TraceID: "removed-cached-key"})
+	selected := provider.Get(ctx)
+
+	remaining := lo.Filter(keys, func(key string, _ int) bool { return key != selected })
+	channel.cachedEnabledAPIKeys = remaining
+	channel.Credentials.APIKeys = remaining
+	reselected := provider.Get(ctx)
+	require.Contains(t, remaining, reselected)
+	require.NotEqual(t, selected, reselected)
+}
+
 func TestTraceStickyKeyProvider_AddKey_Stable(t *testing.T) {
 	originalKeys := []string{"key-1", "key-2", "key-3"}
 	ch := &Channel{

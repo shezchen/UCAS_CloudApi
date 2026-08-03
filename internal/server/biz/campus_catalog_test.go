@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -42,6 +43,159 @@ func campusTestModelFacade(id, source string, vision, toolCall, reasoning bool, 
 		Metadata:       metadata,
 		MetadataSource: ModelMetadataSource(source),
 	}
+}
+
+func TestCampusChannelTestHealthAggregatesOnlyCurrentExactRoutes(t *testing.T) {
+	routes := NewUnifiedRouteState()
+	svc := &CampusCatalogService{unifiedRoutes: routes}
+	ch := &ent.Channel{
+		ID:              7,
+		Type:            channel.TypeOpenaiResponses,
+		Credentials:     objects.ChannelCredentials{APIKeys: []string{"current-key-a", "current-key-b"}},
+		SupportedModels: []string{"gpt-5.6-sol"},
+		Settings:        &objects.ChannelSettings{},
+	}
+	apiFormat := DefaultEndpointsForChannelType(ch.Type)[0].APIFormat
+	revision := RouteConfigRevision(&Channel{Channel: ch}, apiFormat, nil)
+	key := RouteKey{
+		ChannelID:      ch.ID,
+		CredentialID:   CredentialFingerprint("current-key-a"),
+		ActualModel:    "gpt-5.6-sol",
+		APIFormat:      apiFormat,
+		ConfigRevision: revision,
+	}
+
+	health := svc.channelTestHealth(ch)
+	require.Equal(t, "unknown", health.State)
+	require.False(t, health.Known)
+	require.Equal(t, 2, health.RouteCount)
+	require.Equal(t, 2, health.UnknownRouteCount)
+	require.Len(t, health.Routes, 2)
+
+	require.False(t, routes.RecordTestVerdict(key, RouteTestVerdict{Completed: false, Error: "tester crashed"}))
+	health = svc.channelTestHealth(ch)
+	require.Equal(t, "unknown", health.State)
+	require.Equal(t, 2, health.UnknownRouteCount)
+
+	require.True(t, routes.RecordTestVerdict(key, RouteTestVerdict{Completed: true, Pass: true}))
+	health = svc.channelTestHealth(ch)
+	require.Equal(t, "unknown", health.State, "an untested credential route must not be hidden behind one green route")
+	require.False(t, health.Known)
+	require.Equal(t, 1, health.AvailableRouteCount)
+	require.Equal(t, 1, health.UnknownRouteCount)
+
+	failedKey := key
+	failedKey.CredentialID = CredentialFingerprint("current-key-b")
+	require.True(t, routes.RecordTestVerdict(failedKey, RouteTestVerdict{
+		Completed: true,
+		Pass:      false,
+		Error:     "Authorization: Bearer secret-token\nupstream rejected",
+	}))
+
+	staleRoutes := []RouteKey{
+		{ChannelID: ch.ID, CredentialID: CredentialFingerprint("removed-key"), ActualModel: key.ActualModel, APIFormat: apiFormat, ConfigRevision: revision},
+		{ChannelID: ch.ID, CredentialID: key.CredentialID, ActualModel: "retired-model", APIFormat: apiFormat, ConfigRevision: revision},
+		{ChannelID: ch.ID, CredentialID: key.CredentialID, ActualModel: key.ActualModel, APIFormat: "retired/protocol", ConfigRevision: revision},
+		{ChannelID: ch.ID, CredentialID: key.CredentialID, ActualModel: key.ActualModel, APIFormat: apiFormat, ConfigRevision: "old-config"},
+	}
+	for _, stale := range staleRoutes {
+		require.True(t, routes.RecordTestVerdict(stale, RouteTestVerdict{Completed: true, Pass: true}))
+	}
+
+	health = svc.channelTestHealth(ch)
+	require.True(t, health.Known)
+	require.False(t, health.Available)
+	require.Equal(t, "mixed", health.State)
+	require.Equal(t, 2, health.RouteCount)
+	require.Equal(t, 2, health.KnownRouteCount)
+	require.Equal(t, 1, health.AvailableRouteCount)
+	require.Equal(t, 1, health.UnavailableRouteCount)
+	require.Zero(t, health.UnknownRouteCount)
+	require.Len(t, health.Routes, 2)
+	for _, route := range health.Routes {
+		require.Equal(t, key.ActualModel, route.Model)
+		require.Equal(t, apiFormat, route.Protocol)
+		require.Positive(t, route.CredentialSlot)
+		if !route.Available {
+			require.NotContains(t, route.LastTestError, "secret-token")
+			require.Contains(t, route.LastTestError, "upstream rejected")
+		}
+	}
+
+	payload, err := json.Marshal(health)
+	require.NoError(t, err)
+	for _, secret := range []string{
+		"current-key-a",
+		"current-key-b",
+		CredentialFingerprint("current-key-a"),
+		CredentialFingerprint("current-key-b"),
+		revision,
+	} {
+		require.NotContains(t, string(payload), secret)
+	}
+}
+
+func TestCampusChannelTestHealthUsesRealInFlightSnapshot(t *testing.T) {
+	routes := NewUnifiedRouteState()
+	svc := &CampusCatalogService{unifiedRoutes: routes}
+	ch := &ent.Channel{
+		ID:              8,
+		Type:            channel.TypeOpenaiResponses,
+		Credentials:     objects.ChannelCredentials{APIKey: "current-key"},
+		SupportedModels: []string{"gpt-5.6-sol"},
+		Settings:        &objects.ChannelSettings{},
+	}
+	apiFormat := DefaultEndpointsForChannelType(ch.Type)[0].APIFormat
+	key := RouteKey{
+		ChannelID:      ch.ID,
+		CredentialID:   CredentialFingerprint("current-key"),
+		ActualModel:    "gpt-5.6-sol",
+		APIFormat:      apiFormat,
+		ConfigRevision: RouteConfigRevision(&Channel{Channel: ch}, apiFormat, nil),
+	}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	routes.TriggerTest(context.Background(), key, func(context.Context) (RouteTestVerdict, error) {
+		close(started)
+		<-release
+		return RouteTestVerdict{Completed: true, Pass: true}, nil
+	})
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("programmatic TestChannel did not start")
+	}
+	require.Eventually(t, func() bool {
+		health := svc.channelTestHealth(ch)
+		return health.TestInFlight && health.TestInFlightRouteCount == 1 &&
+			health.State == "unknown" && health.UnknownRouteCount == 1
+	}, time.Second, 10*time.Millisecond)
+
+	close(release)
+	require.Eventually(t, func() bool {
+		health := svc.channelTestHealth(ch)
+		return !health.TestInFlight && health.State == "available" &&
+			health.AvailableRouteCount == 1
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestCurrentCampusRouteCredentialSlotsUseStructuredRouteIdentity(t *testing.T) {
+	ch := &ent.Channel{Credentials: objects.ChannelCredentials{OAuth: &objects.OAuthCredentials{
+		ClientID:     "client",
+		AccessToken:  "access-a",
+		RefreshToken: "account-refresh-a",
+	}}}
+
+	before := currentCampusRouteCredentialSlots(ch)
+	require.Len(t, before, 1)
+	require.Equal(t, 1, before[RouteCredentialFingerprint(&Channel{Channel: ch}, "")])
+
+	ch.Credentials.OAuth.AccessToken = "access-b"
+	require.Equal(t, before, currentCampusRouteCredentialSlots(ch), "short-lived OAuth refresh must keep the same public slot")
+
+	ch.Credentials.OAuth.RefreshToken = "account-refresh-b"
+	require.NotEqual(t, before, currentCampusRouteCredentialSlots(ch), "account replacement must retire the old public slot")
 }
 
 func TestCampusCatalogServiceOwnModelsAndSafeChannels(t *testing.T) {
@@ -739,6 +893,204 @@ func TestCampusFailureCategoryDistinguishesSharedUpstreamQuota(t *testing.T) {
 	statusCode := http.StatusPaymentRequired
 
 	require.Equal(t, "upstream_quota", campusFailureCategory(&statusCode, "You have exceeded your monthly quota"))
+}
+
+func TestCampusAPIActivityUsesRequestFinalStatusAndIsolatesUsers(t *testing.T) {
+	client := enttest.NewEntClient(t, "sqlite3", "file:campus_activity_final_status?mode=memory&_fk=1")
+	defer client.Close()
+
+	setupCtx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+	projectRow := client.Project.Create().
+		SetName("Campus").
+		SetStatus(project.StatusActive).
+		SaveX(setupCtx)
+	member := client.User.Create().
+		SetEmail("member@mails.ucas.ac.cn").
+		SetPassword("hash").
+		SaveX(setupCtx)
+	other := client.User.Create().
+		SetEmail("other@mails.ucas.ac.cn").
+		SetPassword("hash").
+		SaveX(setupCtx)
+	client.UserProject.Create().SetUser(member).SetProject(projectRow).SaveX(setupCtx)
+	client.UserProject.Create().SetUser(other).SetProject(projectRow).SaveX(setupCtx)
+
+	memberKey := client.APIKey.Create().
+		SetUser(member).
+		SetProject(projectRow).
+		SetName("Member key").
+		SetKey("sk-member-activity-key").
+		SaveX(setupCtx)
+	otherKey := client.APIKey.Create().
+		SetUser(other).
+		SetProject(projectRow).
+		SetName("Other key").
+		SetKey("sk-other-activity-key").
+		SaveX(setupCtx)
+	firstChannel := client.Channel.Create().
+		SetType(channel.TypeOpenaiResponses).
+		SetName("First route").
+		SetStatus(channel.StatusEnabled).
+		SetCredentials(objects.ChannelCredentials{APIKey: "provider-a"}).
+		SetSupportedModels([]string{"gpt-5.6-sol"}).
+		SetDefaultTestModel("gpt-5.6-sol").
+		SaveX(setupCtx)
+	finalChannel := client.Channel.Create().
+		SetType(channel.TypeOpenaiResponses).
+		SetName("Final route").
+		SetStatus(channel.StatusEnabled).
+		SetCredentials(objects.ChannelCredentials{APIKey: "provider-b"}).
+		SetSupportedModels([]string{"gpt-5.6-sol"}).
+		SetDefaultTestModel("gpt-5.6-sol").
+		SaveX(setupCtx)
+
+	baseTime := time.Now().Add(-time.Minute)
+	createRequest := func(key *ent.APIKey, status request.Status, model string, createdAt time.Time) *ent.Request {
+		t.Helper()
+		return client.Request.Create().
+			SetAPIKey(key).
+			SetProject(projectRow).
+			SetSource(request.SourceAPI).
+			SetModelID(model).
+			SetRequestBody(objects.JSONRawMessage(`{}`)).
+			SetStatus(status).
+			SetCreatedAt(createdAt).
+			SetUpdatedAt(createdAt).
+			SaveX(setupCtx)
+	}
+	createExecution := func(
+		req *ent.Request,
+		ch *ent.Channel,
+		status requestexecution.Status,
+		model string,
+		statusCode *int,
+		errorMessage string,
+		createdAt time.Time,
+	) {
+		t.Helper()
+		create := client.RequestExecution.Create().
+			SetProjectID(projectRow.ID).
+			SetRequest(req).
+			SetChannel(ch).
+			SetModelID(model).
+			SetFormat("openai/responses").
+			SetRequestBody(objects.JSONRawMessage(`{}`)).
+			SetStatus(status).
+			SetCreatedAt(createdAt).
+			SetUpdatedAt(createdAt)
+		if statusCode != nil {
+			create.SetResponseStatusCode(*statusCode)
+		}
+		if errorMessage != "" {
+			create.SetErrorMessage(errorMessage)
+		}
+		create.SaveX(setupCtx)
+	}
+
+	badGateway := http.StatusBadGateway
+	ok := http.StatusOK
+	recoveredRequest := createRequest(memberKey, request.StatusCompleted, "public-model", baseTime.Add(10*time.Second))
+	createExecution(
+		recoveredRequest,
+		firstChannel,
+		requestexecution.StatusFailed,
+		"upstream-model-a",
+		&badGateway,
+		"Authorization: Bearer secret-value\nupstream failed",
+		baseTime.Add(11*time.Second),
+	)
+	createExecution(
+		recoveredRequest,
+		finalChannel,
+		requestexecution.StatusCompleted,
+		"upstream-model-b",
+		&ok,
+		"",
+		baseTime.Add(12*time.Second),
+	)
+
+	pendingRequest := createRequest(memberKey, request.StatusPending, "pending-public-model", baseTime.Add(20*time.Second))
+	createExecution(
+		pendingRequest,
+		finalChannel,
+		requestexecution.StatusCompleted,
+		"pending-upstream-model",
+		&ok,
+		"",
+		baseTime.Add(21*time.Second),
+	)
+
+	failedAfterCompletedExecution := createRequest(memberKey, request.StatusFailed, "delivery-model", baseTime.Add(30*time.Second))
+	createExecution(
+		failedAfterCompletedExecution,
+		finalChannel,
+		requestexecution.StatusCompleted,
+		"delivery-upstream-model",
+		&ok,
+		"",
+		baseTime.Add(31*time.Second),
+	)
+
+	attemptlessFailedRequest := createRequest(memberKey, request.StatusFailed, "attemptless-model", baseTime.Add(40*time.Second))
+	otherRequest := createRequest(otherKey, request.StatusFailed, "other-private-model", baseTime.Add(50*time.Second))
+	createExecution(
+		otherRequest,
+		firstChannel,
+		requestexecution.StatusFailed,
+		"other-upstream-model",
+		&badGateway,
+		"other user's private failure",
+		baseTime.Add(51*time.Second),
+	)
+
+	requestCtx := authz.NewUserContext(context.Background(), member.ID)
+	requestCtx = contexts.WithUser(requestCtx, member)
+	requestCtx = contexts.WithProjectID(requestCtx, projectRow.ID)
+	activity, err := (&CampusCatalogService{client: client}).GetAPIActivity(requestCtx, nil)
+	require.NoError(t, err)
+	require.Len(t, activity.APIKeys, 1)
+	require.Equal(t, memberKey.Name, activity.APIKeys[0].Name)
+	require.Equal(t, 1, activity.APIKeys[0].SuccessCount)
+	require.Equal(t, 2, activity.APIKeys[0].ErrorCount)
+	require.Len(t, activity.Events, 4)
+
+	eventsByID := make(map[string]CampusAPIActivityEvent, len(activity.Events))
+	for _, event := range activity.Events {
+		eventsByID[event.RequestID] = event
+		require.NotEqual(t, "other-private-model", event.Model)
+		require.NotContains(t, event.ErrorMessage, "other user's private failure")
+	}
+
+	recoveredEvent := eventsByID[strconv.Itoa(recoveredRequest.ID)]
+	require.Equal(t, "completed", recoveredEvent.Status)
+	require.True(t, recoveredEvent.Recovered)
+	require.Equal(t, "upstream-model-b", recoveredEvent.Model)
+	require.Equal(t, "Final route", recoveredEvent.FinalChannel)
+	require.Len(t, recoveredEvent.Attempts, 2)
+	require.Contains(t, recoveredEvent.Attempts[0].ErrorMessage, "upstream failed")
+	require.NotContains(t, recoveredEvent.Attempts[0].ErrorMessage, "secret-value")
+	require.Empty(t, recoveredEvent.ErrorMessage)
+
+	pendingEvent := eventsByID[strconv.Itoa(pendingRequest.ID)]
+	require.Equal(t, "pending", pendingEvent.Status, "a completed execution must not promote a pending request")
+	require.False(t, pendingEvent.Recovered)
+	require.Equal(t, "pending-upstream-model", pendingEvent.Model)
+	require.Equal(t, http.StatusOK, *pendingEvent.StatusCode)
+
+	deliveryEvent := eventsByID[strconv.Itoa(failedAfterCompletedExecution.ID)]
+	require.Equal(t, "failed", deliveryEvent.Status, "the request's final status is authoritative")
+	require.False(t, deliveryEvent.Recovered)
+	require.Equal(t, http.StatusOK, *deliveryEvent.StatusCode, "execution metadata may supplement, but not overwrite, final status")
+	require.Empty(t, deliveryEvent.ErrorMessage)
+
+	attemptlessEvent := eventsByID[strconv.Itoa(attemptlessFailedRequest.ID)]
+	require.Equal(t, "failed", attemptlessEvent.Status)
+	require.Empty(t, attemptlessEvent.Attempts)
+	require.Empty(t, attemptlessEvent.ErrorCategory)
+	require.Empty(t, attemptlessEvent.ErrorMessage, "the Request schema has no request-level error field; do not invent one")
+
+	_, err = (&CampusCatalogService{client: client}).GetAPIActivity(requestCtx, &otherKey.ID)
+	require.ErrorIs(t, err, ErrCampusCatalogForbidden)
 }
 
 func TestCampusProbeModelCandidatesPreferEvidenceOverArrayPosition(t *testing.T) {

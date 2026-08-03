@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"net/http"
 	"testing"
 	"time"
 
@@ -456,7 +457,7 @@ func TestRecordPerformanceStream_GenericFinishReasonsWithContentAreHealthy(t *te
 	}
 }
 
-func TestRecordPerformanceStream_ExplicitResponsesIncompleteWithContentIsHealthy(t *testing.T) {
+func TestRecordPerformanceStream_ExplicitResponsesIncompleteWithContentIsFailure(t *testing.T) {
 	text := "partial but usable"
 	state := &PersistenceState{Perf: &biz.PerformanceRecord{StartTime: time.Now(), Stream: true}}
 	stream := &recordPerformanceStream{
@@ -472,6 +473,7 @@ func TestRecordPerformanceStream_ExplicitResponsesIncompleteWithContentIsHealthy
 		_ = stream.Current()
 	}
 	require.NoError(t, stream.Close())
-	require.True(t, state.Perf.Success)
+	require.False(t, state.Perf.Success)
 	require.True(t, state.Perf.RequestCompleted)
+	require.Equal(t, http.StatusBadGateway, state.Perf.ResponseStatusCode)
 }

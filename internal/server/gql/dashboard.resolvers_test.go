@@ -12,10 +12,14 @@ import (
 	"github.com/looplj/axonhub/internal/authz"
 	"github.com/looplj/axonhub/internal/contexts"
 	"github.com/looplj/axonhub/internal/ent"
+	"github.com/looplj/axonhub/internal/ent/channel"
 	"github.com/looplj/axonhub/internal/ent/enttest"
 	"github.com/looplj/axonhub/internal/ent/project"
+	"github.com/looplj/axonhub/internal/ent/request"
+	"github.com/looplj/axonhub/internal/ent/requestexecution"
 	"github.com/looplj/axonhub/internal/ent/usagelog"
 	"github.com/looplj/axonhub/internal/ent/user"
+	"github.com/looplj/axonhub/internal/objects"
 	"github.com/looplj/axonhub/internal/pkg/xtime"
 	"github.com/looplj/axonhub/internal/server/biz"
 )
@@ -341,6 +345,171 @@ func TestCalculateConfidenceAndSort_LargeDataset(t *testing.T) {
 				"items should be sorted by confidence score descending")
 		}
 	}
+}
+
+func TestDashboardAggregatesExcludeTestTrafficOnly(t *testing.T) {
+	client := enttest.NewEntClient(t, "sqlite3", "file:dashboard-no-test-traffic?mode=memory&_fk=0")
+	defer client.Close()
+
+	ctx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+	projectRow, err := client.Project.Create().
+		SetName("dashboard-project").
+		SetStatus(project.StatusActive).
+		Save(ctx)
+	require.NoError(t, err)
+	owner, err := client.User.Create().
+		SetEmail("dashboard-owner@example.com").
+		SetPassword("password").
+		SetStatus(user.StatusActivated).
+		SetIsOwner(true).
+		Save(ctx)
+	require.NoError(t, err)
+	apiKeyRow, err := client.APIKey.Create().
+		SetName("dashboard-key").
+		SetKey("sk-dashboard-no-test").
+		SetUserID(owner.ID).
+		SetProjectID(projectRow.ID).
+		Save(ctx)
+	require.NoError(t, err)
+	channelRow, err := client.Channel.Create().
+		SetType(channel.TypeOpenaiFake).
+		SetName("dashboard-channel").
+		SetStatus(channel.StatusEnabled).
+		SetSupportedModels([]string{"dashboard-model"}).
+		SetDefaultTestModel("dashboard-model").
+		SetCredentials(objects.ChannelCredentials{}).
+		Save(ctx)
+	require.NoError(t, err)
+
+	type trafficCase struct {
+		source       request.Source
+		status       request.Status
+		execStatus   requestexecution.Status
+		promptTokens int64
+		cachedTokens int64
+		outputTokens int64
+		cost         float64
+	}
+	cases := []trafficCase{
+		{request.SourceAPI, request.StatusCompleted, requestexecution.StatusCompleted, 100, 10, 20, 1.25},
+		// Playground is legitimate non-test traffic and must remain visible.
+		{request.SourcePlayground, request.StatusFailed, requestexecution.StatusFailed, 50, 5, 10, 0.75},
+		{request.SourceTest, request.StatusFailed, requestexecution.StatusFailed, 10_000, 1_000, 10_000, 100},
+	}
+	now := xtime.UTCNow().Add(-time.Minute)
+	for i, tc := range cases {
+		req, createErr := client.Request.Create().
+			SetProjectID(projectRow.ID).
+			SetAPIKeyID(apiKeyRow.ID).
+			SetSource(tc.source).
+			SetModelID("dashboard-model").
+			SetChannelID(channelRow.ID).
+			SetRequestBody(objects.JSONRawMessage(`{}`)).
+			SetStatus(tc.status).
+			SetCreatedAt(now.Add(time.Duration(i) * time.Second)).
+			Save(ctx)
+		require.NoError(t, createErr)
+
+		_, createErr = client.RequestExecution.Create().
+			SetProjectID(projectRow.ID).
+			SetRequestID(req.ID).
+			SetChannelID(channelRow.ID).
+			SetModelID("dashboard-model").
+			SetRequestBody(objects.JSONRawMessage(`{}`)).
+			SetStatus(tc.execStatus).
+			SetMetricsLatencyMs(1000).
+			SetCreatedAt(now.Add(time.Duration(i) * time.Second)).
+			Save(ctx)
+		require.NoError(t, createErr)
+
+		_, createErr = client.UsageLog.Create().
+			SetRequestID(req.ID).
+			SetProjectID(projectRow.ID).
+			SetAPIKeyID(apiKeyRow.ID).
+			SetChannelID(channelRow.ID).
+			SetModelID("dashboard-model").
+			SetSource(usagelog.Source(tc.source)).
+			SetPromptTokens(tc.promptTokens).
+			SetPromptCachedTokens(tc.cachedTokens).
+			SetCompletionTokens(tc.outputTokens).
+			SetTotalTokens(tc.promptTokens + tc.outputTokens).
+			SetTotalCost(tc.cost).
+			SetCreatedAt(now.Add(time.Duration(i) * time.Second)).
+			Save(ctx)
+		require.NoError(t, createErr)
+	}
+
+	systemService := biz.NewSystemService(biz.SystemServiceParams{Ent: client})
+	resolver := &queryResolver{&Resolver{client: client, systemService: systemService}}
+	dashboardCtx := contexts.WithProjectID(contexts.WithUser(ctx, owner), projectRow.ID)
+
+	overview, err := resolver.DashboardOverview(dashboardCtx)
+	require.NoError(t, err)
+	require.Equal(t, 2, overview.TotalRequests)
+	require.Equal(t, 1, overview.FailedRequests)
+	require.Equal(t, 2, overview.RequestStats.RequestsToday)
+
+	byChannel, err := resolver.RequestStatsByChannel(dashboardCtx, nil)
+	require.NoError(t, err)
+	require.Len(t, byChannel, 1)
+	require.Equal(t, 2, byChannel[0].Count)
+	byModel, err := resolver.RequestStatsByModel(dashboardCtx, nil)
+	require.NoError(t, err)
+	require.Len(t, byModel, 1)
+	require.Equal(t, 2, byModel[0].Count)
+	byAPIKey, err := resolver.RequestStatsByAPIKey(dashboardCtx, nil)
+	require.NoError(t, err)
+	require.Len(t, byAPIKey, 1)
+	require.Equal(t, 2, byAPIKey[0].Count)
+
+	channelTokens, err := resolver.TokenStatsByChannel(dashboardCtx, nil)
+	require.NoError(t, err)
+	require.Len(t, channelTokens, 1)
+	require.Equal(t, 150, channelTokens[0].InputTokens)
+	require.Equal(t, 30, channelTokens[0].OutputTokens)
+	modelTokens, err := resolver.TokenStatsByModel(dashboardCtx, nil)
+	require.NoError(t, err)
+	require.Len(t, modelTokens, 1)
+	require.Equal(t, 180, modelTokens[0].TotalTokens)
+	apiKeyTokens, err := resolver.TokenStatsByAPIKey(dashboardCtx, nil)
+	require.NoError(t, err)
+	require.Len(t, apiKeyTokens, 1)
+	require.Equal(t, 180, apiKeyTokens[0].TotalTokens)
+	selectedKeyTokens, err := resolver.APIKeyTokenUsageStats(dashboardCtx, &APIKeyTokenUsageStatsInput{
+		APIKeyIds: []*objects.GUID{{Type: ent.TypeAPIKey, ID: apiKeyRow.ID}},
+	})
+	require.NoError(t, err)
+	require.Len(t, selectedKeyTokens, 1)
+	require.Equal(t, 150, selectedKeyTokens[0].InputTokens)
+	require.Equal(t, 30, selectedKeyTokens[0].OutputTokens)
+	require.Len(t, selectedKeyTokens[0].TopModels, 1)
+	require.Equal(t, "dashboard-model", selectedKeyTokens[0].TopModels[0].ModelID)
+
+	channelCosts, err := resolver.CostStatsByChannel(dashboardCtx, nil)
+	require.NoError(t, err)
+	require.Len(t, channelCosts, 1)
+	require.InDelta(t, 2.0, channelCosts[0].Cost, 0.0001)
+	modelCosts, err := resolver.CostStatsByModel(dashboardCtx, nil)
+	require.NoError(t, err)
+	require.Len(t, modelCosts, 1)
+	require.InDelta(t, 2.0, modelCosts[0].Cost, 0.0001)
+	apiKeyCosts, err := resolver.CostStatsByAPIKey(dashboardCtx, nil)
+	require.NoError(t, err)
+	require.Len(t, apiKeyCosts, 1)
+	require.InDelta(t, 2.0, apiKeyCosts[0].Cost, 0.0001)
+
+	successRates, err := resolver.ChannelSuccessRates(dashboardCtx, nil, nil)
+	require.NoError(t, err)
+	require.Len(t, successRates, 1)
+	require.Equal(t, 1, successRates[0].SuccessCount)
+	require.Equal(t, 1, successRates[0].FailedCount)
+
+	userUsage, err := resolver.UsageStatsByUser(dashboardCtx, nil)
+	require.NoError(t, err)
+	require.Len(t, userUsage, 1)
+	require.Equal(t, 2, userUsage[0].RequestCount)
+	require.Equal(t, 180, userUsage[0].TotalTokens)
+	require.InDelta(t, 2.0, userUsage[0].TotalCost, 0.0001)
 }
 
 func TestRankCampusUsageReturnsTop50PlusSelf(t *testing.T) {

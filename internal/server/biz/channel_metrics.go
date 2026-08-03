@@ -320,21 +320,6 @@ func (svc *ChannelService) RecordPerformance(ctx context.Context, perf *Performa
 
 			svc.apiKeyErrorCountsLock.Unlock()
 		}
-	} else if !perf.Canceled {
-		policy := svc.SystemService.RetryPolicyOrDefault(ctx)
-
-		if policy.AutoDisableChannel.Enabled {
-			// Check API key error first if available.
-			if perf.APIKey != "" {
-				if svc.checkAndHandleAPIKeyError(ctx, perf, policy) {
-					return
-				}
-			} else {
-				if svc.checkAndHandleChannelError(ctx, perf, policy) {
-					return
-				}
-			}
-		}
 	}
 
 	// Protect the channel metrics object and its ring buffer for the whole

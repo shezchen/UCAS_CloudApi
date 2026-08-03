@@ -1,14 +1,27 @@
 import { useMemo, useState } from 'react';
 import { Activity, CircleCheck, CircleX, Clock3, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { formatNumber } from '@/utils/format-number';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { formatNumber } from '@/utils/format-number';
 import { useCampusApiActivity } from '../data/apikeys';
 
 const ALL_API_KEYS = 'all';
+
+type ActivityResultKind = 'success' | 'error' | 'pending';
+
+function activityResultKind(status: string, statusCode?: number): ActivityResultKind {
+  const normalizedStatus = status.toLocaleLowerCase();
+  if (['error', 'failed', 'canceled', 'cancelled'].includes(normalizedStatus) || (statusCode !== undefined && statusCode >= 400)) {
+    return 'error';
+  }
+  if (normalizedStatus === 'completed') {
+    return 'success';
+  }
+  return 'pending';
+}
 
 function formatEventTime(value: string, locale: string) {
   const date = new Date(value);
@@ -98,19 +111,19 @@ export function ApiKeyActivityPanel() {
         ) : (
           <>
             <div className='grid gap-2 sm:grid-cols-2 lg:grid-cols-4' data-testid='api-key-activity-summary'>
-              <div className='rounded-lg border bg-muted/20 px-3 py-2'>
+              <div className='bg-muted/20 rounded-lg border px-3 py-2'>
                 <div className='text-lg font-semibold tabular-nums'>{formatNumber(totals.effectiveTokens)}</div>
                 <div className='text-muted-foreground text-xs'>{t('apikeys.activity.effectiveTokens')}</div>
               </div>
-              <div className='rounded-lg border bg-muted/20 px-3 py-2'>
+              <div className='bg-muted/20 rounded-lg border px-3 py-2'>
                 <div className='text-lg font-semibold tabular-nums'>{formatNumber(totals.inputTokens)}</div>
                 <div className='text-muted-foreground text-xs'>{t('apikeys.columns.inputTokens')}</div>
               </div>
-              <div className='rounded-lg border bg-muted/20 px-3 py-2'>
+              <div className='bg-muted/20 rounded-lg border px-3 py-2'>
                 <div className='text-lg font-semibold tabular-nums'>{formatNumber(totals.cachedReadTokens)}</div>
                 <div className='text-muted-foreground text-xs'>{t('apikeys.activity.cachedReadTokens')}</div>
               </div>
-              <div className='rounded-lg border bg-muted/20 px-3 py-2'>
+              <div className='bg-muted/20 rounded-lg border px-3 py-2'>
                 <div className='text-lg font-semibold tabular-nums'>{formatNumber(totals.outputTokens)}</div>
                 <div className='text-muted-foreground text-xs'>{t('apikeys.columns.outputTokens')}</div>
               </div>
@@ -138,7 +151,7 @@ export function ApiKeyActivityPanel() {
             ) : (
               <div className='max-h-56 overflow-auto rounded-lg border' data-testid='api-key-activity-events'>
                 <Table>
-                  <TableHeader className='sticky top-0 z-10 bg-background'>
+                  <TableHeader className='bg-background sticky top-0 z-10'>
                     <TableRow>
                       <TableHead>{t('apikeys.activity.time')}</TableHead>
                       <TableHead>{t('apikeys.activity.apiKey')}</TableHead>
@@ -149,21 +162,23 @@ export function ApiKeyActivityPanel() {
                   </TableHeader>
                   <TableBody>
                     {(activity?.events ?? []).map((event) => {
-                      const normalizedStatus = event.status.toLocaleLowerCase();
-                      const isError =
-                        ['error', 'failed', 'canceled', 'cancelled'].includes(normalizedStatus) ||
-                        (event.statusCode !== undefined && event.statusCode >= 400);
+                      const resultKind = activityResultKind(event.status, event.statusCode);
+                      const isError = resultKind === 'error';
+                      const isPending = resultKind === 'pending';
                       const errorCategory =
                         event.errorCategory === 'upstream_quota' ? t('apikeys.activity.upstreamQuota') : event.errorCategory;
-                      const detail = isError
-                        ? [errorCategory, event.errorMessage].filter(Boolean).join(' · ')
-                        : event.latencyMs === undefined
-                          ? t('apikeys.activity.success')
-                          : t('apikeys.activity.latency', { value: Math.round(event.latencyMs) });
+                      const detail = isPending
+                        ? t('apikeys.activity.inProgressDetail', { status: event.status || t('apikeys.activity.unknownStatus') })
+                        : isError
+                          ? [errorCategory, event.errorMessage].filter(Boolean).join(' · ')
+                          : event.latencyMs === undefined
+                            ? t('apikeys.activity.success')
+                            : t('apikeys.activity.latency', { value: Math.round(event.latencyMs) });
+                      const hasAttemptChain = event.attempts.length > 0;
 
                       return (
                         <TableRow key={event.requestId} data-testid='api-key-activity-event-row'>
-                          <TableCell className='whitespace-nowrap text-xs'>
+                          <TableCell className='text-xs whitespace-nowrap'>
                             <time dateTime={event.createdAt}>{formatEventTime(event.createdAt, locale)}</time>
                           </TableCell>
                           <TableCell className='max-w-48'>
@@ -185,16 +200,96 @@ export function ApiKeyActivityPanel() {
                               className={
                                 isError
                                   ? 'border-red-500/30 text-red-700 dark:text-red-400'
-                                  : 'border-emerald-500/30 text-emerald-700 dark:text-emerald-400'
+                                  : isPending
+                                    ? 'border-amber-500/30 text-amber-700 dark:text-amber-400'
+                                    : 'border-emerald-500/30 text-emerald-700 dark:text-emerald-400'
                               }
                             >
-                              {event.statusCode ?? t(isError ? 'apikeys.activity.error' : 'apikeys.activity.success')}
+                              {isPending
+                                ? t('apikeys.activity.inProgress')
+                                : (event.statusCode ?? t(isError ? 'apikeys.activity.error' : 'apikeys.activity.success'))}
                             </Badge>
                           </TableCell>
                           <TableCell className='max-w-96 text-xs'>
-                            <span className={isError ? 'text-red-700 dark:text-red-400' : 'text-muted-foreground'} title={detail}>
-                              {detail || '—'}
-                            </span>
+                            <div className='space-y-1.5'>
+                              <span className={isError ? 'text-red-700 dark:text-red-400' : 'text-muted-foreground'} title={detail}>
+                                {detail || '—'}
+                              </span>
+                              {event.recovered && (
+                                <Badge variant='outline' className='ml-2 border-blue-500/30 text-blue-700 dark:text-blue-400'>
+                                  {t('apikeys.activity.rescuedBy', { channel: event.finalChannel || t('apikeys.activity.unknownChannel') })}
+                                </Badge>
+                              )}
+                              {hasAttemptChain && (
+                                <details className='group bg-muted/20 rounded border' data-testid='api-key-activity-attempt-chain'>
+                                  <summary className='text-muted-foreground cursor-pointer px-2 py-1.5 font-medium select-none'>
+                                    {t('apikeys.activity.attemptChain', { count: event.attempts.length })}
+                                  </summary>
+                                  <ol className='space-y-1 border-t p-2'>
+                                    {event.attempts.map((attempt) => {
+                                      const attemptResultKind = activityResultKind(attempt.status, attempt.statusCode);
+                                      const attemptFailed = attemptResultKind === 'error';
+                                      const attemptPending = attemptResultKind === 'pending';
+                                      const attemptCategory =
+                                        attempt.errorCategory === 'upstream_quota'
+                                          ? t('apikeys.activity.upstreamQuota')
+                                          : attempt.errorCategory;
+                                      const attemptDetail = attemptPending
+                                        ? t('apikeys.activity.inProgressDetail', {
+                                            status: attempt.status || t('apikeys.activity.unknownStatus'),
+                                          })
+                                        : attemptFailed
+                                          ? [attemptCategory, attempt.errorMessage].filter(Boolean).join(' · ')
+                                          : attempt.latencyMs === undefined
+                                            ? t('apikeys.activity.success')
+                                            : t('apikeys.activity.latency', { value: Math.round(attempt.latencyMs) });
+
+                                      return (
+                                        <li
+                                          key={`${event.requestId}-${attempt.sequence}`}
+                                          className='bg-background/70 rounded border px-2 py-1.5'
+                                          data-testid='api-key-activity-attempt'
+                                        >
+                                          <div className='flex flex-wrap items-center gap-x-2 gap-y-1'>
+                                            <span className='font-semibold'>
+                                              {t('apikeys.activity.attemptNumber', { number: attempt.sequence })}
+                                            </span>
+                                            <span>{attempt.channel || t('apikeys.activity.unknownChannel')}</span>
+                                            {attempt.apiFormat && <code className='text-muted-foreground'>{attempt.apiFormat}</code>}
+                                            <Badge
+                                              variant='outline'
+                                              className={
+                                                attemptFailed
+                                                  ? 'border-red-500/30 text-red-700 dark:text-red-400'
+                                                  : attemptPending
+                                                    ? 'border-amber-500/30 text-amber-700 dark:text-amber-400'
+                                                    : 'border-emerald-500/30 text-emerald-700 dark:text-emerald-400'
+                                              }
+                                            >
+                                              {attemptPending
+                                                ? t('apikeys.activity.inProgress')
+                                                : (attempt.statusCode ??
+                                                  t(attemptFailed ? 'apikeys.activity.error' : 'apikeys.activity.success'))}
+                                            </Badge>
+                                          </div>
+                                          <p
+                                            className={
+                                              attemptFailed
+                                                ? 'mt-1 break-words text-red-700 dark:text-red-400'
+                                                : attemptPending
+                                                  ? 'mt-1 break-words text-amber-700 dark:text-amber-400'
+                                                  : 'text-muted-foreground mt-1 break-words'
+                                            }
+                                          >
+                                            {attemptDetail || '—'}
+                                          </p>
+                                        </li>
+                                      );
+                                    })}
+                                  </ol>
+                                </details>
+                              )}
+                            </div>
                           </TableCell>
                         </TableRow>
                       );

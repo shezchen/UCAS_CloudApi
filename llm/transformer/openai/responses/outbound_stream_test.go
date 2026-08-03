@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/require"
 
@@ -82,8 +83,9 @@ func TestOutboundTransformer_StreamTransformation_WithTestData(t *testing.T) {
 
 			// exclude the last DONE event
 			for i, expectedEvent := range expectedEvents[:len(expectedEvents)-1] {
-				if !xtest.Equal(expectedEvent, actualLLMResponses[i]) {
-					t.Fatalf("event %d mismatch:\n%s", i, cmp.Diff(expectedEvent, actualLLMResponses[i]))
+				messageIDOption := cmpopts.IgnoreFields(llm.Message{}, "ID")
+				if !xtest.Equal(expectedEvent, actualLLMResponses[i], messageIDOption) {
+					t.Fatalf("event %d mismatch:\n%s", i, cmp.Diff(expectedEvent, actualLLMResponses[i], messageIDOption))
 				}
 			}
 
@@ -116,6 +118,71 @@ func TestOutboundTransformer_StreamTransformation_WithTestData(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestOutboundTransformer_TransformStream_PreservesProviderMessageID(t *testing.T) {
+	trans, err := NewOutboundTransformer("https://api.openai.com", "test-api-key")
+	require.NoError(t, err)
+
+	events := []*httpclient.StreamEvent{
+		{Type: "response.created", Data: []byte(`{"type":"response.created","response":{"id":"resp_id_round_trip","object":"response","created_at":1700000000,"model":"gpt-5","status":"in_progress","output":[]}}`)},
+		{Type: "response.output_item.added", Data: []byte(`{"type":"response.output_item.added","output_index":0,"item":{"id":"msg_provider_123","type":"message","status":"in_progress","role":"assistant","content":[]}}`)},
+		{Type: "response.output_text.delta", Data: []byte(`{"type":"response.output_text.delta","item_id":"msg_provider_123","output_index":0,"content_index":0,"delta":"hello"}`)},
+		{Type: "response.output_item.done", Data: []byte(`{"type":"response.output_item.done","output_index":0,"item":{"id":"msg_provider_123","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"hello"}]}}`)},
+		{Type: "response.completed", Data: []byte(`{"type":"response.completed","response":{"id":"resp_id_round_trip","object":"response","created_at":1700000000,"model":"gpt-5","status":"completed","output":[]}}`)},
+	}
+
+	stream, err := trans.TransformStream(t.Context(), nil, streams.SliceStream(events))
+	require.NoError(t, err)
+
+	responses, err := streams.All(stream)
+	require.NoError(t, err)
+
+	var contentDelta *llm.Message
+	for _, response := range responses {
+		if response == nil || response == llm.DoneResponse || len(response.Choices) == 0 {
+			continue
+		}
+		delta := response.Choices[0].Delta
+		if delta != nil && delta.Content.Content != nil && *delta.Content.Content == "hello" {
+			contentDelta = delta
+			break
+		}
+	}
+
+	require.NotNil(t, contentDelta)
+	require.Equal(t, "msg_provider_123", contentDelta.ID)
+}
+
+func TestOutboundTransformer_TransformStream_RefusalIsSemanticOutput(t *testing.T) {
+	trans, err := NewOutboundTransformer("https://api.openai.com", "test-api-key")
+	require.NoError(t, err)
+
+	events := []*httpclient.StreamEvent{
+		{Type: "response.created", Data: []byte(`{"type":"response.created","response":{"id":"resp_refusal","object":"response","created_at":1700000000,"model":"gpt-5","status":"in_progress","output":[]}}`)},
+		{Type: "response.output_item.added", Data: []byte(`{"type":"response.output_item.added","output_index":0,"item":{"id":"msg_refusal","type":"message","status":"in_progress","role":"assistant","content":[]}}`)},
+		{Type: "response.refusal.delta", Data: []byte(`{"type":"response.refusal.delta","item_id":"msg_refusal","output_index":0,"content_index":0,"delta":"I cannot help."}`)},
+		{Type: "response.refusal.done", Data: []byte(`{"type":"response.refusal.done","item_id":"msg_refusal","output_index":0,"content_index":0,"refusal":"I cannot help."}`)},
+		{Type: "response.output_item.done", Data: []byte(`{"type":"response.output_item.done","output_index":0,"item":{"id":"msg_refusal","type":"message","status":"completed","role":"assistant","content":[{"type":"refusal","refusal":"I cannot help."}]}}`)},
+		{Type: "response.completed", Data: []byte(`{"type":"response.completed","response":{"id":"resp_refusal","object":"response","created_at":1700000000,"model":"gpt-5","status":"completed","output":[]}}`)},
+	}
+
+	stream, err := trans.TransformStream(t.Context(), nil, streams.SliceStream(events))
+	require.NoError(t, err)
+	responses, err := streams.All(stream)
+	require.NoError(t, err)
+
+	var refusal string
+	for _, response := range responses {
+		if response == nil || len(response.Choices) == 0 || response.Choices[0].Delta == nil {
+			continue
+		}
+		if response.Choices[0].Delta.Refusal != "" {
+			refusal += response.Choices[0].Delta.Refusal
+			require.Equal(t, "msg_refusal", response.Choices[0].Delta.ID)
+		}
+	}
+	require.Equal(t, "I cannot help.", refusal)
 }
 
 func TestOutboundTransformer_StreamTransformation_ErrorEvent(t *testing.T) {

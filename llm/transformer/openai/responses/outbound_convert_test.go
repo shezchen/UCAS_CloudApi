@@ -700,6 +700,17 @@ func TestConvertInputFromMessages(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "valid message IDs survive rebuild while legacy item IDs are removed",
+			msgs: []llm.Message{
+				{ID: "msg_valid", Role: "assistant", Content: llm.MessageContent{Content: lo.ToPtr("valid")}},
+				{ID: "item_legacy", Role: "assistant", Content: llm.MessageContent{Content: lo.ToPtr("legacy")}},
+			},
+			expected: Input{Items: []Item{
+				{ID: "msg_valid", Type: "message", Role: "assistant", Status: lo.ToPtr("completed"), Content: &Input{Items: []Item{{Type: "output_text", Text: lo.ToPtr("valid")}}}},
+				{Type: "message", Role: "assistant", Status: lo.ToPtr("completed"), Content: &Input{Items: []Item{{Type: "output_text", Text: lo.ToPtr("legacy")}}}},
+			}},
+		},
 	}
 
 	for _, tt := range tests {
@@ -837,6 +848,21 @@ func TestConvertOutputToMessage(t *testing.T) {
 				require.Nil(t, msg.Content.Content)
 				require.Nil(t, msg.Content.MultipleContent)
 				require.Empty(t, msg.Annotations)
+			},
+		},
+		{
+			name: "refusal is normal message output",
+			output: []Item{{
+				ID:   "msg_refusal",
+				Type: "message",
+				Content: &Input{Items: []Item{{
+					Type:    "refusal",
+					Refusal: lo.ToPtr("I cannot help with that."),
+				}}},
+			}},
+			validate: func(t *testing.T, msg llm.Message) {
+				require.Equal(t, "msg_refusal", msg.ID)
+				require.Equal(t, "I cannot help with that.", msg.Refusal)
 			},
 		},
 		{

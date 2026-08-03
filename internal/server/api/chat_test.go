@@ -471,8 +471,8 @@ func TestFormatStreamError_LlmResponseError_PassesCodeAndRequestID(t *testing.T)
 	assert.Equal(t, "202603112254417d15bd26697445b0", parsed["request_id"])
 }
 
-func TestApplyUpstreamErrorPolicy_CustomMessage(t *testing.T) {
-	ctx, systemService := setupUpstreamErrorPolicyTest(t, biz.UpstreamErrorPolicy{
+func TestApplyUpstreamErrorPolicy_LegacyCustomSettingCannotHideProviderError(t *testing.T) {
+	_, _ = setupUpstreamErrorPolicyTest(t, biz.UpstreamErrorPolicy{
 		Mode:          biz.UpstreamErrorModeCustom,
 		CustomMessage: "模型服务暂时不可用，请稍后再试",
 	})
@@ -482,32 +482,28 @@ func TestApplyUpstreamErrorPolicy_CustomMessage(t *testing.T) {
 		Body:       []byte(`{"error":{"message":"raw provider secret","type":"rate_limit_error","code":"provider_rate_limit"},"request_id":"req_123"}`),
 	}
 
-	err := applyUpstreamErrorPolicy(ctx, pipeline.WrapUpstreamError(rawErr), systemService)
+	err := applyUpstreamErrorPolicy(pipeline.WrapUpstreamError(rawErr))
 
-	respErr := &llm.ResponseError{}
-	require.True(t, errors.As(err, &respErr))
-	assert.Equal(t, http.StatusTooManyRequests, respErr.StatusCode)
-	assert.Equal(t, "模型服务暂时不可用，请稍后再试", respErr.Detail.Message)
-	assert.Equal(t, "rate_limit_error", respErr.Detail.Type)
-	assert.Equal(t, "provider_rate_limit", respErr.Detail.Code)
-	assert.Equal(t, "req_123", respErr.Detail.RequestID)
-	assert.NotContains(t, respErr.Error(), "raw provider secret")
+	assert.ErrorIs(t, err, rawErr)
+	var gotHTTPError *httpclient.Error
+	require.ErrorAs(t, err, &gotHTTPError)
+	assert.JSONEq(t, string(rawErr.Body), string(gotHTTPError.Body))
 }
 
 func TestApplyUpstreamErrorPolicy_PassthroughByDefault(t *testing.T) {
-	ctx, systemService := setupUpstreamErrorPolicyTest(t, biz.UpstreamErrorPolicy{
+	_, _ = setupUpstreamErrorPolicyTest(t, biz.UpstreamErrorPolicy{
 		Mode: biz.UpstreamErrorModePassthrough,
 	})
 
 	rawErr := errors.New("raw upstream error")
 
-	err := applyUpstreamErrorPolicy(ctx, rawErr, systemService)
+	err := applyUpstreamErrorPolicy(rawErr)
 
 	assert.Equal(t, rawErr, err)
 }
 
 func TestApplyUpstreamErrorPolicy_DoesNotRewriteLocalResponseError(t *testing.T) {
-	ctx, systemService := setupUpstreamErrorPolicyTest(t, biz.UpstreamErrorPolicy{
+	_, _ = setupUpstreamErrorPolicyTest(t, biz.UpstreamErrorPolicy{
 		Mode:          biz.UpstreamErrorModeCustom,
 		CustomMessage: "模型服务暂时不可用，请稍后再试",
 	})
@@ -521,7 +517,7 @@ func TestApplyUpstreamErrorPolicy_DoesNotRewriteLocalResponseError(t *testing.T)
 		},
 	}
 
-	err := applyUpstreamErrorPolicy(ctx, localErr, systemService)
+	err := applyUpstreamErrorPolicy(localErr)
 
 	assert.Equal(t, localErr, err)
 }

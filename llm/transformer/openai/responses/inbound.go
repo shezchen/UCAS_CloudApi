@@ -462,6 +462,7 @@ func convertReasoningWithFollowing(items []Item, startIdx int) (*llm.Message, in
 			// If we encounter a text message with assistant role, merge its content
 			if nextItem.Role == "assistant" {
 				msg.ID = nextItem.ID
+				msg.Refusal = messageItemRefusal(nextItem)
 				if nextItem.Content != nil && len(nextItem.Content.Items) > 0 && nextItem.isOutputMessageContent() {
 					msg.Content = convertContentItemsToMessageContent(nextItem.GetContentItems())
 				} else if nextItem.Content != nil {
@@ -471,6 +472,7 @@ func convertReasoningWithFollowing(items []Item, startIdx int) (*llm.Message, in
 				}
 
 				consumed++
+				return msg, consumed, nil
 			} else {
 				// Non-assistant message, stop merging
 				return msg, consumed, nil
@@ -494,8 +496,9 @@ func convertItemToMessage(item *Item) (*llm.Message, error) {
 	switch item.Type {
 	case "message", "input_text", "":
 		msg := &llm.Message{
-			ID:   item.ID,
-			Role: item.Role,
+			ID:      item.ID,
+			Role:    item.Role,
+			Refusal: messageItemRefusal(item),
 		}
 
 		// Handle content - check Content.Items first (output message format from JSON)
@@ -612,6 +615,22 @@ func convertItemToMessage(item *Item) (*llm.Message, error) {
 		// Skip unknown types
 		return nil, nil
 	}
+}
+
+func messageItemRefusal(item *Item) string {
+	if item == nil || item.Content == nil {
+		return ""
+	}
+
+	var refusal strings.Builder
+	for i := range item.Content.Items {
+		part := &item.Content.Items[i]
+		if part.Type == "refusal" && part.Refusal != nil {
+			refusal.WriteString(*part.Refusal)
+		}
+	}
+
+	return refusal.String()
 }
 
 func convertToMessageContent(content Input) llm.MessageContent {
@@ -920,10 +939,7 @@ func convertToResponsesAPIResponse(chatResp *llm.Response) *Response {
 			continue
 		}
 
-		messageItemID := message.ID
-		if messageItemID == "" {
-			messageItemID = generateItemID()
-		}
+		messageItemID := normalizeMessageItemID(message.ID)
 
 		// Handle reasoning content
 		if reasoningItem, ok := buildReasoningItem(*message); ok {
@@ -956,26 +972,18 @@ func convertToResponsesAPIResponse(chatResp *llm.Response) *Response {
 			}
 		}
 
-		// Handle text content
+		// Handle visible text, refusal, image and compact content. Text and
+		// refusal parts belong to one Responses message item so its msg_ ID can
+		// be replayed without producing duplicate message identifiers.
+		contentItems := make([]Item, 0)
 		if message.Content.Content != nil && *message.Content.Content != "" {
 			text := *message.Content.Content
-			contentItems, _ := attachAnnotationsToFirstTextItem([]Item{{
+			contentItems = append(contentItems, Item{
 				Type:        "output_text",
 				Text:        &text,
 				Annotations: []Annotation{},
-			}}, message.Annotations)
-			resp.Output = append(resp.Output, Item{
-				ID:   messageItemID,
-				Type: "message",
-				Role: "assistant",
-				Content: &Input{
-					Items: contentItems,
-				},
-				Status: lo.ToPtr("completed"),
 			})
 		} else if len(message.Content.MultipleContent) > 0 {
-			contentItems := make([]Item, 0)
-
 			for _, part := range message.Content.MultipleContent {
 				switch part.Type {
 				case "text":
@@ -1010,16 +1018,20 @@ func convertToResponsesAPIResponse(chatResp *llm.Response) *Response {
 				}
 			}
 
-			if len(contentItems) > 0 {
-				contentItems, _ = attachAnnotationsToFirstTextItem(contentItems, message.Annotations)
-				resp.Output = append(resp.Output, Item{
-					ID:      messageItemID,
-					Type:    "message",
-					Role:    "assistant",
-					Content: &Input{Items: contentItems},
-					Status:  lo.ToPtr("completed"),
-				})
-			}
+		}
+		if message.Refusal != "" {
+			refusal := message.Refusal
+			contentItems = append(contentItems, Item{Type: "refusal", Refusal: &refusal})
+		}
+		if len(contentItems) > 0 {
+			contentItems, _ = attachAnnotationsToFirstTextItem(contentItems, message.Annotations)
+			resp.Output = append(resp.Output, Item{
+				ID:      messageItemID,
+				Type:    "message",
+				Role:    "assistant",
+				Content: &Input{Items: contentItems},
+				Status:  lo.ToPtr("completed"),
+			})
 		}
 
 		// Set status based on finish reason
@@ -1042,7 +1054,7 @@ func convertToResponsesAPIResponse(chatResp *llm.Response) *Response {
 		emptyText := ""
 		resp.Output = []Item{
 			{
-				ID:   generateItemID(),
+				ID:   generateMessageID(),
 				Type: "message",
 				Role: "assistant",
 				Content: &Input{
@@ -1065,6 +1077,33 @@ func convertToResponsesAPIResponse(chatResp *llm.Response) *Response {
 // generateItemID generates a unique item ID for output items.
 func generateItemID() string {
 	return fmt.Sprintf("item_%s", lo.RandomString(16, lo.AlphanumericCharset))
+}
+
+// generateMessageID creates an identifier that remains valid when a Responses
+// client sends a returned assistant message back as a later input item. OpenAI
+// validates message item identifiers by their msg_ prefix.
+func generateMessageID() string {
+	return fmt.Sprintf("msg_%s", lo.RandomString(16, lo.AlphanumericCharset))
+}
+
+func isValidMessageItemID(id string) bool {
+	return strings.HasPrefix(strings.TrimSpace(id), "msg_")
+}
+
+func validMessageItemIDOrEmpty(id string) string {
+	if !isValidMessageItemID(id) {
+		return ""
+	}
+
+	return strings.TrimSpace(id)
+}
+
+func normalizeMessageItemID(id string) string {
+	if valid := validMessageItemIDOrEmpty(id); valid != "" {
+		return valid
+	}
+
+	return generateMessageID()
 }
 
 // buildReasoningItem creates a reasoning Item from a message's reasoning content and signature.

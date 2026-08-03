@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/looplj/axonhub/internal/contexts"
@@ -219,11 +218,11 @@ func (s *recordPerformanceStream) Current() *llm.Response {
 		}
 	}
 
-	status := strings.ToLower(strings.TrimSpace(event.ProtocolStatus))
-	if status == "incomplete" || status == "failed" || status == "error" || status == "canceled" || status == "cancelled" {
+	outcome := pipeline.ResponseTerminalOutcome(event)
+	if outcome.Terminal && !outcome.Successful {
 		s.protocolIncomplete = true
 	}
-	if !s.protocolIncomplete && isSuccessfulUnifiedStreamTerminal(event) && s.state != nil {
+	if !s.protocolIncomplete && outcome.Terminal && outcome.Successful && s.state != nil {
 		s.state.OutboundStreamCompleted = true
 	}
 
@@ -244,38 +243,14 @@ func (s *recordPerformanceStream) Current() *llm.Response {
 		}
 	}
 
-	if terminal, successful := llmTerminalOutcome(event); terminal && !successful {
+	if outcome.Terminal && !outcome.Successful {
 		s.terminalFailure = true
 		s.recordFailure()
-	} else if successful && s.semanticOutput {
+	} else if outcome.Successful && s.semanticOutput {
 		s.recordSuccess()
 	}
 
 	return event
-}
-
-func isSuccessfulUnifiedStreamTerminal(response *llm.Response) bool {
-	if response == nil || response.Error != nil {
-		return false
-	}
-
-	switch strings.ToLower(strings.TrimSpace(response.ProtocolStatus)) {
-	case "completed":
-		return true
-	case "incomplete", "failed", "error", "canceled", "cancelled":
-		return false
-	}
-
-	if response == llm.DoneResponse || response.Object == "[DONE]" {
-		return true
-	}
-	for _, choice := range response.Choices {
-		if choice.FinishReason != nil && strings.TrimSpace(*choice.FinishReason) != "" {
-			return true
-		}
-	}
-
-	return false
 }
 
 func (s *recordPerformanceStream) Next() bool {
@@ -296,8 +271,8 @@ func (s *recordPerformanceStream) Close() error {
 			s.recorded = true
 		} else if s.semanticOutput {
 			// Meaningful output was already committed to the client, so the
-			// pipeline cannot safely retry. Still record the incomplete stream as
-			// unhealthy so future sessions avoid the channel temporarily.
+			// pipeline cannot safely replay it. Still record the concrete attempt
+			// as failed instead of manufacturing a successful terminal.
 			s.state.Perf.MarkFailed(500)
 			if s.state.ChannelService != nil {
 				s.state.ChannelService.AsyncRecordPerformance(s.ctx, s.state.Perf)
@@ -310,42 +285,9 @@ func (s *recordPerformanceStream) Close() error {
 }
 
 func llmTerminalOutcome(response *llm.Response) (terminal, successful bool) {
-	if response == nil {
-		return false, false
-	}
-	if response.Error != nil {
-		return true, false
-	}
-	if response == llm.DoneResponse || response.Object == "[DONE]" {
-		return true, true
-	}
+	outcome := pipeline.ResponseTerminalOutcome(response)
 
-	switch strings.ToLower(strings.TrimSpace(response.ProtocolStatus)) {
-	case "failed", "canceled", "cancelled", "error":
-		return true, false
-	case "completed", "incomplete":
-		// An explicit response.incomplete is an honest client/request terminal,
-		// but it does not make a channel unhealthy after the channel produced
-		// meaningful content. Empty-response detection still retries it when no
-		// semantic output was produced.
-		return true, true
-	}
-
-	for _, choice := range response.Choices {
-		if choice.FinishReason == nil {
-			continue
-		}
-
-		if strings.TrimSpace(*choice.FinishReason) != "" {
-			// Finish reasons are protocol-local termination reasons, not provider
-			// health errors. In particular, a normal Chat Completions `length`
-			// response may contain perfectly usable output.
-			terminal = true
-			successful = true
-		}
-	}
-
-	return terminal, successful
+	return outcome.Terminal, outcome.Successful
 }
 
 func (s *recordPerformanceStream) Err() error {

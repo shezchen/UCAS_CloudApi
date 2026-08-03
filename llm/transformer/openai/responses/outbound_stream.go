@@ -54,10 +54,12 @@ type outboundStreamState struct {
 	previousResponseID *string
 	usage              *llm.Usage
 	created            int64
+	messageItemID      string
 
 	// Content accumulation
 	textContent      strings.Builder
 	reasoningContent strings.Builder
+	refusalContent   strings.Builder
 
 	// Tool call tracking
 	toolCalls     map[string]*llm.ToolCall // callID -> tool call
@@ -220,6 +222,14 @@ func (s *responsesOutboundStream) transformStreamChunk(event *httpclient.StreamE
 
 		item := streamEvent.Item
 		switch item.Type {
+		case "message":
+			// Keep the provider's message item identifier attached to the
+			// unified stream. The Responses inbound transformer must return this
+			// exact msg_ identifier to clients so a later turn can replay it.
+			s.state.messageItemID = item.ID
+
+			return nil
+
 		case "reasoning":
 			if item.ID == "" || item.EncryptedContent == nil || *item.EncryptedContent == "" {
 				return nil // Intentionally skip this event
@@ -408,11 +418,15 @@ func (s *responsesOutboundStream) transformStreamChunk(event *httpclient.StreamE
 	case StreamEventTypeOutputTextDelta:
 		// Text content delta
 		s.state.textContent.WriteString(streamEvent.Delta)
+		if streamEvent.ItemID != nil && *streamEvent.ItemID != "" {
+			s.state.messageItemID = *streamEvent.ItemID
+		}
 
 		resp.Choices = []llm.Choice{
 			{
 				Index: 0,
 				Delta: &llm.Message{
+					ID: s.state.messageItemID,
 					Content: llm.MessageContent{
 						Content: &streamEvent.Delta,
 					},
@@ -436,6 +450,23 @@ func (s *responsesOutboundStream) transformStreamChunk(event *httpclient.StreamE
 	case StreamEventTypeOutputTextDone:
 		// Text content completed - skip, content was already streamed via deltas
 		return nil // Intentionally skip this event
+
+	case StreamEventTypeRefusalDelta:
+		s.state.refusalContent.WriteString(streamEvent.Delta)
+		if streamEvent.ItemID != nil && *streamEvent.ItemID != "" {
+			s.state.messageItemID = *streamEvent.ItemID
+		}
+
+		resp.Choices = []llm.Choice{{
+			Index: 0,
+			Delta: &llm.Message{
+				ID:      s.state.messageItemID,
+				Refusal: streamEvent.Delta,
+			},
+		}}
+
+	case StreamEventTypeRefusalDone:
+		return nil // The refusal text was already emitted by delta events.
 
 	case StreamEventTypeReasoningSummaryTextDone:
 		// Reasoning content completed - skip, content was already streamed via deltas
@@ -484,6 +515,20 @@ func (s *responsesOutboundStream) transformStreamChunk(event *httpclient.StreamE
 		}
 
 		msg := convertOutputToMessage([]Item{*streamEvent.Item}, s.state.transformerMetadata)
+		if msg.ID != "" {
+			s.state.messageItemID = msg.ID
+		}
+		// Some compatible providers omit response.refusal.delta and only include
+		// the completed refusal in output_item.done. Emit it once in that case.
+		if msg.Refusal != "" && s.state.refusalContent.Len() == 0 {
+			s.state.refusalContent.WriteString(msg.Refusal)
+			resp.Choices = []llm.Choice{{
+				Index: 0,
+				Delta: &llm.Message{ID: msg.ID, Refusal: msg.Refusal},
+			}}
+
+			break
+		}
 		if len(msg.Annotations) == 0 {
 			return nil // Intentionally skip this event
 		}
@@ -496,6 +541,7 @@ func (s *responsesOutboundStream) transformStreamChunk(event *httpclient.StreamE
 			{
 				Index: 0,
 				Delta: &llm.Message{
+					ID:          msg.ID,
 					Annotations: msg.Annotations,
 				},
 			},

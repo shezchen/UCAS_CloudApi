@@ -331,3 +331,15 @@ Owner UI 只暴露：
 - 格式与差异：Go `gofmt`、前端 Prettier、`git diff --check`
 
 生产发布完成后，在本节追加 exact commit、PR、tag、镜像摘要、数据库备份/完整性、根页面及全部静态资源、未认证 `/v1/models=401`、认证 Responses terminal、容器重启计数和受保护服务 PID。本文不以“代码存在”代替运行证据。
+
+### 2026-08-03 生产发布证据
+
+- GitHub：PR [#5](https://github.com/shezchen/UCAS_CloudApi/pull/5) 已合并；生产 exact commit 为 `42713a9e0d4e1923119bc8ff28f8a364a6dcda06`，source tree 为 `cca825b598fde8eb4fbbdc61794c4990f5fa9aab`，标签为 `save-2026-08-03-unified-routing-ucas9`。
+- 构建：只在 Mac 从上述 exact commit 的干净 `git archive` 构建；目标为 `linux/amd64`，版本 `v1.0.0-beta5-ucas.9`，二进制 SHA-256 为 `7ace69b4a7c7af3a4531b23788a6eef9ffef5ac3573b75e8783575dbc1670791`。腾讯云没有执行构建。
+- 镜像：`ucas-cloudapi:42713a9e-unified-routing-ucas9`；Docker archive digest 为 `sha256:3544ba42a5fe5d94c19e32fc9a107378efb723b025060065bb945047c3f837f1`，压缩包 SHA-256 为 `5815478aa8c8574d0e2f72a4093b6a989b686dfb3a7d695b0ff05deabd69f4c6`；加载后的本机 image ID 为 `sha256:87083f00d8a6d75d5ebf8b3c2391496efa5b696a315294b7697f638edd0d5b75`。
+- 数据与回滚：发布目录 `/opt/axonhub/releases/20260803T065454Z-42713a9e-ucas9` 保存旧 Compose、原始数据库文件和 SQLite 一致性快照；快照与发布后数据库的 `quick_check=ok`、外键错误为 0，数据卷仍为 `axonhub_axonhub_data:/data`。
+- 隐私：`store_chunks`、`live_preview`、`store_request_body`、`store_response_body` 均为 `false`；两张请求表的请求正文都只有空对象 `{}` 占位，非空响应正文、响应 chunks 和 `content_saved` 计数均为 0。
+- Web：本机与公网根页面均为 200 且 SHA-256 一致；HTML 引用的 JS、CSS、favicon 全部为 200 且两侧大小/摘要一致；未认证 `/v1/models` 在本机与公网均为 401。
+- 真实 API：认证模型目录返回 89 个模型并包含 `gpt-5.6-sol`、`gpt-5.6-terra`；两者的流式 `/v1/responses` 验证均为 HTTP 200，各收到且只收到一个真实 `response.completed`，没有 `response.failed` 或 `response.incomplete`。请求故意只带 `reasoning.effort=low`，从而同时覆盖 Codex Lite `reasoning.context=all_turns` 的网关补全路径。
+- 运行态：`/health` 返回上述 exact commit、`v1.0.0-beta5-ucas.9` 与 `linux/amd64`；容器 `running`、`RestartCount=0`、端口仍只绑定 `127.0.0.1:8090`、重启策略仍为 `unless-stopped`。
+- 受保护服务：HAProxy master/worker PID 仍为 `1324/3763894`，sing-box PID 仍为 `2048/2049`，HY2 watchdog PID 仍为 `804`；FRP 相关 PID 仍为 `3252355/785/396787/672513/1527801/783/784`，全部 `NRestarts=0`，配置摘要和监听端口未变化。两个 SOCKS5 入口和一个 HTTP 代理入口分别访问 OpenAI/Cloudflare，均保持预期的 `401/200` 且 TLS 校验结果为 0。

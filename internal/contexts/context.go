@@ -18,7 +18,9 @@ const (
 // WithAPIKey stores the API key entity in the context.
 func WithAPIKey(ctx context.Context, apiKey *ent.APIKey) context.Context {
 	container := getContainer(ctx)
+	container.mu.Lock()
 	container.APIKey = apiKey
+	container.mu.Unlock()
 
 	return withContainer(ctx, container)
 }
@@ -26,6 +28,8 @@ func WithAPIKey(ctx context.Context, apiKey *ent.APIKey) context.Context {
 // GetAPIKey retrieves the API key entity from the context.
 func GetAPIKey(ctx context.Context) (*ent.APIKey, bool) {
 	container := getContainer(ctx)
+	container.mu.RLock()
+	defer container.mu.RUnlock()
 	return container.APIKey, container.APIKey != nil
 }
 
@@ -42,7 +46,9 @@ func GetAPIKeyString(ctx context.Context) (string, bool) {
 // WithUser stores the user entity in the context.
 func WithUser(ctx context.Context, user *ent.User) context.Context {
 	container := getContainer(ctx)
+	container.mu.Lock()
 	container.User = user
+	container.mu.Unlock()
 
 	return withContainer(ctx, container)
 }
@@ -50,13 +56,17 @@ func WithUser(ctx context.Context, user *ent.User) context.Context {
 // GetUser retrieves the user entity from the context.
 func GetUser(ctx context.Context) (*ent.User, bool) {
 	container := getContainer(ctx)
+	container.mu.RLock()
+	defer container.mu.RUnlock()
 	return container.User, container.User != nil
 }
 
 // WithTraceID stores the trace id in the context.
 func WithTraceID(ctx context.Context, traceID string) context.Context {
 	container := getContainer(ctx)
+	container.mu.Lock()
 	container.TraceID = &traceID
+	container.mu.Unlock()
 
 	return withContainer(ctx, container)
 }
@@ -64,6 +74,8 @@ func WithTraceID(ctx context.Context, traceID string) context.Context {
 // GetTraceID retrieves the trace id from the context.
 func GetTraceID(ctx context.Context) (string, bool) {
 	container := getContainer(ctx)
+	container.mu.RLock()
+	defer container.mu.RUnlock()
 	if container.TraceID != nil {
 		return *container.TraceID, true
 	}
@@ -74,7 +86,9 @@ func GetTraceID(ctx context.Context) (string, bool) {
 // WithOperationName stores the operation name in the context.
 func WithOperationName(ctx context.Context, name string) context.Context {
 	container := getContainer(ctx)
+	container.mu.Lock()
 	container.OperationName = &name
+	container.mu.Unlock()
 
 	return withContainer(ctx, container)
 }
@@ -82,6 +96,8 @@ func WithOperationName(ctx context.Context, name string) context.Context {
 // GetOperationName retrieves the operation name from the context.
 func GetOperationName(ctx context.Context) (string, bool) {
 	container := getContainer(ctx)
+	container.mu.RLock()
+	defer container.mu.RUnlock()
 	if container.OperationName != nil {
 		return *container.OperationName, true
 	}
@@ -92,7 +108,9 @@ func GetOperationName(ctx context.Context) (string, bool) {
 // WithRequestID stores the request id in the context.
 func WithRequestID(ctx context.Context, requestID string) context.Context {
 	container := getContainer(ctx)
+	container.mu.Lock()
 	container.RequestID = &requestID
+	container.mu.Unlock()
 
 	return withContainer(ctx, container)
 }
@@ -100,6 +118,8 @@ func WithRequestID(ctx context.Context, requestID string) context.Context {
 // GetRequestID retrieves the request id from the context.
 func GetRequestID(ctx context.Context) (string, bool) {
 	container := getContainer(ctx)
+	container.mu.RLock()
+	defer container.mu.RUnlock()
 	if container.RequestID != nil {
 		return *container.RequestID, true
 	}
@@ -110,7 +130,9 @@ func GetRequestID(ctx context.Context) (string, bool) {
 // WithChannelAPIKey stores the channel API key in the context.
 func WithChannelAPIKey(ctx context.Context, apiKey string) context.Context {
 	container := getContainer(ctx)
+	container.mu.Lock()
 	container.ChannelAPIKey = &apiKey
+	container.mu.Unlock()
 
 	return withContainer(ctx, container)
 }
@@ -118,6 +140,8 @@ func WithChannelAPIKey(ctx context.Context, apiKey string) context.Context {
 // GetChannelAPIKey retrieves the channel API key from the context.
 func GetChannelAPIKey(ctx context.Context) (string, bool) {
 	container := getContainer(ctx)
+	container.mu.RLock()
+	defer container.mu.RUnlock()
 	if container.ChannelAPIKey != nil {
 		return *container.ChannelAPIKey, true
 	}
@@ -128,7 +152,9 @@ func GetChannelAPIKey(ctx context.Context) (string, bool) {
 // WithProjectID stores the project ID in the context.
 func WithProjectID(ctx context.Context, projectID int) context.Context {
 	container := getContainer(ctx)
+	container.mu.Lock()
 	container.ProjectID = &projectID
+	container.mu.Unlock()
 
 	return withContainer(ctx, container)
 }
@@ -136,6 +162,8 @@ func WithProjectID(ctx context.Context, projectID int) context.Context {
 // GetProjectID retrieves the project ID from the context.
 func GetProjectID(ctx context.Context) (int, bool) {
 	container := getContainer(ctx)
+	container.mu.RLock()
+	defer container.mu.RUnlock()
 	if container.ProjectID != nil {
 		return *container.ProjectID, true
 	}

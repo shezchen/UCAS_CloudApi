@@ -1285,7 +1285,10 @@ func TestApplyPassThroughBodyPreservesCodexResponsesLiteEnvelope(t *testing.T) {
 					"stream":true,
 					"store":true,
 					"parallel_tool_calls":false,
-					"input":[{"role":"developer","content":[{"type":"input_text","text":"base"}],"additional_tools":[{"type":"custom","name":"shell"}]}],
+					"input":[
+						{"type":"message","id":"item_legacy","role":"assistant","content":[{"type":"output_text","text":"old"}]},
+						{"type":"message","id":"msg_valid","role":"developer","content":[{"type":"input_text","text":"base"}],"additional_tools":[{"type":"custom","name":"shell"}]}
+					],
 					"client_metadata":{"session_id":"session-1"},
 					"stream_options":{"reasoning_summary_delivery":"summary_text_delta"}
 				}`),
@@ -1307,7 +1310,9 @@ func TestApplyPassThroughBodyPreservesCodexResponsesLiteEnvelope(t *testing.T) {
 	require.True(t, outbound.state.PassThroughApplied)
 	require.Equal(t, "gpt-5.6-sol", gjson.GetBytes(processed.Body, "model").String())
 	require.False(t, gjson.GetBytes(processed.Body, "parallel_tool_calls").Bool())
-	require.Equal(t, "shell", gjson.GetBytes(processed.Body, "input.0.additional_tools.0.name").String())
+	require.False(t, gjson.GetBytes(processed.Body, "input.0.id").Exists())
+	require.Equal(t, "msg_valid", gjson.GetBytes(processed.Body, "input.1.id").String())
+	require.Equal(t, "shell", gjson.GetBytes(processed.Body, "input.1.additional_tools.0.name").String())
 	require.Equal(t, "session-1", gjson.GetBytes(processed.Body, "client_metadata.session_id").String())
 	require.Equal(t, "summary_text_delta", gjson.GetBytes(processed.Body, "stream_options.reasoning_summary_delivery").String())
 	require.Equal(t, "all_turns", gjson.GetBytes(processed.Body, "reasoning.context").String())

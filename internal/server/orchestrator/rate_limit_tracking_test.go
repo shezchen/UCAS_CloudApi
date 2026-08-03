@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -257,9 +256,9 @@ func TestNoopRateLimitTracking(t *testing.T) {
 	assert.Equal(t, stream, wrappedStream)
 }
 
-// ========== OnOutboundRawError Tests (429 Cooldown) ==========
+// ========== OnOutboundRawError Tests (no production cooldown policy) ==========
 
-func TestRateLimitTracking_OnOutboundRawError_429(t *testing.T) {
+func TestRateLimitTracking_OnOutboundRawError_429DoesNotCreateRoutingCooldown(t *testing.T) {
 	tracker := NewChannelRequestTracker()
 
 	entChannel := &ent.Channel{ID: 1, Name: "test-channel"}
@@ -285,11 +284,11 @@ func TestRateLimitTracking_OnOutboundRawError_429(t *testing.T) {
 
 	middleware.OnOutboundRawError(ctx, httpErr)
 
-	// Verify channel is in cooldown
-	assert.True(t, tracker.IsCoolingDown(channel.ID))
+	assert.False(t, tracker.IsCoolingDown(channel.ID),
+		"a client attempt error cannot create a second time-based routing policy")
 }
 
-func TestRateLimitTracking_OnOutboundRawError_402UsesBoundedChannelCooldown(t *testing.T) {
+func TestRateLimitTracking_OnOutboundRawError_402DoesNotCreateRoutingCooldown(t *testing.T) {
 	tracker := NewChannelRequestTracker()
 	channel := &biz.Channel{Channel: &ent.Channel{ID: 8, Name: "shared-coding-plan"}}
 	outbound := &PersistentOutboundTransformer{state: &PersistenceState{
@@ -297,15 +296,13 @@ func TestRateLimitTracking_OnOutboundRawError_402UsesBoundedChannelCooldown(t *t
 	}}
 	middleware := &rateLimitTracking{outbound: outbound, tracker: tracker}
 
-	startedAt := time.Now()
 	middleware.OnOutboundRawError(context.Background(), &httpclient.Error{
 		StatusCode: http.StatusPaymentRequired,
 		Body:       []byte(`{"error":{"message":"You have exceeded your monthly quota"}}`),
 	})
 
-	until, ok := tracker.GetCooldownUntil(channel.ID)
-	require.True(t, ok)
-	require.WithinDuration(t, startedAt.Add(upstreamPaymentRequiredCooldown), until, time.Second)
+	assert.False(t, tracker.IsCoolingDown(channel.ID),
+		"quota responses are retried and verified by TestChannel, not a cooldown")
 }
 
 func TestRateLimitTracking_OnOutboundRawError_QueueErrorIgnored(t *testing.T) {

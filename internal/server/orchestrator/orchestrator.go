@@ -43,41 +43,9 @@ func NewChatCompletionOrchestrator(
 		channelLimiterMetrics = nil
 	}
 
-	// Initialize model circuit breaker
-	modelCircuitBreaker := biz.NewModelCircuitBreaker()
 	sessionAffinity := NewSessionAffinityTracker(systemService)
 
-	rateLimitStrategy := NewRateLimitAwareStrategy(rateLimitTracker, channelLimiterManager)
-	quotaStrategy := NewQuotaAwareStrategy(quotaProvider, systemService)
-	traceStrategy := NewTraceAwareStrategy(requestService)
-	sessionAffinityStrategy := NewSessionAffinityStrategy()
-
-	adaptiveLoadBalancer := NewLoadBalancer(systemService, channelService,
-		traceStrategy,
-		sessionAffinityStrategy,
-		NewErrorAwareStrategy(channelService),
-		NewWeightRoundRobinStrategy(channelService),
-		NewLatencyAwareStrategy(channelService),
-		rateLimitStrategy,
-		quotaStrategy,
-	)
-
-	failoverLoadBalancer := NewLoadBalancer(systemService, channelService,
-		traceStrategy, sessionAffinityStrategy, NewWeightStrategy(), NewRandomStrategy(), rateLimitStrategy, quotaStrategy)
-
-	circuitBreakerLoadBalancer := NewLoadBalancer(systemService, channelService,
-		traceStrategy, sessionAffinityStrategy, NewWeightStrategy(), NewModelAwareCircuitBreakerStrategy(modelCircuitBreaker), rateLimitStrategy, quotaStrategy)
-
-	roundRobinHealthFilter := NewRoundRobinHealthStrategy(channelService, modelCircuitBreaker)
-	roundRobinLoadBalancer := NewLoadBalancer(systemService, channelService,
-		traceStrategy,
-		sessionAffinityStrategy,
-		NewRoundRobinStrategy(channelService),
-		rateLimitStrategy,
-		quotaStrategy,
-	).WithoutWeightTieBreaker().WithRoundRobinHealthFilter(roundRobinHealthFilter)
-
-	return &ChatCompletionOrchestrator{
+	processor := &ChatCompletionOrchestrator{
 		Inbound:            inbound,
 		RequestService:     requestService,
 		ChannelService:     channelService,
@@ -91,21 +59,24 @@ func NewChatCompletionOrchestrator(
 			cc.StripBillingHeaderCCH(),
 			stream.EnsureUsage(),
 		},
-		PipelineFactory:            pipeline.NewFactory(httpClient),
-		ModelMapper:                NewModelMapper(),
-		channelSelector:            defaultSelector,
-		channelLimiterManager:      channelLimiterManager,
-		channelLimiterMetrics:      channelLimiterMetrics,
-		rateLimitTracker:           rateLimitTracker,
-		adaptiveLoadBalancer:       adaptiveLoadBalancer,
-		failoverLoadBalancer:       failoverLoadBalancer,
-		circuitBreakerLoadBalancer: circuitBreakerLoadBalancer,
-		roundRobinLoadBalancer:     roundRobinLoadBalancer,
-		modelCircuitBreaker:        modelCircuitBreaker,
-		sessionAffinity:            sessionAffinity,
-		quotaProvider:              quotaProvider,
-		proxy:                      nil,
+		PipelineFactory:       pipeline.NewFactory(httpClient),
+		ModelMapper:           NewModelMapper(),
+		channelSelector:       defaultSelector,
+		channelLimiterManager: channelLimiterManager,
+		channelLimiterMetrics: channelLimiterMetrics,
+		rateLimitTracker:      rateLimitTracker,
+		sessionAffinity:       sessionAffinity,
+		proxy:                 nil,
 	}
+	processor.programmaticTester = NewTestChannelOrchestrator(
+		channelService,
+		requestService,
+		systemService,
+		usageLogService,
+		promptProtectionRuleService,
+		httpClient,
+	)
+	return processor
 }
 
 type ChatCompletionOrchestrator struct {
@@ -126,11 +97,6 @@ type ChatCompletionOrchestrator struct {
 
 	// The default channel selector.
 	channelSelector CandidateSelector
-	// The load balancer for channel load balancing.
-	adaptiveLoadBalancer       *LoadBalancer
-	failoverLoadBalancer       *LoadBalancer
-	circuitBreakerLoadBalancer *LoadBalancer
-	roundRobinLoadBalancer     *LoadBalancer
 	// channelLimiterManager owns per-channel concurrency admission control and
 	// supplies in-flight / queue stats to the rate-limit-aware load-balancer strategy.
 	channelLimiterManager *ChannelLimiterManager
@@ -139,12 +105,16 @@ type ChatCompletionOrchestrator struct {
 	channelLimiterMetrics *ChannelLimiterMetrics
 	// The rate limit tracker for rate limit aware load balancing.
 	rateLimitTracker *ChannelRequestTracker
-	// The model circuit breaker for circuit-breaker load balancing.
-	modelCircuitBreaker *biz.ModelCircuitBreaker
 	// Fallback affinity for clients that do not provide an explicit trace/session ID.
 	sessionAffinity *SessionAffinityTracker
-	// The provider quota status provider for quota-aware load balancing and selection.
-	quotaProvider ProviderQuotaStatusProvider
+	// programmaticTester runs the same TestChannel verdict path after an
+	// abnormal production attempt. Its result never blocks failover.
+	programmaticTester *TestChannelOrchestrator
+	// singleRouteOnly is reserved for authoritative TestChannel probes. It keeps
+	// the normal transform/timeout/empty-response path, but forbids the pipeline
+	// from retrying another credential, model, or channel and accidentally
+	// attributing that route's result to the route under test.
+	singleRouteOnly bool
 
 	// proxy is the proxy configuration for testing
 	// If set, it will override the channel's default proxy configuration
@@ -175,40 +145,31 @@ func (processor *ChatCompletionOrchestrator) WithProxy(proxy *httpclient.ProxyCo
 type ChatCompletionResult struct {
 	ChatCompletion       *httpclient.Response
 	ChatCompletionStream streams.Stream[*httpclient.StreamEvent]
+	// RouteKey is diagnostic metadata for TestChannel. CredentialID is a
+	// fingerprint; API callers never receive the raw provider credential.
+	RouteKey *biz.RouteKey
 }
 
 func (processor *ChatCompletionOrchestrator) Process(ctx context.Context, request *httpclient.Request) (ChatCompletionResult, error) {
 	// The context is system bypassed to allow the orchestrator to access the system settings.
 	ctx = authz.WithSystemBypass(ctx, "process-chat-completion")
+	// Install the mutable request-local context container before an API-key
+	// provider records its exact selected credential. Providers cannot replace
+	// the caller's context through their Get interface, but can safely update the
+	// already-attached container.
+	ctx = contexts.WithChannelAPIKey(ctx, "")
 
 	apiKey, _ := contexts.GetAPIKey(ctx)
 
 	// Get retry policy from system settings
 	retryPolicy := processor.SystemService.RetryPolicyOrDefault(ctx)
 
-	strategy := deriveLoadBalancerStrategy(retryPolicy, apiKey)
 	if log.DebugEnabled(ctx) {
 		log.Debug(ctx, "chat request received",
 			log.Int("request_body_bytes", len(request.Body)),
 			log.Int("request_header_count", len(request.Headers)),
-			log.String("system_load_balance_strategy", retryPolicy.LoadBalancerStrategy),
-			log.String("load_balance_strategy", strategy),
+			log.String("routing_strategy", "unified_fair_ring"),
 		)
-	}
-
-	loadBalancer := processor.adaptiveLoadBalancer
-
-	switch strategy {
-	case biz.LoadBalancerStrategyAdaptive:
-		loadBalancer = processor.adaptiveLoadBalancer
-	case biz.LoadBalancerStrategyFailover:
-		loadBalancer = processor.failoverLoadBalancer
-	case biz.LoadBalancerStrategyCircuitBreaker:
-		loadBalancer = processor.circuitBreakerLoadBalancer
-	case biz.LoadBalancerStrategyRoundRobin:
-		loadBalancer = processor.roundRobinLoadBalancer
-	default:
-		// Default to adaptive load balancer
 	}
 
 	state := &PersistenceState{
@@ -218,10 +179,10 @@ func (processor *ChatCompletionOrchestrator) Process(ctx context.Context, reques
 		ChannelService:        processor.ChannelService,
 		PromptProvider:        processor.PromptProvider,
 		PromptProtecter:       processor.PromptProtecter,
-		RetryPolicyProvider:   processor.SystemService,
 		CandidateSelector:     processor.channelSelector,
-		LoadBalancer:          loadBalancer,
 		SessionAffinity:       processor.sessionAffinity,
+		UnifiedRoutes:         processor.ChannelService.UnifiedRouteState(),
+		ProgrammaticTester:    processor.programmaticTester,
 		ModelMapper:           processor.ModelMapper,
 		Proxy:                 processor.proxy,
 		CurrentCandidateIndex: 0,
@@ -229,23 +190,26 @@ func (processor *ChatCompletionOrchestrator) Process(ctx context.Context, reques
 
 	var pipelineOpts []pipeline.Option
 
-	// Only apply retry if policy is enabled
-	if retryPolicy.Enabled {
+	// Only production requests may consume the global cross-route retry budget.
+	// An authoritative TestChannel probe must yield one verdict for one concrete
+	// route, regardless of the Owner's production retry settings.
+	if retryPolicy.Enabled && !processor.singleRouteOnly {
 		pipelineOpts = append(pipelineOpts, pipeline.WithRetry(
 			retryPolicy.MaxChannelRetries,
-			retryPolicy.MaxSingleChannelRetries,
-			time.Duration(retryPolicy.RetryDelayMs)*time.Millisecond,
+			0,
+			0,
 		))
-
-		if retryPolicy.EmptyResponseDetection {
-			pipelineOpts = append(pipelineOpts, pipeline.WithEmptyResponseDetection())
-		}
-
+	}
+	if retryPolicy.Enabled || processor.singleRouteOnly {
 		pipelineOpts = append(pipelineOpts, pipeline.WithResponseTimeouts(
 			time.Duration(retryPolicy.StreamFirstEventTimeoutSeconds)*time.Second,
 			time.Duration(retryPolicy.NonStreamResponseTimeoutSeconds)*time.Second,
 		))
 	}
+	// Unified routing treats every empty/incomplete upstream attempt as a failed
+	// route even when retries are disabled. Legacy persisted settings may not
+	// turn an invalid upstream response into success.
+	pipelineOpts = append(pipelineOpts, pipeline.WithEmptyResponseDetection())
 
 	var middlewares []pipeline.Middleware
 
@@ -260,7 +224,7 @@ func (processor *ChatCompletionOrchestrator) Process(ctx context.Context, reques
 		applyAutoReasoningEffort(processor.SystemService),
 		checkApiKeyModelAccess(inbound),
 		applyModelMapping(inbound),
-		selectCandidates(inbound, processor.quotaProvider, processor.SystemService),
+		selectCandidates(inbound),
 		injectPrompts(inbound),
 		protectPrompts(inbound),
 		// Response pass-through middlewares run before persistRequest so the raw provider
@@ -284,7 +248,6 @@ func (processor *ChatCompletionOrchestrator) Process(ctx context.Context, reques
 		// Unified performance tracking middleware.
 		withPerformanceRecording(outbound),
 
-		withModelCircuitBreaker(outbound, processor.modelCircuitBreaker),
 		withSessionAffinity(outbound, processor.sessionAffinity),
 
 		// The request execution middleware must be the final middleware
@@ -351,7 +314,7 @@ func (processor *ChatCompletionOrchestrator) Process(ctx context.Context, reques
 			}
 		}
 
-		return ChatCompletionResult{}, clientErr
+		return ChatCompletionResult{RouteKey: outbound.resultRouteKey(ctx)}, clientErr
 	}
 
 	// Return result based on stream type
@@ -359,11 +322,13 @@ func (processor *ChatCompletionOrchestrator) Process(ctx context.Context, reques
 		return ChatCompletionResult{
 			ChatCompletion:       nil,
 			ChatCompletionStream: result.EventStream,
+			RouteKey:             outbound.resultRouteKey(ctx),
 		}, nil
 	}
 
 	return ChatCompletionResult{
 		ChatCompletion:       result.Response,
 		ChatCompletionStream: nil,
+		RouteKey:             outbound.resultRouteKey(ctx),
 	}, nil
 }

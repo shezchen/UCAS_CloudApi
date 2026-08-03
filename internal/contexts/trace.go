@@ -9,7 +9,9 @@ import (
 // WithTrace stores the trace entity in the context.
 func WithTrace(ctx context.Context, trace *ent.Trace) context.Context {
 	container := getContainer(ctx)
+	container.mu.Lock()
 	container.Trace = trace
+	container.mu.Unlock()
 
 	return withContainer(ctx, container)
 }
@@ -17,5 +19,7 @@ func WithTrace(ctx context.Context, trace *ent.Trace) context.Context {
 // GetTrace retrieves the trace entity from the context.
 func GetTrace(ctx context.Context) (*ent.Trace, bool) {
 	container := getContainer(ctx)
+	container.mu.RLock()
+	defer container.mu.RUnlock()
 	return container.Trace, container.Trace != nil
 }

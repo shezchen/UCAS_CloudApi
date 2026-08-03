@@ -616,3 +616,12 @@ func TestAllowedQueryConfigs(t *testing.T) {
 	assert.Contains(t, modelConfig.JoinClause, "models m ON", "should join models table")
 	assert.Contains(t, modelConfig.GroupBy, "model_id", "should group by model_id")
 }
+
+func TestBuildThroughputQueryExcludesTestTraffic(t *testing.T) {
+	for _, queryType := range []ThroughputQueryType{ThroughputQueryByChannel, ThroughputQueryByModel} {
+		for _, mode := range []ThroughputQueryMode{ThroughputModeRowNumber, ThroughputModeMaxID} {
+			query := BuildThroughputQuery(false, queryType, 10, mode)
+			assert.Contains(t, query, "ul.source <> 'test'")
+		}
+	}
+}

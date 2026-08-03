@@ -44,6 +44,16 @@ func (p *pipeline) notStream(
 		return nil, WrapUpstreamError(fmt.Errorf("failed to transform response: %w", err))
 	}
 
+	// A successfully decoded HTTP body is not necessarily a successful model
+	// response. Responses API may return response.incomplete/failed/canceled
+	// together with useful-looking text or tool calls. Reject that attempt before
+	// persistence, affinity, accounting, and other success middlewares run.
+	if outcome := ResponseTerminalOutcome(llmResp); outcome.Terminal && !outcome.Successful {
+		p.applyRawErrorResponseMiddlewares(ctx, outcome.Err)
+
+		return nil, WrapUpstreamError(outcome.Err)
+	}
+
 	// Reject empty responses before persistence/accounting middlewares run. A
 	// usage-only response must remain retryable and must not consume the logical
 	// request's one usage-log slot before a later successful candidate.

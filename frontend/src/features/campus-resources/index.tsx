@@ -7,7 +7,6 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
-  CircleAlert,
   CircleCheckBig,
   CircleHelp,
   CircleX,
@@ -19,7 +18,6 @@ import {
   Loader2,
   Play,
   RadioTower,
-  RefreshCw,
   Search,
   Settings2,
   ShieldCheck,
@@ -45,6 +43,7 @@ import { Main } from '@/components/layout/main';
 import { getProviderQuotaUsagePercentage, type ProviderQuotaChannel, useProviderQuotaStatuses } from '@/features/system/data/quotas';
 import {
   type CampusManagedChannel,
+  type CampusChannelRouteHealth,
   type CampusChannelProbeResult,
   type CampusDonationBenefits,
   type CampusModelDetail,
@@ -149,21 +148,21 @@ function SummaryCard({ icon: Icon, label, value }: { icon: typeof Layers3; label
   );
 }
 
-const channelHealthPresentation = {
-  healthy: {
+const channelAvailabilityPresentation = {
+  available: {
     icon: CircleCheckBig,
     className: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
   },
-  degraded: {
-    icon: CircleAlert,
-    className: 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400',
-  },
-  unhealthy: {
+  unavailable: {
     icon: CircleX,
     className: 'border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-400',
   },
-  recovering: {
-    icon: RefreshCw,
+  mixed: {
+    icon: Gauge,
+    className: 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400',
+  },
+  testing: {
+    icon: Loader2,
     className: 'border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-400',
   },
   unknown: {
@@ -312,6 +311,78 @@ function ChannelModels({ models }: { models: string[] }) {
   );
 }
 
+function ChannelRoutes({ routes }: { routes: CampusChannelRouteHealth[] }) {
+  const { t, i18n } = useTranslation();
+  const [expanded, setExpanded] = useState(false);
+  const visibleRoutes = expanded ? routes : routes.slice(0, 3);
+  const locale = i18n.language.startsWith('zh') ? 'zh-CN' : 'en-US';
+
+  const formatLastTest = (value?: string) => {
+    if (!value) return t('resources.channels.availability.neverTested');
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return new Intl.DateTimeFormat(locale, { dateStyle: 'short', timeStyle: 'short' }).format(date);
+  };
+
+  if (routes.length === 0) return null;
+
+  return (
+    <div className='bg-muted/15 space-y-3 rounded-lg border p-3' data-testid='campus-channel-routes'>
+      <div className='flex items-center justify-between gap-3'>
+        <div>
+          <div className='text-xs font-semibold'>{t('resources.channels.availability.routesTitle')}</div>
+          <p className='text-muted-foreground mt-0.5 text-[11px]'>
+            {t('resources.channels.availability.routesDescription', { count: routes.length })}
+          </p>
+        </div>
+        {routes.length > 3 && (
+          <Button type='button' variant='ghost' size='sm' className='h-8 gap-1 px-2 text-xs' onClick={() => setExpanded((value) => !value)}>
+            {expanded ? <ChevronUp className='size-3.5' aria-hidden='true' /> : <ChevronDown className='size-3.5' aria-hidden='true' />}
+            {t(expanded ? 'resources.channels.availability.routesCollapse' : 'resources.channels.availability.routesExpand')}
+          </Button>
+        )}
+      </div>
+      <ul className='space-y-2'>
+        {visibleRoutes.map((route) => {
+          const state = route.testInFlight ? 'testing' : !route.known ? 'unknown' : route.available ? 'available' : 'unavailable';
+          const presentation = channelAvailabilityPresentation[state];
+          const RouteIcon = presentation.icon;
+          return (
+            <li
+              key={`${route.credentialSlot}-${route.model}-${route.protocol}`}
+              className='bg-background/70 space-y-2 rounded border p-2.5'
+            >
+              <div className='flex min-w-0 items-center justify-between gap-2'>
+                <div className='min-w-0 text-[11px]'>
+                  <code className='block truncate font-medium' title={route.model}>
+                    {route.model}
+                  </code>
+                  <span className='text-muted-foreground'>
+                    {t('resources.channels.availability.routeIdentity', {
+                      slot: route.credentialSlot,
+                      protocol: route.protocol,
+                    })}
+                  </span>
+                </div>
+                <Badge variant='outline' className={cn('shrink-0 gap-1', presentation.className)}>
+                  <RouteIcon className={cn('size-3', state === 'testing' && 'animate-spin')} aria-hidden='true' />
+                  {t(`resources.channels.availability.state.${state}`)}
+                </Badge>
+              </div>
+              <div className='text-muted-foreground text-[11px]'>{formatLastTest(route.lastTestAt)}</div>
+              {route.lastTestError && (
+                <code className='block rounded border p-2 text-[11px] leading-4 break-all whitespace-pre-wrap text-red-700 dark:text-red-400'>
+                  {route.lastTestError}
+                </code>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 function ChannelCard({
   channel,
   providerQuota,
@@ -330,22 +401,32 @@ function ChannelCard({
   const providerLabel = t(`channels.providers.${channel.provider}`, {
     defaultValue: t(`channels.types.${channel.provider}`, { defaultValue: channel.provider }),
   });
-  const healthState = channel.health?.state ?? 'unknown';
-  const healthPresentation = channelHealthPresentation[healthState];
-  const HealthIcon = healthPresentation.icon;
-  const recentSuccessRate = channel.health?.recentSuccessRate;
-  const successRatePercent =
-    recentSuccessRate === undefined || channel.health?.recentRequestCount === 0
-      ? undefined
-      : Math.min(100, Math.max(0, recentSuccessRate <= 1 ? recentSuccessRate * 100 : recentSuccessRate));
-  const recentSuccessCount =
-    successRatePercent === undefined || channel.health?.recentRequestCount === undefined
-      ? undefined
-      : Math.round((successRatePercent / 100) * channel.health.recentRequestCount);
+  const serverAvailabilityState = channel.health?.state;
+  const storedAvailabilityState = channel.health?.testInFlight
+    ? 'testing'
+    : serverAvailabilityState === 'available' ||
+        serverAvailabilityState === 'unavailable' ||
+        serverAvailabilityState === 'mixed' ||
+        serverAvailabilityState === 'testing' ||
+        serverAvailabilityState === 'unknown'
+      ? serverAvailabilityState
+      : channel.health?.known === true
+        ? channel.health.available
+          ? 'available'
+          : 'unavailable'
+        : 'unknown';
+  // Test details are local UI history, not an availability verdict. In
+  // particular, an incomplete tester run can return a failed probe response
+  // without authoritatively changing channel.health. Only the server-owned
+  // TestChannel projection may drive the badge after the pending state ends.
+  const availabilityState = probeChannel.isPending ? 'testing' : storedAvailabilityState;
+  const availabilityPresentation = channelAvailabilityPresentation[availabilityState];
+  const AvailabilityIcon = availabilityPresentation.icon;
   const finalAttempt = lastProbeResult?.attempts.at(-1);
   const finalModelID = lastProbeResult?.modelID || finalAttempt?.modelID;
   const finalStatusCode = lastProbeResult?.statusCode ?? finalAttempt?.statusCode;
   const effectiveProbeModel = probeModel === AUTO_PROBE_MODEL || channel.models.includes(probeModel) ? probeModel : AUTO_PROBE_MODEL;
+  const lastTestAt = channel.health?.lastTestAt ?? channel.health?.lastCheckedAt;
 
   const formattedExpiry = useMemo(() => {
     if (!channel.expiresAt) return null;
@@ -359,15 +440,15 @@ function ChannelCard({
   }, [channel.expiresAt, i18n.language]);
 
   const formattedLastChecked = useMemo(() => {
-    if (!channel.health?.lastCheckedAt) return null;
-    const value = new Date(channel.health.lastCheckedAt);
-    if (Number.isNaN(value.getTime())) return channel.health.lastCheckedAt;
+    if (!lastTestAt) return null;
+    const value = new Date(lastTestAt);
+    if (Number.isNaN(value.getTime())) return lastTestAt;
 
     return new Intl.DateTimeFormat(i18n.language.startsWith('zh') ? 'zh-CN' : 'en-US', {
       dateStyle: 'short',
       timeStyle: 'short',
     }).format(value);
-  }, [channel.health?.lastCheckedAt, i18n.language]);
+  }, [lastTestAt, i18n.language]);
 
   const probe = () => {
     if (!channel.id) return;
@@ -445,12 +526,12 @@ function ChannelCard({
             </Badge>
             <Badge
               variant='outline'
-              className={cn('gap-1', healthPresentation.className)}
+              className={cn('gap-1', availabilityPresentation.className)}
               data-testid='campus-channel-health-state'
-              data-health-state={healthState}
+              data-health-state={availabilityState}
             >
-              <HealthIcon className={cn('size-3', healthState === 'recovering' && 'animate-spin')} aria-hidden='true' />
-              {t(`resources.channels.health.state.${healthState}`)}
+              <AvailabilityIcon className={cn('size-3', availabilityState === 'testing' && 'animate-spin')} aria-hidden='true' />
+              {t(`resources.channels.availability.state.${availabilityState}`)}
             </Badge>
           </div>
         </div>
@@ -512,43 +593,52 @@ function ChannelCard({
 
         <dl className='bg-muted/20 grid gap-2 rounded-lg border p-3 text-xs' data-testid='campus-channel-health-details'>
           <div className='flex items-center justify-between gap-3'>
-            <dt className='text-muted-foreground'>{t('resources.channels.health.successRate')}</dt>
-            <dd className='font-mono font-medium tabular-nums'>
-              {successRatePercent === undefined ? t('resources.channels.health.unknown') : `${successRatePercent.toFixed(1)}%`}
-            </dd>
+            <dt className='text-muted-foreground'>{t('resources.channels.availability.label')}</dt>
+            <dd className='font-medium'>{t(`resources.channels.availability.state.${availabilityState}`)}</dd>
           </div>
           <div className='flex items-center justify-between gap-3'>
-            <dt className='text-muted-foreground'>{t('resources.channels.health.successCount')}</dt>
-            <dd className='font-mono font-medium tabular-nums'>
-              {recentSuccessCount === undefined || channel.health?.recentRequestCount === undefined
-                ? t('resources.channels.health.unknown')
-                : t('resources.channels.health.countValue', {
-                    success: recentSuccessCount,
-                    total: channel.health.recentRequestCount,
-                  })}
-            </dd>
-          </div>
-          <div className='flex items-center justify-between gap-3'>
-            <dt className='text-muted-foreground'>{t('resources.channels.health.lastChecked')}</dt>
+            <dt className='text-muted-foreground'>{t('resources.channels.availability.routeSummary')}</dt>
             <dd className='text-right font-medium'>
-              {channel.health?.lastCheckedAt ? (
-                <time dateTime={channel.health.lastCheckedAt}>{formattedLastChecked}</time>
-              ) : (
-                t('resources.channels.health.neverChecked')
-              )}
+              {t('resources.channels.availability.routeSummaryValue', {
+                available: channel.health?.availableRouteCount ?? 0,
+                unavailable: channel.health?.unavailableRouteCount ?? 0,
+                unknown: channel.health?.unknownRouteCount ?? 0,
+              })}
             </dd>
           </div>
           <div className='flex items-center justify-between gap-3'>
-            <dt className='text-muted-foreground'>{t('resources.channels.health.failureCategory')}</dt>
-            <dd className='max-w-[65%] truncate text-right font-medium' title={channel.health?.lastFailureCategory}>
-              {channel.health?.lastFailureCategory
-                ? t(`resources.channels.health.failure.${channel.health.lastFailureCategory}`, {
-                    defaultValue: channel.health.lastFailureCategory,
-                  })
-                : t('resources.channels.health.none')}
+            <dt className='text-muted-foreground'>{t('resources.channels.availability.lastTest')}</dt>
+            <dd className='text-right font-medium'>
+              {lastTestAt ? <time dateTime={lastTestAt}>{formattedLastChecked}</time> : t('resources.channels.availability.neverTested')}
             </dd>
           </div>
+          <div className='flex items-center justify-between gap-3'>
+            <dt className='text-muted-foreground'>{t('resources.channels.availability.testModel')}</dt>
+            <dd className='max-w-[65%] truncate text-right font-mono font-medium' title={channel.health?.testModel}>
+              {channel.health?.testModel || t('resources.channels.probe.notReported')}
+            </dd>
+          </div>
+          <div className='flex items-center justify-between gap-3'>
+            <dt className='text-muted-foreground'>{t('resources.channels.availability.testProtocol')}</dt>
+            <dd className='max-w-[65%] truncate text-right font-mono font-medium' title={channel.health?.testProtocol}>
+              {channel.health?.testProtocol || t('resources.channels.probe.notReported')}
+            </dd>
+          </div>
+          {channel.health?.lastTestError && (
+            <div className='space-y-1 border-t pt-2'>
+              <dt className='text-muted-foreground'>{t('resources.channels.availability.lastError')}</dt>
+              <dd>
+                <code className='bg-background/70 block rounded border p-2 text-[11px] leading-4 break-all whitespace-pre-wrap text-red-700 dark:text-red-400'>
+                  {channel.health.lastTestError}
+                </code>
+              </dd>
+            </div>
+          )}
         </dl>
+        <p className='text-muted-foreground rounded-lg border border-dashed px-3 py-2 text-xs leading-4'>
+          {t('resources.channels.availability.explanation')}
+        </p>
+        <ChannelRoutes routes={channel.health?.routes ?? []} />
 
         {(lastProbeResult || probeRequestError) && (
           <div

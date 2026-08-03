@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
+	"slices"
 	"time"
 
 	"github.com/samber/lo"
 
+	"github.com/looplj/axonhub/internal/contexts"
 	"github.com/looplj/axonhub/internal/ent"
+	requestent "github.com/looplj/axonhub/internal/ent/request"
 	"github.com/looplj/axonhub/internal/log"
 	"github.com/looplj/axonhub/internal/objects"
 	"github.com/looplj/axonhub/internal/pkg/xcontext"
@@ -37,11 +39,12 @@ type OutboundPersistentStream struct {
 	request     *ent.Request
 	requestExec *ent.RequestExecution
 
-	transformer    transformer.Outbound
-	perf           *biz.PerformanceRecord
-	responseChunks []*httpclient.StreamEvent
-	closed         bool
-	state          *PersistenceState
+	transformer      transformer.Outbound
+	perf             *biz.PerformanceRecord
+	responseChunks   []*httpclient.StreamEvent
+	closed           bool
+	state            *PersistenceState
+	attemptFinalizer func(context.Context, bool)
 }
 
 var _ streams.Stream[*httpclient.StreamEvent] = (*OutboundPersistentStream)(nil)
@@ -56,6 +59,7 @@ func NewOutboundPersistentStream(
 	outboundTransformer transformer.Outbound,
 	perf *biz.PerformanceRecord,
 	state *PersistenceState,
+	attemptFinalizers ...func(context.Context, bool),
 ) *OutboundPersistentStream {
 	s := &OutboundPersistentStream{
 		ctx:             ctx,
@@ -70,8 +74,22 @@ func NewOutboundPersistentStream(
 		closed:          false,
 		state:           state,
 	}
+	if len(attemptFinalizers) > 0 {
+		s.attemptFinalizer = attemptFinalizers[0]
+	}
 
 	return s
+}
+
+func (ts *OutboundPersistentStream) closeWithAttemptOutcome(success bool) error {
+	err := ts.stream.Close()
+	if err != nil {
+		success = false
+	}
+	if ts.attemptFinalizer != nil {
+		ts.attemptFinalizer(ts.ctx, success)
+	}
+	return err
 }
 
 func (ts *OutboundPersistentStream) Next() bool {
@@ -148,8 +166,9 @@ func (ts *OutboundPersistentStream) Close() error {
 
 	if len(ts.responseChunks) > 0 {
 		responseBody, meta, aggErr = ts.transformer.AggregateStreamChunks(context.WithoutCancel(ctx), ts.state.RawProviderRequest, ts.responseChunks)
-		aggregatedTerminal = aggErr == nil && isTerminalAggregated(meta)
-		aggregatedCompleted = aggregatedTerminal && meta.Completed
+		outcome := pipeline.ResponseMetaTerminalOutcome(meta)
+		aggregatedTerminal = aggErr == nil && outcome.Terminal
+		aggregatedCompleted = aggregatedTerminal && outcome.Successful
 		ts.logFinalizationDecision(ctx, "aggregated_outbound_chunks", streamErr, ctxErr, aggregatedCompleted, aggErr)
 		if aggregatedCompleted {
 			log.Debug(ctx, "Stream has valid complete response without terminal event, treating as completed")
@@ -168,7 +187,7 @@ func (ts *OutboundPersistentStream) Close() error {
 		defer cancel()
 		ts.persistAggregatedFailure(persistCtx, meta, terminalErr)
 
-		return ts.stream.Close()
+		return ts.closeWithAttemptOutcome(false)
 	}
 
 	acceptedSemanticOutput := ts.state.AttemptAccepted && ts.state.AttemptSemanticOutput
@@ -201,7 +220,7 @@ func (ts *OutboundPersistentStream) Close() error {
 		}
 		ts.persistAggregatedFailure(persistCtx, meta, errToReport)
 
-		return ts.stream.Close()
+		return ts.closeWithAttemptOutcome(false)
 	}
 
 	// Stream completed successfully - perform final persistence
@@ -218,7 +237,7 @@ func (ts *OutboundPersistentStream) Close() error {
 		ts.persistResponseChunks(ctx)
 	}
 
-	return ts.stream.Close()
+	return ts.closeWithAttemptOutcome(true)
 }
 
 func (ts *OutboundPersistentStream) logFinalizationDecision(ctx context.Context, decision string, streamErr error, ctxErr error, aggregatedCompleted bool, aggregatedErr error) {
@@ -353,7 +372,7 @@ func (ts *OutboundPersistentStream) persistAggregatedResponse(ctx context.Contex
 }
 
 func isTerminalAggregated(meta llm.ResponseMeta) bool {
-	return meta.Terminal || meta.Completed
+	return pipeline.ResponseMetaTerminalOutcome(meta).Terminal
 }
 
 var errSkipCandidateByCircuitBreaker = errors.New("skip candidate by circuit breaker")
@@ -415,6 +434,7 @@ func (p *PersistentOutboundTransformer) resetProviderAttemptState() {
 	p.state.OutboundStreamCompleted = false
 	p.state.AttemptAccepted = false
 	p.state.AttemptSemanticOutput = false
+	p.state.CurrentRouteAttempt = nil
 }
 
 func (p *PersistentOutboundTransformer) TransformError(ctx context.Context, rawErr *httpclient.Error) *llm.ResponseError {
@@ -433,6 +453,19 @@ func (p *PersistentOutboundTransformer) TransformRequest(ctx context.Context, ll
 	}
 
 	candidate := p.state.ChannelModelsCandidates[p.state.CurrentCandidateIndex]
+	if p.state.ForcedCredential != "" {
+		candidateCopy := *candidate
+		candidateCopy.ForcedCredential = p.state.ForcedCredential
+		keys := enabledCandidateCredentials(candidate.Channel)
+		if len(keys) != 1 || keys[0] != p.state.ForcedCredential {
+			forcedChannel, err := p.state.ChannelService.GetChannelWithKey(ctx, candidate.Channel.ID, p.state.ForcedCredential)
+			if err != nil {
+				return nil, fmt.Errorf("failed to build TestChannel-PASS credential route: %w", err)
+			}
+			candidateCopy.Channel = forcedChannel
+		}
+		candidate = &candidateCopy
+	}
 	entry := candidate.Models[p.state.CurrentModelIndex]
 
 	p.state.CurrentCandidate = candidate
@@ -470,7 +503,9 @@ func (p *PersistentOutboundTransformer) TransformRequest(ctx context.Context, ll
 		}
 	}
 
-	return p.wrapped.TransformRequest(ctx, llmRequest)
+	httpRequest, err := p.wrapped.TransformRequest(ctx, llmRequest)
+	p.captureCurrentRoute(ctx)
+	return httpRequest, err
 }
 
 func filterResponseCustomToolMessagesForNonResponsesOutbound(
@@ -512,6 +547,7 @@ func (p *PersistentOutboundTransformer) TransformResponse(ctx context.Context, r
 }
 
 func (p *PersistentOutboundTransformer) TransformStream(ctx context.Context, req *httpclient.Request, stream streams.Stream[*httpclient.StreamEvent]) (streams.Stream[*llm.Response], error) {
+	attempt := p.attemptSnapshot(ctx)
 	persistentStream := NewOutboundPersistentStream(
 		ctx,
 		stream,
@@ -522,6 +558,9 @@ func (p *PersistentOutboundTransformer) TransformStream(ctx context.Context, req
 		p.wrapped, // Pass the wrapped outbound transformer for chunk aggregation
 		p.state.Perf,
 		p.state,
+		func(finalCtx context.Context, success bool) {
+			p.triggerProgrammaticTestForAttempt(finalCtx, attempt, success)
+		},
 	)
 
 	return p.wrapped.TransformStream(ctx, req, persistentStream)
@@ -567,10 +606,273 @@ func (p *PersistentOutboundTransformer) GetRequestedModel() string {
 	return p.state.OriginalModel
 }
 
+func (p *PersistentOutboundTransformer) currentRoute(ctx context.Context) (biz.RouteKey, string, string, bool) {
+	if p == nil || p.state == nil || p.state.CurrentCandidate == nil {
+		return biz.RouteKey{}, "", "", false
+	}
+	candidate := p.state.CurrentCandidate
+	if candidate.Channel == nil || p.state.CurrentModelIndex < 0 || p.state.CurrentModelIndex >= len(candidate.Models) {
+		return biz.RouteKey{}, "", "", false
+	}
+
+	entry := candidate.Models[p.state.CurrentModelIndex]
+	credential := ""
+	if !candidate.Channel.Credentials.IsOAuth() {
+		enabledKeys := enabledCandidateCredentials(candidate.Channel)
+		if p.state.ForcedCredential != "" && slices.Contains(enabledKeys, p.state.ForcedCredential) {
+			credential = p.state.ForcedCredential
+		} else if candidate.ForcedCredential != "" && slices.Contains(enabledKeys, candidate.ForcedCredential) {
+			credential = candidate.ForcedCredential
+		} else if selected, ok := contexts.GetChannelAPIKey(ctx); ok && slices.Contains(enabledKeys, selected) {
+			credential = selected
+		} else if len(enabledKeys) == 1 {
+			credential = enabledKeys[0]
+		}
+	}
+
+	return biz.RouteKey{
+		ChannelID:      candidate.Channel.ID,
+		CredentialID:   biz.RouteCredentialFingerprint(candidate.Channel, credential),
+		ActualModel:    entry.ActualModel,
+		APIFormat:      candidate.APIFormat,
+		ConfigRevision: biz.RouteConfigRevision(candidate.Channel, candidate.APIFormat, p.state.Proxy),
+	}, credential, entry.RequestModel, true
+}
+
+func (p *PersistentOutboundTransformer) captureCurrentRoute(ctx context.Context) {
+	if p == nil || p.state == nil {
+		return
+	}
+	key, credential, requestModel, ok := p.currentRoute(ctx)
+	if !ok {
+		p.state.CurrentRouteAttempt = nil
+		return
+	}
+	attempt := &routeAttempt{Key: key, Credential: credential, RequestModel: requestModel}
+	p.state.CurrentRouteAttempt = attempt
+	if p.state.AttemptedRoutes == nil {
+		p.state.AttemptedRoutes = make(map[biz.RouteKey]struct{})
+	}
+	p.state.AttemptedRoutes[key] = struct{}{}
+}
+
+func (p *PersistentOutboundTransformer) attemptSnapshot(ctx context.Context) *routeAttempt {
+	if p == nil || p.state == nil {
+		return nil
+	}
+	if p.state.CurrentRouteAttempt != nil {
+		attempt := *p.state.CurrentRouteAttempt
+		return &attempt
+	}
+	key, credential, requestModel, ok := p.currentRoute(ctx)
+	if !ok {
+		return nil
+	}
+	return &routeAttempt{Key: key, Credential: credential, RequestModel: requestModel}
+}
+
+func enabledCandidateCredentials(channel *biz.Channel) []string {
+	if channel == nil {
+		return nil
+	}
+	if keys := channel.GetEnabledAPIKeys(); len(keys) > 0 {
+		return keys
+	}
+	if channel.Channel == nil {
+		return nil
+	}
+	return channel.Credentials.GetEnabledAPIKeys(channel.DisabledAPIKeys)
+}
+
+func (p *PersistentOutboundTransformer) resultRouteKey(ctx context.Context) *biz.RouteKey {
+	attempt := p.attemptSnapshot(ctx)
+	if attempt == nil {
+		return nil
+	}
+	key := attempt.Key
+	return &key
+}
+
+// OnAttemptFailure never writes route availability. It only starts the same
+// TestChannel verdict path asynchronously; the pipeline can fail over without
+// waiting for diagnostic work.
+func (p *PersistentOutboundTransformer) OnAttemptFailure(ctx context.Context, _ error) {
+	p.triggerProgrammaticTest(ctx, false)
+}
+
+// OnAttemptSuccess also does not write availability. A production success on a
+// TestChannel-failed route merely asks TestChannel to verify recovery.
+func (p *PersistentOutboundTransformer) OnAttemptSuccess(ctx context.Context) {
+	p.triggerProgrammaticTest(ctx, true)
+}
+
+func (p *PersistentOutboundTransformer) triggerProgrammaticTest(ctx context.Context, success bool) {
+	if p == nil || p.state == nil || p.state.UnifiedRoutes == nil || p.state.ProgrammaticTester == nil {
+		return
+	}
+
+	attempt := p.attemptSnapshot(ctx)
+	p.triggerProgrammaticTestForAttempt(ctx, attempt, success)
+}
+
+func (p *PersistentOutboundTransformer) triggerProgrammaticTestForAttempt(ctx context.Context, attempt *routeAttempt, success bool) {
+	if p == nil || p.state == nil || p.state.UnifiedRoutes == nil || p.state.ProgrammaticTester == nil || attempt == nil {
+		return
+	}
+	key := attempt.Key
+	if success {
+		availability := p.state.UnifiedRoutes.Availability(key)
+		if availability.Known && availability.Available {
+			return
+		}
+	}
+
+	tester := p.state.ProgrammaticTester
+	testBaseCtx := contexts.DetachForAsync(ctx)
+	p.state.UnifiedRoutes.TriggerTest(testBaseCtx, key, func(testCtx context.Context) (biz.RouteTestVerdict, error) {
+		testCtx = contexts.WithSource(testCtx, requestent.SourceTest)
+		model := attempt.RequestModel
+		var (
+			passed bool
+			detail string
+		)
+		if attempt.Credential != "" {
+			result, err := tester.TestSingleAPIKeyRoute(testCtx, objects.GUID{ID: key.ChannelID}, attempt.Credential, &model, p.state.Proxy, key)
+			if err != nil {
+				return biz.RouteTestVerdict{}, err
+			}
+			if result == nil || result.routeKey == nil || *result.routeKey != key || testCtx.Err() != nil {
+				return biz.RouteTestVerdict{}, testCtx.Err()
+			}
+			passed = result.Success
+			if result.Error != nil {
+				detail = biz.SanitizeCampusDiagnosticError(*result.Error)
+			}
+		} else {
+			result, err := tester.TestChannelRoute(testCtx, objects.GUID{ID: key.ChannelID}, &model, p.state.Proxy, key)
+			if err != nil {
+				return biz.RouteTestVerdict{}, err
+			}
+			if result == nil || result.routeKey == nil || *result.routeKey != key || testCtx.Err() != nil {
+				return biz.RouteTestVerdict{}, testCtx.Err()
+			}
+			passed = result.Success
+			if result.Error != nil {
+				detail = biz.SanitizeCampusDiagnosticError(*result.Error)
+			}
+		}
+
+		return biz.RouteTestVerdict{Completed: true, Pass: passed, Error: detail}, nil
+	})
+}
+
 // HasMoreChannels returns true if there are more candidates available for retry.
 // It implements the pipeline.Retryable interface.
 func (p *PersistentOutboundTransformer) HasMoreChannels() bool {
-	return p.state.CurrentCandidateIndex+1 < len(p.state.ChannelModelsCandidates)
+	if p == nil || p.state == nil || len(p.state.ChannelModelsCandidates) == 0 {
+		return false
+	}
+	return len(p.routeOptions(false, false)) > 0
+}
+
+type rescueRouteOption struct {
+	candidateIndex int
+	modelIndex     int
+	route          biz.RouteKey
+	credential     string
+}
+
+// routeOptions expands the retry universe to exact routes. Credential count
+// never affects the primary channel ring; it only creates distinct rescue
+// opportunities inside the selected channel slot.
+func (p *PersistentOutboundTransformer) routeOptions(passOnly, untriedOnly bool) []rescueRouteOption {
+	if p == nil || p.state == nil || p.state.UnifiedRoutes == nil {
+		return nil
+	}
+	options := make([]rescueRouteOption, 0)
+	seen := make(map[biz.RouteKey]struct{})
+	for candidateIndex, candidate := range p.state.ChannelModelsCandidates {
+		if candidate == nil || candidate.Channel == nil {
+			continue
+		}
+		credentials := enabledCandidateCredentials(candidate.Channel)
+		if candidate.Channel.Credentials.IsOAuth() {
+			// OAuth/coding-plan channels have one effective credential route. Any
+			// legacy APIKeys stored beside OAuth are not used by the transformer and
+			// must not manufacture extra rescue slots.
+			credentials = []string{""}
+		}
+		if len(credentials) == 0 {
+			if len(candidate.Channel.Credentials.GetAllAPIKeys()) > 0 {
+				// A key-backed channel with every key disabled has no executable route.
+				continue
+			}
+			credentials = []string{""}
+		}
+		for modelIndex, entry := range candidate.Models {
+			for _, credential := range credentials {
+				route := biz.RouteKey{
+					ChannelID:      candidate.Channel.ID,
+					CredentialID:   biz.RouteCredentialFingerprint(candidate.Channel, credential),
+					ActualModel:    entry.ActualModel,
+					APIFormat:      candidate.APIFormat,
+					ConfigRevision: biz.RouteConfigRevision(candidate.Channel, candidate.APIFormat, p.state.Proxy),
+				}
+				if _, duplicate := seen[route]; duplicate {
+					continue
+				}
+				seen[route] = struct{}{}
+				if passOnly {
+					availability := p.state.UnifiedRoutes.Availability(route)
+					if !availability.Known || !availability.Available {
+						continue
+					}
+				}
+				if untriedOnly {
+					if _, tried := p.state.AttemptedRoutes[route]; tried {
+						continue
+					}
+				}
+				options = append(options, rescueRouteOption{
+					candidateIndex: candidateIndex,
+					modelIndex:     modelIndex,
+					route:          route,
+					credential:     credential,
+				})
+			}
+		}
+	}
+	return options
+}
+
+func (p *PersistentOutboundTransformer) selectRouteOption(options []rescueRouteOption) (rescueRouteOption, bool) {
+	if len(options) == 0 {
+		return rescueRouteOption{}, false
+	}
+	channelIDs := make([]int, 0, len(options))
+	for _, option := range options {
+		channelIDs = append(channelIDs, option.route.ChannelID)
+	}
+	channelID, ok := p.state.UnifiedRoutes.NextRescue(p.state.OriginalModel, channelIDs)
+	if !ok {
+		return rescueRouteOption{}, false
+	}
+	routes := make([]biz.RouteKey, 0, len(options))
+	for _, option := range options {
+		if option.route.ChannelID == channelID {
+			routes = append(routes, option.route)
+		}
+	}
+	route, ok := p.state.UnifiedRoutes.NextRescueRoute(p.state.OriginalModel, channelID, routes)
+	if !ok {
+		return rescueRouteOption{}, false
+	}
+	for _, option := range options {
+		if option.route == route {
+			return option, true
+		}
+	}
+	return rescueRouteOption{}, false
 }
 
 // resetPassThroughStreamState cancels the current attempt's fan-out goroutine (if any)
@@ -595,12 +897,28 @@ func (p *PersistentOutboundTransformer) NextChannel(ctx context.Context) error {
 	p.resetPassThroughStreamState()
 	p.resetProviderAttemptState()
 
-	p.state.CurrentCandidateIndex++
-
-	p.state.CurrentModelIndex = 0
-	if p.state.CurrentCandidateIndex >= len(p.state.ChannelModelsCandidates) {
+	// Verified rescue is authoritative. Within that set, every exact PASS route
+	// is tried once before repetition. If no PASS exists at all, the same rule is
+	// applied best-effort to every executable route (including FAIL/unknown), and
+	// only then are repetitions allowed. The pipeline's configured retry budget
+	// remains the sole bound.
+	options := p.routeOptions(true, true)
+	if len(options) == 0 {
+		options = p.routeOptions(true, false)
+	}
+	if len(options) == 0 {
+		options = p.routeOptions(false, true)
+	}
+	if len(options) == 0 {
+		options = p.routeOptions(false, false)
+	}
+	selected, ok := p.selectRouteOption(options)
+	if !ok {
 		return errors.New("no more candidates available for retry")
 	}
+	p.state.CurrentCandidateIndex = selected.candidateIndex
+	p.state.CurrentModelIndex = selected.modelIndex
+	p.state.ForcedCredential = selected.credential
 
 	// Reset request execution for the new candidate
 	p.state.RequestExec = nil
@@ -611,7 +929,7 @@ func (p *PersistentOutboundTransformer) NextChannel(ctx context.Context) error {
 	p.wrapped = selectOutboundForCandidate(candidate)
 
 	if log.DebugEnabled(ctx) {
-		model := candidate.Models[0].ActualModel
+		model := candidate.Models[p.state.CurrentModelIndex].ActualModel
 		log.Debug(ctx, "switching to next channel for retry",
 			log.String("channel", candidate.Channel.Name),
 			log.String("model", model),
@@ -627,66 +945,10 @@ func (p *PersistentOutboundTransformer) NextChannel(ctx context.Context) error {
 // It implements the pipeline.ChannelRetryable interface, it just check the error is retryable, the
 // pipeline will ensure the maxSameChannelRetries is not exceeded.
 func (p *PersistentOutboundTransformer) CanRetry(err error) bool {
-	if p.state.CurrentCandidate == nil {
-		return false
-	}
-
-	if errors.Is(err, errSkipCandidateByCircuitBreaker) {
-		return false
-	}
-
-	// Local admission rejection: the same channel cannot make progress until the
-	// local queue/RPM state changes, so bounce immediately to the next channel.
-	if isChannelQueueError(err) || isLocalRPMExhaustedError(err) {
-		return false
-	}
-
-	// Empty / incomplete stream detection: allow same-channel retry so the
-	// pipeline can re-execute before any client-visible content was committed.
-	if errors.Is(err, pipeline.ErrEmptyResponse) ||
-		errors.Is(err, pipeline.ErrEmptyStreamChunks) ||
-		errors.Is(err, pipeline.ErrEmptyAggregatedBody) ||
-		errors.Is(err, pipeline.ErrStreamIncomplete) ||
-		errors.Is(err, llm.ErrStreamIncomplete) {
-		log.Debug(context.Background(), "empty or incomplete stream detected",
-			log.Int("channel_id", p.state.CurrentCandidate.Channel.ID),
-		)
-
-		return true
-	}
-
-	// Credential, account quota, permission, and rate-limit failures apply to the
-	// channel rather than one model mapping. Do not consume the same-channel
-	// retry budget by trying another model with the same unusable credential;
-	// let the pipeline move directly to the next channel candidate.
-	statusCode := ExtractStatusCodeFromError(err)
-	switch statusCode {
-	case http.StatusUnauthorized,
-		http.StatusPaymentRequired,
-		http.StatusForbidden,
-		http.StatusTooManyRequests:
-		log.Debug(context.Background(), "channel-global upstream error, skipping same-channel retry",
-			log.Int("channel_id", p.state.CurrentCandidate.Channel.ID),
-			log.Int("status_code", statusCode),
-		)
-
-		return false
-	}
-
-	// Explicit "model not supported" from upstream: only continue on this channel
-	// when a different ActualModel remains. Retrying the same rejected model just
-	// burns the same-channel budget before failover.
-	if isExplicitUnsupportedModelError(err) {
-		return p.hasDifferentActualModelRemaining()
-	}
-
-	// if there are more models available in the current candidate, try the next model.
-	if p.state.CurrentModelIndex+1 < len(p.state.CurrentCandidate.Models) {
-		return true
-	}
-
-	// otherwise check if the error is retryable for the current channel.
-	return isRetryableErrorForChannel(err, p.state.CurrentCandidate.Channel)
+	// Same-channel status-code and error-pattern retries were a second routing
+	// policy. The unified rescue queue always tries a distinct route first and
+	// owns any configured repetition budget.
+	return false
 }
 
 func (p *PersistentOutboundTransformer) hasDifferentActualModelRemaining() bool {

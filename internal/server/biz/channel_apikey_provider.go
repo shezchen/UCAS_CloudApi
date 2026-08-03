@@ -3,7 +3,8 @@ package biz
 import (
 	"context"
 	"hash/fnv"
-	"math/rand/v2"
+	"slices"
+	"sync/atomic"
 
 	lru "github.com/hashicorp/golang-lru/v2"
 
@@ -26,6 +27,7 @@ const traceStickyLRUSize = 1024
 type TraceStickyKeyProvider struct {
 	channel *Channel
 	cache   *lru.Cache[string, string]
+	next    atomic.Uint64
 }
 
 func NewTraceStickyKeyProvider(channel *Channel) *TraceStickyKeyProvider {
@@ -50,7 +52,7 @@ func (p *TraceStickyKeyProvider) Get(ctx context.Context) string {
 	var selectedKey string
 
 	if trace, ok := contexts.GetTrace(ctx); ok && trace != nil {
-		if cached, ok := p.cache.Get(trace.TraceID); ok {
+		if cached, ok := p.cache.Get(trace.TraceID); ok && slices.Contains(enabled, cached) {
 			selectedKey = cached
 		} else {
 			selectedKey = rendezvousSelect(enabled, trace.TraceID)
@@ -64,10 +66,13 @@ func (p *TraceStickyKeyProvider) Get(ctx context.Context) string {
 			)
 		}
 	} else {
-		//nolint:gosec // not a security issue, just a random selection.
-		selectedKey = enabled[rand.IntN(len(enabled))]
+		// Requests without an explicit trace use an unweighted inner key ring.
+		// Explicit traces retain credential affinity for provider cache and risk
+		// controls, while key count never changes the outer channel fair share.
+		index := p.next.Add(1) - 1
+		selectedKey = enabled[index%uint64(len(enabled))]
 		if log.DebugEnabled(ctx) {
-			log.Debug(ctx, "Random key selected",
+			log.Debug(ctx, "Round-robin key selected",
 				log.String("key_prefix", safeAPIKeyPrefix(selectedKey)),
 			)
 		}

@@ -13,6 +13,7 @@ import (
 	"github.com/looplj/axonhub/internal/ent"
 	"github.com/looplj/axonhub/internal/ent/enttest"
 	"github.com/looplj/axonhub/internal/ent/request"
+	"github.com/looplj/axonhub/internal/ent/requestexecution"
 	"github.com/looplj/axonhub/internal/server/biz"
 	"github.com/looplj/axonhub/llm/httpclient"
 	"github.com/looplj/axonhub/llm/pipeline"
@@ -55,16 +56,16 @@ func TestChatCompletionOrchestrator_Process_ErrorHandling(t *testing.T) {
 	channelSelector := &staticChannelSelector{candidates: channelsToTestCandidates([]*biz.Channel{bizChannel}, "gpt-4")}
 
 	orchestrator := &ChatCompletionOrchestrator{
-		channelSelector:   channelSelector,
-		Inbound:           openai.NewInboundTransformer(),
-		RequestService:    requestService,
-		ChannelService:    channelService,
-		PromptProvider:    &stubPromptProvider{},
-		SystemService:     systemService,
-		UsageLogService:   usageLogService,
-		PipelineFactory:   pipeline.NewFactory(executor),
-		ModelMapper:       NewModelMapper(),
-		channelLimiterManager:      NewChannelLimiterManager(),
+		channelSelector:       channelSelector,
+		Inbound:               openai.NewInboundTransformer(),
+		RequestService:        requestService,
+		ChannelService:        channelService,
+		PromptProvider:        &stubPromptProvider{},
+		SystemService:         systemService,
+		UsageLogService:       usageLogService,
+		PipelineFactory:       pipeline.NewFactory(executor),
+		ModelMapper:           NewModelMapper(),
+		channelLimiterManager: NewChannelLimiterManager(),
 		Middlewares: []pipeline.Middleware{
 			stream.EnsureUsage(),
 		},
@@ -81,7 +82,11 @@ func TestChatCompletionOrchestrator_Process_ErrorHandling(t *testing.T) {
 
 	// Assert - should return error
 	require.Error(t, err)
-	assert.Empty(t, result)
+	require.Nil(t, result.ChatCompletion)
+	require.Nil(t, result.ChatCompletionStream)
+	require.NotNil(t, result.RouteKey)
+	assert.Equal(t, ch.ID, result.RouteKey.ChannelID)
+	assert.Contains(t, err.Error(), "Invalid API key")
 
 	// Verify request was created but marked as failed
 	requests, err := client.Request.Query().All(ctx)
@@ -94,10 +99,14 @@ func TestChatCompletionOrchestrator_Process_ErrorHandling(t *testing.T) {
 	// Verify request execution was created and marked as failed
 	executions, err := client.RequestExecution.Query().All(ctx)
 	require.NoError(t, err)
-	require.Len(t, executions, 1)
-
-	dbExec := executions[0]
-	assert.NotEmpty(t, dbExec.ErrorMessage)
+	// Unified best-effort rescue is bounded by the Owner retry budget. With only
+	// one executable route it may repeat that route, but every attempt remains a
+	// distinct failed execution and the final error preserves the provider text.
+	require.Len(t, executions, 4)
+	for _, dbExec := range executions {
+		assert.NotEmpty(t, dbExec.ErrorMessage)
+		assert.Equal(t, requestexecution.StatusFailed, dbExec.Status)
+	}
 }
 
 // TestChatCompletionOrchestrator_Process_NoChannelsAvailable tests error when no channels are available.
@@ -120,16 +129,16 @@ func TestChatCompletionOrchestrator_Process_NoChannelsAvailable(t *testing.T) {
 	channelSelector := &staticChannelSelector{candidates: []*ChannelModelsCandidate{}}
 
 	orchestrator := &ChatCompletionOrchestrator{
-		channelSelector:   channelSelector,
-		Inbound:           openai.NewInboundTransformer(),
-		RequestService:    requestService,
-		ChannelService:    channelService,
-		PromptProvider:    &stubPromptProvider{},
-		SystemService:     systemService,
-		UsageLogService:   usageLogService,
-		PipelineFactory:   pipeline.NewFactory(executor),
-		ModelMapper:       NewModelMapper(),
-		channelLimiterManager:      NewChannelLimiterManager(),
+		channelSelector:       channelSelector,
+		Inbound:               openai.NewInboundTransformer(),
+		RequestService:        requestService,
+		ChannelService:        channelService,
+		PromptProvider:        &stubPromptProvider{},
+		SystemService:         systemService,
+		UsageLogService:       usageLogService,
+		PipelineFactory:       pipeline.NewFactory(executor),
+		ModelMapper:           NewModelMapper(),
+		channelLimiterManager: NewChannelLimiterManager(),
 		Middlewares: []pipeline.Middleware{
 			stream.EnsureUsage(),
 		},
@@ -172,16 +181,16 @@ func TestChatCompletionOrchestrator_Process_InvalidRequest(t *testing.T) {
 	channelSelector := &staticChannelSelector{candidates: channelsToTestCandidates([]*biz.Channel{bizChannel}, "gpt-4")}
 
 	orchestrator := &ChatCompletionOrchestrator{
-		channelSelector:   channelSelector,
-		Inbound:           openai.NewInboundTransformer(),
-		RequestService:    requestService,
-		ChannelService:    channelService,
-		PromptProvider:    &stubPromptProvider{},
-		SystemService:     systemService,
-		UsageLogService:   usageLogService,
-		PipelineFactory:   pipeline.NewFactory(executor),
-		ModelMapper:       NewModelMapper(),
-		channelLimiterManager:      NewChannelLimiterManager(),
+		channelSelector:       channelSelector,
+		Inbound:               openai.NewInboundTransformer(),
+		RequestService:        requestService,
+		ChannelService:        channelService,
+		PromptProvider:        &stubPromptProvider{},
+		SystemService:         systemService,
+		UsageLogService:       usageLogService,
+		PipelineFactory:       pipeline.NewFactory(executor),
+		ModelMapper:           NewModelMapper(),
+		channelLimiterManager: NewChannelLimiterManager(),
 		Middlewares: []pipeline.Middleware{
 			stream.EnsureUsage(),
 		},

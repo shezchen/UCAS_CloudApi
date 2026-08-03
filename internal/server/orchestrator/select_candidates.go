@@ -3,15 +3,14 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/samber/lo"
 
 	"github.com/looplj/axonhub/internal/contexts"
 	"github.com/looplj/axonhub/internal/ent/apikey"
-	"github.com/looplj/axonhub/internal/ent/providerquotastatus"
 	"github.com/looplj/axonhub/internal/log"
 	"github.com/looplj/axonhub/internal/server/biz"
-	"github.com/looplj/axonhub/internal/server/biz/provider_quota"
 	"github.com/looplj/axonhub/llm"
 	"github.com/looplj/axonhub/llm/pipeline"
 )
@@ -19,7 +18,7 @@ import (
 // selectCandidates creates a middleware that selects available channel model candidates for the model.
 // This is the second step in the inbound pipeline, moved from outbound transformer.
 // If no valid candidates are found, it returns ErrInvalidModel to fail fast.
-func selectCandidates(inbound *PersistentInboundTransformer, quotaProvider ProviderQuotaStatusProvider, systemService QuotaEnforcementSettingsProvider) pipeline.Middleware {
+func selectCandidates(inbound *PersistentInboundTransformer) pipeline.Middleware {
 	return pipeline.OnLlmRequest("select-candidates", func(ctx context.Context, llmRequest *llm.Request) (*llm.Request, error) {
 		// Only select candidates once
 		if len(inbound.state.ChannelModelsCandidates) > 0 {
@@ -89,13 +88,6 @@ func selectCandidates(inbound *PersistentInboundTransformer, quotaProvider Provi
 
 		selector = WithStreamPolicySelector(selector)
 
-		quotaSelector := WithProviderQuotaSelector(selector, quotaProvider, systemService)
-		selector = quotaSelector
-
-		if inbound.state.LoadBalancer != nil {
-			selector = WithLoadBalancedSelector(selector, inbound.state.LoadBalancer, inbound.state.RetryPolicyProvider)
-		}
-
 		candidates, err := selector.Select(ctx, llmRequest)
 		if err != nil {
 			return nil, err
@@ -122,49 +114,107 @@ func selectCandidates(inbound *PersistentInboundTransformer, quotaProvider Provi
 			)
 		}
 
-		settings := systemService.QuotaEnforcementSettingsOrDefault(ctx)
-
 		if len(candidates) == 0 {
-			if settings.Enabled && quotaSelector.FilteredCount > 0 {
-				return nil, NewQuotaExhaustedError(llmRequest.Model)
-			}
 			return nil, fmt.Errorf("%w: %s", biz.ErrInvalidModel, llmRequest.Model)
 		}
 
-		if settings.Enabled && settings.Mode == biz.QuotaEnforcementModeDePrioritize {
-			// In DePrioritize mode the quota selector doesn't filter candidates,
-			// so we must check quota status again here to determine if all
-			// remaining channels are exhausted.
-			if areAllChannelsExhausted(candidates, quotaProvider, llmRequest) {
-				return nil, NewQuotaExhaustedError(llmRequest.Model)
-			}
-		}
-
-		// Store candidates directly (no need to extract channels)
-		inbound.state.ChannelModelsCandidates = candidates
+		// Production selection has one ordering authority: a stable, unweighted
+		// per-model channel ring. Availability is deliberately ignored here and
+		// is consulted only after this primary route fails.
+		inbound.state.ChannelModelsCandidates = orderUnifiedCandidates(ctx, inbound.state, llmRequest.Model, candidates)
 
 		return llmRequest, nil
 	})
 }
 
-func areAllChannelsExhausted(candidates []*ChannelModelsCandidate, quotaProvider ProviderQuotaStatusProvider, llmRequest *llm.Request) bool {
-	if len(candidates) == 0 || quotaProvider == nil {
-		return false
+func orderUnifiedCandidates(
+	ctx context.Context,
+	state *PersistenceState,
+	model string,
+	candidates []*ChannelModelsCandidate,
+) []*ChannelModelsCandidate {
+	if state != nil && state.UnifiedRoutes == nil && state.ChannelService != nil {
+		state.UnifiedRoutes = state.ChannelService.UnifiedRouteState()
+	}
+	if len(candidates) < 2 || state == nil || state.UnifiedRoutes == nil {
+		return candidates
 	}
 
-	limitType := provider_quota.RequestModality(llmRequest.Image != nil)
-
-	for _, c := range candidates {
-		quotaStatus := quotaProvider.GetQuotaStatus(c.Channel.ID)
-		if quotaStatus == nil {
-			return false
+	// One channel gets one outer-ring slot even when associations or credentials
+	// produce duplicate candidates. Preserve all distinct model mappings inside
+	// that channel's slot.
+	byChannel := make(map[int]*ChannelModelsCandidate, len(candidates))
+	for _, candidate := range candidates {
+		if candidate == nil || candidate.Channel == nil {
+			continue
 		}
-
-		effectiveStatus, _ := quotaStatus.EffectiveStatus(limitType)
-		if effectiveStatus != providerquotastatus.StatusExhausted {
-			return false
+		if existing := byChannel[candidate.Channel.ID]; existing != nil {
+			existing.Models = appendUniqueModelEntries(existing.Models, candidate.Models)
+			continue
 		}
+		clone := *candidate
+		clone.Models = append([]biz.ChannelModelEntry(nil), candidate.Models...)
+		byChannel[candidate.Channel.ID] = &clone
 	}
 
-	return true
+	ordered := make([]*ChannelModelsCandidate, 0, len(byChannel))
+	for _, candidate := range byChannel {
+		ordered = append(ordered, candidate)
+	}
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Channel.ID < ordered[j].Channel.ID })
+	if len(ordered) < 2 {
+		return ordered
+	}
+
+	primaryID := sessionAffinityChannelFromContext(ctx)
+	if primaryID != 0 {
+		found := false
+		for _, candidate := range ordered {
+			if candidate.Channel.ID == primaryID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			// A deleted/filtered affinity target must not silently bias the first
+			// sorted channel, and it must not freeze the fair cursor.
+			primaryID = 0
+		}
+	}
+	if primaryID == 0 {
+		ids := lo.Map(ordered, func(candidate *ChannelModelsCandidate, _ int) int { return candidate.Channel.ID })
+		primaryID, _ = state.UnifiedRoutes.NextPrimary(model, ids)
+	}
+
+	primaryIndex := -1
+	for index, candidate := range ordered {
+		if candidate.Channel.ID == primaryID {
+			primaryIndex = index
+			break
+		}
+	}
+	if primaryIndex <= 0 {
+		return ordered
+	}
+
+	rotated := make([]*ChannelModelsCandidate, 0, len(ordered))
+	rotated = append(rotated, ordered[primaryIndex:]...)
+	rotated = append(rotated, ordered[:primaryIndex]...)
+	return rotated
+}
+
+func appendUniqueModelEntries(dst, src []biz.ChannelModelEntry) []biz.ChannelModelEntry {
+	seen := make(map[string]struct{}, len(dst)+len(src))
+	for _, entry := range dst {
+		seen[entry.RequestModel+"\x00"+entry.ActualModel] = struct{}{}
+	}
+	for _, entry := range src {
+		key := entry.RequestModel + "\x00" + entry.ActualModel
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		dst = append(dst, entry)
+	}
+	return dst
 }

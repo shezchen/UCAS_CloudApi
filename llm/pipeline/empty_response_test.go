@@ -117,7 +117,10 @@ func TestPreReadLlmStream_IncompleteTerminalBeforeContentRemainsRetryable(t *tes
 
 	result, err := p.preReadLlmStream(context.Background(), stream, nil)
 	require.Nil(t, result)
-	require.ErrorIs(t, err, ErrEmptyResponse)
+	var responseErr *llm.ResponseError
+	require.ErrorAs(t, err, &responseErr)
+	require.Equal(t, "response_incomplete", responseErr.Detail.Code)
+	require.Contains(t, responseErr.Detail.Message, "max_output_tokens")
 }
 
 func TestPreReadLlmStream_IncompleteAfterContentIsNotReplayed(t *testing.T) {

@@ -105,45 +105,6 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
               },
             },
             {
-              element: '#max-single-channel-retries',
-              popover: {
-                title: t('system.onboarding.steps.retrySingleChannel.title'),
-                description: t('system.onboarding.steps.retrySingleChannel.description'),
-                side: 'right',
-                align: 'start',
-              },
-            },
-            {
-              element: '#retry-delay',
-              popover: {
-                title: t('system.onboarding.steps.retryDelay.title'),
-                description: t('system.onboarding.steps.retryDelay.description'),
-                side: 'right',
-                align: 'start',
-              },
-            },
-            {
-              popover: {
-                title: t('system.onboarding.steps.autoDisableIntro.title'),
-                description: t('system.onboarding.steps.autoDisableIntro.description'),
-              },
-            },
-            {
-              element: '#auto-disable-channel',
-              popover: {
-                title: t('system.onboarding.steps.autoDisableToggle.title'),
-                description: t('system.onboarding.steps.autoDisableToggle.description'),
-                side: 'right',
-                align: 'start',
-              },
-            },
-            {
-              popover: {
-                title: t('system.onboarding.steps.autoDisableComplete.title'),
-                description: t('system.onboarding.steps.autoDisableComplete.description'),
-              },
-            },
-            {
               element: '[data-value="storage"]',
               popover: {
                 title: t('system.onboarding.steps.dataStorage.title'),
@@ -257,7 +218,7 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
         driverObj.drive();
       }, 500); // Wait a bit for the page to render
     });
-  }, [completeOnboarding, navigate, t]);
+  }, [completeOnboarding, navigate, onComplete, t]);
 
   const skipOnboarding = useCallback(() => {
     setShowPrompt(false);

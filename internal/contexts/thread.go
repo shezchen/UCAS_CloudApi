@@ -9,7 +9,9 @@ import (
 // WithThread stores the thread entity in the context.
 func WithThread(ctx context.Context, thread *ent.Thread) context.Context {
 	container := getContainer(ctx)
+	container.mu.Lock()
 	container.Thread = thread
+	container.mu.Unlock()
 
 	return withContainer(ctx, container)
 }
@@ -17,5 +19,7 @@ func WithThread(ctx context.Context, thread *ent.Thread) context.Context {
 // GetThread retrieves the thread entity from the context.
 func GetThread(ctx context.Context) (*ent.Thread, bool) {
 	container := getContainer(ctx)
+	container.mu.RLock()
+	defer container.mu.RUnlock()
 	return container.Thread, container.Thread != nil
 }

@@ -111,7 +111,7 @@ func (handlers *ChatCompletionHandlers) ChatCompletionWithRequest(c *gin.Context
 			streamWriter = WriteSSEStream
 		}
 
-		streamWriter(c, newUpstreamErrorStream(ctx, result.ChatCompletionStream, handlers.ChatCompletionOrchestrator.SystemService))
+		streamWriter(c, result.ChatCompletionStream)
 	}
 }
 

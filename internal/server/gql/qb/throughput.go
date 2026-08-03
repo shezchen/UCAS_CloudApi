@@ -140,6 +140,7 @@ FROM successful_execs se
 JOIN usage_logs ul ON se.request_id = ul.request_id
 ` + config.JoinClause + `
 WHERE se.rn = 1
+    AND ul.source <> 'test'
 GROUP BY ` + config.GroupBy + `
 ORDER BY throughput DESC
 LIMIT ` + fmt.Sprintf("%d", limit)
@@ -175,6 +176,7 @@ FROM request_executions se
 JOIN usage_logs ul ON se.request_id = ul.request_id
 ` + config.JoinClause + `
 WHERE se.status = 'completed'
+    AND ul.source <> 'test'
     AND se.metrics_latency_ms > 0
     AND se.created_at >= ` + placeholder + `
     AND se.id = (

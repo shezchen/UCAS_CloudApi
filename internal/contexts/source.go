@@ -9,7 +9,9 @@ import (
 // WithSource stores the request source in the context.
 func WithSource(ctx context.Context, source request.Source) context.Context {
 	container := getContainer(ctx)
+	container.mu.Lock()
 	container.Source = &source
+	container.mu.Unlock()
 
 	return withContainer(ctx, container)
 }
@@ -17,6 +19,8 @@ func WithSource(ctx context.Context, source request.Source) context.Context {
 // GetSource retrieves the request source from the context.
 func GetSource(ctx context.Context) (request.Source, bool) {
 	container := getContainer(ctx)
+	container.mu.RLock()
+	defer container.mu.RUnlock()
 	if container.Source != nil {
 		return *container.Source, true
 	}

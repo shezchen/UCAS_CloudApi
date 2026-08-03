@@ -14,6 +14,7 @@ import (
 	"github.com/looplj/axonhub/internal/ent"
 	"github.com/looplj/axonhub/internal/server/biz"
 	"github.com/looplj/axonhub/llm"
+	"github.com/looplj/axonhub/llm/streams"
 )
 
 func affinityMessage(role, content string) llm.Message {
@@ -109,6 +110,20 @@ func TestSessionAffinityRecording_BindsOnlySemanticSuccessAndRebindsAfterFailove
 	_, ok := tracker.Lookup(key)
 	require.False(t, ok)
 
+	incompleteText := "partial response"
+	incompleteFinishReason := "length"
+	_, err = middleware.OnOutboundLlmResponse(context.Background(), &llm.Response{
+		ProtocolStatus:   "incomplete",
+		IncompleteReason: "max_output_tokens",
+		Choices: []llm.Choice{{
+			Message:      &llm.Message{Role: "assistant", Content: llm.MessageContent{Content: &incompleteText}},
+			FinishReason: &incompleteFinishReason,
+		}},
+	})
+	require.NoError(t, err)
+	_, ok = tracker.Lookup(key)
+	require.False(t, ok, "an explicit Responses incomplete terminal must never bind session affinity")
+
 	toolOnly := &llm.Response{Choices: []llm.Choice{{
 		Message: &llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "call-1"}}},
 	}}}
@@ -130,6 +145,37 @@ func TestSessionAffinityRecording_BindsOnlySemanticSuccessAndRebindsAfterFailove
 	channelID, ok = tracker.Lookup(key)
 	require.True(t, ok)
 	require.Equal(t, 2, channelID)
+}
+
+func TestSessionAffinityRecording_StreamIncompleteWithContentDoesNotBind(t *testing.T) {
+	tracker := newSessionAffinityTrackerWithSecret("test-secret", time.Hour, 8)
+	key := strings.Repeat("b", sha256HexLength)
+	state := &PersistenceState{
+		SessionAffinityKey: key,
+		CurrentCandidate:   &ChannelModelsCandidate{Channel: &biz.Channel{Channel: &ent.Channel{ID: 1}}},
+		AttemptAccepted:    true,
+	}
+	middleware := &sessionAffinityRecording{
+		outbound: &PersistentOutboundTransformer{state: state},
+		tracker:  tracker,
+	}
+	text := "partial response"
+	finishReason := "length"
+	stream, err := middleware.OnOutboundLlmStream(context.Background(), streams.SliceStream([]*llm.Response{
+		{Choices: []llm.Choice{{Delta: &llm.Message{Content: llm.MessageContent{Content: &text}}}}},
+		{
+			ProtocolStatus:   "incomplete",
+			IncompleteReason: "max_output_tokens",
+			Choices:          []llm.Choice{{FinishReason: &finishReason}},
+		},
+	}))
+	require.NoError(t, err)
+	for stream.Next() {
+		_ = stream.Current()
+	}
+	require.NoError(t, stream.Close())
+	_, ok := tracker.Lookup(key)
+	require.False(t, ok, "committed partial output with an incomplete terminal must not bind session affinity")
 }
 
 func TestSessionAffinityStrategy_PrefersRememberedCandidate(t *testing.T) {
@@ -185,19 +231,6 @@ func TestSelectCandidates_ExplicitTraceIsStickyAndCountedOnlyWhenNew(t *testing.
 		Save(ctx)
 	require.NoError(t, err)
 
-	systemService := newTestSystemService(client)
-	metrics := &mockMetricsProvider{metrics: map[int]*biz.AggregatedMetrics{
-		channels[0].ID: {},
-		channels[1].ID: {},
-	}}
-	selections := &mockSelectionTracker{}
-	loadBalancer := NewLoadBalancer(
-		systemService,
-		selections,
-		NewTraceAwareStrategy(requestService),
-		NewSessionAffinityStrategy(),
-		NewRoundRobinStrategy(metrics),
-	).WithoutWeightTieBreaker()
 	candidates := []*ChannelModelsCandidate{
 		{
 			Channel: &biz.Channel{Channel: channels[0]},
@@ -208,16 +241,16 @@ func TestSelectCandidates_ExplicitTraceIsStickyAndCountedOnlyWhenNew(t *testing.
 			Models:  []biz.ChannelModelEntry{{RequestModel: "gpt-test", ActualModel: "gpt-test"}},
 		},
 	}
+	routes := biz.NewUnifiedRouteState()
 
 	runSelection := func(selectionCtx context.Context) *PersistenceState {
 		t.Helper()
 		state := &PersistenceState{
-			RequestService:      requestService,
-			RetryPolicyProvider: systemService,
-			CandidateSelector:   &staticChannelSelector{candidates: candidates},
-			LoadBalancer:        loadBalancer,
+			RequestService:    requestService,
+			CandidateSelector: &staticChannelSelector{candidates: candidates},
+			UnifiedRoutes:     routes,
 		}
-		middleware := selectCandidates(&PersistentInboundTransformer{state: state}, nil, systemService)
+		middleware := selectCandidates(&PersistentInboundTransformer{state: state})
 		_, selectErr := middleware.OnInboundLlmRequest(selectionCtx, &llm.Request{Model: "gpt-test"})
 		require.NoError(t, selectErr)
 		require.NotEmpty(t, state.ChannelModelsCandidates)
@@ -229,8 +262,6 @@ func TestSelectCandidates_ExplicitTraceIsStickyAndCountedOnlyWhenNew(t *testing.
 		state := runSelection(traceCtx)
 		require.Equal(t, channels[1].ID, state.ChannelModelsCandidates[0].Channel.ID)
 	}
-	require.Empty(t, selections.selections,
-		"reusing an explicitly bound session must not advance the fair new-session counter")
 
 	newTrace, err := client.Trace.Create().
 		SetProjectID(project.ID).
@@ -239,25 +270,11 @@ func TestSelectCandidates_ExplicitTraceIsStickyAndCountedOnlyWhenNew(t *testing.
 	require.NoError(t, err)
 	state := runSelection(contexts.WithTrace(ctx, newTrace))
 	require.Equal(t, channels[0].ID, state.ChannelModelsCandidates[0].Channel.ID)
-	require.Equal(t, 1, selections.selections[channels[0].ID],
-		"a trace without a successful channel is a new session and must count once")
 }
 
 func TestSelectCandidates_ContextPrefixAffinityKeepsChannelWithoutDoubleCounting(t *testing.T) {
-	ctx, client := setupTest(t)
-	systemService := newTestSystemService(client)
+	ctx, _ := setupTest(t)
 	affinity := newSessionAffinityTrackerWithSecret("test-secret", time.Hour, 16)
-	metrics := &mockMetricsProvider{metrics: map[int]*biz.AggregatedMetrics{
-		1: {},
-		2: {},
-	}}
-	selections := &mockSelectionTracker{}
-	loadBalancer := NewLoadBalancer(
-		systemService,
-		selections,
-		NewSessionAffinityStrategy(),
-		NewRoundRobinStrategy(metrics),
-	).WithoutWeightTieBreaker()
 	candidates := []*ChannelModelsCandidate{
 		{
 			Channel: &biz.Channel{Channel: &ent.Channel{ID: 1, Name: "one"}},
@@ -268,16 +285,16 @@ func TestSelectCandidates_ContextPrefixAffinityKeepsChannelWithoutDoubleCounting
 			Models:  []biz.ChannelModelEntry{{RequestModel: "gpt-test", ActualModel: "gpt-test"}},
 		},
 	}
+	routes := biz.NewUnifiedRouteState()
 
 	runSelection := func(req *llm.Request) *PersistenceState {
 		t.Helper()
 		state := &PersistenceState{
-			RetryPolicyProvider: systemService,
-			CandidateSelector:   &staticChannelSelector{candidates: candidates},
-			LoadBalancer:        loadBalancer,
-			SessionAffinity:     affinity,
+			CandidateSelector: &staticChannelSelector{candidates: candidates},
+			SessionAffinity:   affinity,
+			UnifiedRoutes:     routes,
 		}
-		middleware := selectCandidates(&PersistentInboundTransformer{state: state}, nil, systemService)
+		middleware := selectCandidates(&PersistentInboundTransformer{state: state})
 		_, err := middleware.OnInboundLlmRequest(ctx, req)
 		require.NoError(t, err)
 		require.NotEmpty(t, state.ChannelModelsCandidates)
@@ -293,7 +310,6 @@ func TestSelectCandidates_ContextPrefixAffinityKeepsChannelWithoutDoubleCounting
 	}
 	firstState := runSelection(firstRequest)
 	require.Equal(t, 1, firstState.ChannelModelsCandidates[0].Channel.ID)
-	require.Equal(t, 1, selections.selections[1])
 	require.NotEmpty(t, firstState.SessionAffinityKey)
 
 	firstState.CurrentCandidate = firstState.ChannelModelsCandidates[0]
@@ -309,8 +325,6 @@ func TestSelectCandidates_ContextPrefixAffinityKeepsChannelWithoutDoubleCounting
 	}}})
 	require.NoError(t, err)
 
-	now := time.Now()
-	metrics.metrics[1] = &biz.AggregatedMetrics{RequestCount: 1, LastSelectedAt: &now}
 	followUp := &llm.Request{
 		Model: "gpt-test",
 		Messages: append(
@@ -323,7 +337,4 @@ func TestSelectCandidates_ContextPrefixAffinityKeepsChannelWithoutDoubleCounting
 	require.Equal(t, firstState.SessionAffinityKey, secondState.SessionAffinityKey)
 	require.Equal(t, 1, secondState.ChannelModelsCandidates[0].Channel.ID,
 		"the stable prefix must keep the recovered conversation on its successful channel")
-	require.Equal(t, 1, selections.selections[1],
-		"the same inferred session must not be counted as a new fair-rotation session")
-	require.Zero(t, selections.selections[2])
 }

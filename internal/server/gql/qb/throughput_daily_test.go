@@ -656,3 +656,15 @@ func TestBuildDailyPerformanceStatsQuery_ConditionalJoinRequests(t *testing.T) {
 	assert.NotContains(t, channelQuery, "JOIN requests r ON se.request_id = r.id", "channel query should not join requests")
 	assert.NotContains(t, channelQuery, "r.model_id", "channel query should not reference r.model_id")
 }
+
+func TestDailyDashboardQueriesExcludeTestTraffic(t *testing.T) {
+	for _, queryType := range []DailyThroughputQueryType{DailyThroughputByChannel, DailyThroughputByModel} {
+		for _, mode := range []ThroughputQueryMode{ThroughputModeRowNumber, ThroughputModeMaxID} {
+			throughputQuery := buildDailyThroughputQuery("sqlite", "UTC", 0, queryType, 10, mode)
+			assert.Contains(t, throughputQuery, "ul.source <> 'test'")
+
+			performanceQuery := BuildDailyPerformanceStatsQuery("sqlite", "UTC", 0, queryType, "?", mode)
+			assert.Contains(t, performanceQuery, "ul.source <> 'test'")
+		}
+	}
+}

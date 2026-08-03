@@ -488,6 +488,10 @@ func enforceCodexResponsesLiteInvariant(outbound *PersistentOutboundTransformer)
 		if err != nil {
 			return nil, fmt.Errorf("enforce Codex Responses Lite stream mode: %w", err)
 		}
+		body, err = normalizeCodexResponsesLiteMessageIDs(body)
+		if err != nil {
+			return nil, fmt.Errorf("normalize Codex Responses Lite message ids: %w", err)
+		}
 
 		request.Body = body
 

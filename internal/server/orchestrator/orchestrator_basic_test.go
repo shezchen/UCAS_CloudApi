@@ -603,7 +603,6 @@ func TestChatCompletionOrchestrator_Process_WithModelMapping(t *testing.T) {
 		UsageLogService:       usageLogService,
 		PipelineFactory:       pipeline.NewFactory(executor),
 		ModelMapper:           NewModelMapper(),
-		modelCircuitBreaker:   biz.NewModelCircuitBreaker(),
 		channelLimiterManager: NewChannelLimiterManager(),
 		Middlewares: []pipeline.Middleware{
 			stream.EnsureUsage(),
@@ -954,7 +953,7 @@ func TestChatCompletionOrchestrator_Process_SameChannelRetryNextModel(t *testing
 	require.Len(t, executions, 2)
 }
 
-func TestChatCompletionOrchestrator_Process_StatuslessFailureRetriesSameChannelOnceThenFailsOver(t *testing.T) {
+func TestChatCompletionOrchestrator_Process_StatuslessFailureMovesToDistinctRoute(t *testing.T) {
 	ctx := authz.WithTestBypass(context.Background())
 	client := enttest.NewEntClient(t, "sqlite3", "file:ent?mode=memory&_fk=0")
 	defer client.Close()
@@ -996,7 +995,6 @@ func TestChatCompletionOrchestrator_Process_StatuslessFailureRetriesSameChannelO
 	}}
 	executor := &sequenceExecutor{steps: []executorStep{
 		{err: errors.New("tls: failed to verify certificate")},
-		{err: errors.New("connection reset before provider response")},
 		{resp: &httpclient.Response{
 			StatusCode: http.StatusOK,
 			Body:       buildMockOpenAIResponse("chatcmpl-failover", "gpt-4", "Recovered", 10, 20),
@@ -1021,10 +1019,8 @@ func TestChatCompletionOrchestrator_Process_StatuslessFailureRetriesSameChannelO
 	result, err := orchestrator.Process(ctx, buildTestRequest("gpt-4", "Hello!", false))
 	require.NoError(t, err)
 	require.NotNil(t, result.ChatCompletion)
-	require.Len(t, executor.requests, 3)
-	require.Equal(t, executor.requests[0].URL, executor.requests[1].URL,
-		"a status-less upstream failure must receive exactly one retry on the same channel")
-	require.NotEqual(t, executor.requests[1].URL, executor.requests[2].URL,
-		"after that one retry, the session must fail over to the next available channel")
-	require.Contains(t, executor.requests[2].URL, "backup.example.com")
+	require.Len(t, executor.requests, 2)
+	require.NotEqual(t, executor.requests[0].URL, executor.requests[1].URL,
+		"all error shapes use the same distinct-route rescue path")
+	require.Contains(t, executor.requests[1].URL, "backup.example.com")
 }

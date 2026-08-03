@@ -1,11 +1,10 @@
-import { useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { z } from 'zod';
+import { useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { graphqlRequest } from '@/gql/graphql';
-
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
-import { apiRequest } from '@/lib/api-client';
 import { useSelectedProjectId } from '@/stores/projectStore';
+import { apiRequest } from '@/lib/api-client';
 import { useErrorHandler } from '@/hooks/use-error-handler';
 import { useRequestPermissions } from '../../../hooks/useRequestPermissions';
 import type {
@@ -20,7 +19,13 @@ import type {
   UpdateApiKeyProfileTemplateInput,
   UpdateApiKeyProfilesInput,
 } from './schema';
-import { apiKeyConnectionSchema, apiKeyProfileQuotaUsageSchema, apiKeyProfileTemplateSchema, apiKeySchema, apiKeyTokenUsageStatsSchema } from './schema';
+import {
+  apiKeyConnectionSchema,
+  apiKeyProfileQuotaUsageSchema,
+  apiKeyProfileTemplateSchema,
+  apiKeySchema,
+  apiKeyTokenUsageStatsSchema,
+} from './schema';
 
 const NOAUTH_API_KEY_TYPE = 'noauth';
 
@@ -37,6 +42,19 @@ const campusApiActivityKeySchema = z.object({
   lastStatus: z.string().optional(),
 });
 
+const campusApiActivityAttemptSchema = z.object({
+  sequence: z.number().int().positive(),
+  channel: z.string().optional().default(''),
+  model: z.string().optional().default(''),
+  apiFormat: z.string().optional().default(''),
+  status: z.string(),
+  statusCode: z.number().int().optional(),
+  errorCategory: z.string().optional(),
+  errorMessage: z.string().optional(),
+  latencyMs: z.number().nonnegative().optional(),
+  createdAt: z.string(),
+});
+
 const campusApiActivityEventSchema = z.object({
   requestId: z.string(),
   apiKeyId: z.string(),
@@ -49,6 +67,9 @@ const campusApiActivityEventSchema = z.object({
   errorMessage: z.string().optional(),
   latencyMs: z.number().nonnegative().optional(),
   createdAt: z.string(),
+  recovered: z.boolean().optional().default(false),
+  finalChannel: z.string().optional().default(''),
+  attempts: z.array(campusApiActivityAttemptSchema).optional().default([]),
 });
 
 const campusApiActivitySchema = z.object({
@@ -830,9 +851,7 @@ export function useUpdateApiKeyProfileTemplate() {
     mutationFn: ({ id, input }: { id: string; input: UpdateApiKeyProfileTemplateInput }) => {
       const headers = selectedProjectId ? { 'X-Project-ID': selectedProjectId } : undefined;
       const { profile, ...inputFields } = input;
-      const resolvedProfile = profile
-        ? { ...profile, name: input.name ?? profile.name }
-        : undefined;
+      const resolvedProfile = profile ? { ...profile, name: input.name ?? profile.name } : undefined;
       return graphqlRequest<{ updateApiKeyProfileTemplate: ApiKeyProfileTemplate }>(
         UPDATE_APIKEY_PROFILE_TEMPLATE_MUTATION,
         { id, input: inputFields, profile: resolvedProfile },
@@ -876,11 +895,7 @@ export function useLoadApiKeyProfileTemplate() {
   return useMutation({
     mutationFn: (input: { templateID: string; apiKeyID: string }) => {
       const headers = selectedProjectId ? { 'X-Project-ID': selectedProjectId } : undefined;
-      return graphqlRequest<{ loadApiKeyProfileTemplate: ApiKey }>(
-        LOAD_APIKEY_PROFILE_TEMPLATE_MUTATION,
-        { input },
-        headers
-      );
+      return graphqlRequest<{ loadApiKeyProfileTemplate: ApiKey }>(LOAD_APIKEY_PROFILE_TEMPLATE_MUTATION, { input }, headers);
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['apiKeys'] });

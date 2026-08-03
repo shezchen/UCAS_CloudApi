@@ -1,12 +1,11 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { useOnboardingInfo } from '@/features/system/data/system';
 import { useAuthStore } from '@/stores/authStore';
-import { AutoDisableChannelOnboardingFlow } from './auto-disable-channel-onboarding-flow';
+import { useOnboardingInfo } from '@/features/system/data/system';
 import { OnboardingFlow } from './onboarding-flow';
 
-type OnboardingMode = 'none' | 'main' | 'autoDisableChannel';
+type OnboardingMode = 'none' | 'main';
 
 interface OnboardingProviderProps {
   children: React.ReactNode;
@@ -24,8 +23,6 @@ export function OnboardingProvider({ children, showOnboarding = true, onComplete
     if (!isLoading && showOnboarding && isOwner) {
       if (!onboardingInfo || !onboardingInfo.onboarded) {
         setMode('main');
-      } else if (!onboardingInfo.autoDisableChannel?.onboarded) {
-        setMode('autoDisableChannel');
       } else {
         setMode('none');
       }
@@ -41,7 +38,6 @@ export function OnboardingProvider({ children, showOnboarding = true, onComplete
     <>
       {children}
       {mode === 'main' && <OnboardingFlow onComplete={handleComplete} />}
-      {mode === 'autoDisableChannel' && <AutoDisableChannelOnboardingFlow onComplete={handleComplete} />}
     </>
   );
 }

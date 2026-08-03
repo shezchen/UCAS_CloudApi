@@ -1,32 +1,54 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { format, type Locale } from 'date-fns';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { IconPlus, IconTrash, IconSettings, IconChevronDown, IconChevronUp } from '@tabler/icons-react';
-import { ApiKeySaveTemplateDialog } from './apikeys-save-template-dialog';
-import { ApiKeyLoadTemplatePopover } from './apikeys-load-template-popover';
-import { format, type Locale } from 'date-fns';
-import { zhCN, enUS } from 'date-fns/locale';
 import { useQueryModels } from '@/gql/models';
+import { zhCN, enUS } from 'date-fns/locale';
 import { useTranslation } from 'react-i18next';
+import { useSelectedProjectId } from '@/stores/projectStore';
 import { extractNumberID } from '@/lib/utils';
 import { useDebounce } from '@/hooks/use-debounce';
 import { usePermissions } from '@/hooks/usePermissions';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { TagsAutocompleteInput } from '@/components/ui/tags-autocomplete-input';
 import { AutoComplete } from '@/components/auto-complete';
 import { useAllChannelSummarys } from '@/features/channels/data/channels';
-import { useSelectedProjectId } from '@/stores/projectStore';
 import { useApiKeysContext } from '../context/apikeys-context';
 import { useApiKeyQuotaUsages } from '../data/apikeys';
-import { updateApiKeyProfilesInputSchemaFactory, type ApiKeyProfile, type ApiKeyProfileQuotaUsage, type UpdateApiKeyProfilesInput } from '../data/schema';
+import {
+  updateApiKeyProfilesInputSchemaFactory,
+  type ApiKeyProfile,
+  type ApiKeyProfileQuotaUsage,
+  type UpdateApiKeyProfilesInput,
+} from '../data/schema';
+import { ApiKeyLoadTemplatePopover } from './apikeys-load-template-popover';
+import { ApiKeySaveTemplateDialog } from './apikeys-save-template-dialog';
 
 type ApiKeyQuotaPeriod = NonNullable<NonNullable<ApiKeyProfile['quota']>['period']>;
+type UpdateApiKeyProfile = UpdateApiKeyProfilesInput['profiles'][number];
+
+function prepareProfileForSubmit(profile: UpdateApiKeyProfile, isPersonalApiKey: boolean): UpdateApiKeyProfile {
+  if (isPersonalApiKey) {
+    return {
+      name: profile.name,
+      modelMappings: profile.modelMappings,
+      modelIDs: profile.modelIDs,
+      quota: profile.quota,
+    };
+  }
+
+  return {
+    ...profile,
+    loadBalanceStrategy: 'round-robin',
+  };
+}
 
 function quotaPeriodLabel(period: ApiKeyQuotaPeriod | null | undefined, t: (key: string) => string) {
   if (!period) return '-';
@@ -87,6 +109,9 @@ export function ApiKeyProfilesDialog({ open, onOpenChange, onSubmit, loading = f
   const [dialogContent, setDialogContent] = useState<HTMLDivElement | null>(null);
   const locale = i18n.language === 'zh' ? zhCN : enUS;
   const apiKeyId = selectedApiKey?.id ?? '';
+  const isPersonalApiKey = selectedApiKey?.type === 'personal';
+  const canConfigureModels = isProjectOwner || isPersonalApiKey;
+  const canConfigureSharedRouting = isProjectOwner && !isPersonalApiKey;
   const quotaUsagesQuery = useApiKeyQuotaUsages(apiKeyId, {
     enabled: open && !!apiKeyId,
     refetchInterval: open ? 10000 : undefined,
@@ -104,14 +129,14 @@ export function ApiKeyProfilesDialog({ open, onOpenChange, onSubmit, loading = f
   const [saveTemplateProfileIndex, setSaveTemplateProfileIndex] = useState<number | null>(null);
 
   useEffect(() => {
-    if (open && isProjectOwner) {
+    if (open && canConfigureModels) {
       fetchModels({
         statusIn: ['enabled'],
         includeMapping: true,
         includePrefix: true,
       });
     }
-  }, [open, fetchModels, isProjectOwner]);
+  }, [open, fetchModels, canConfigureModels]);
 
   const defaultValues = useMemo(
     () => ({
@@ -246,22 +271,33 @@ export function ApiKeyProfilesDialog({ open, onOpenChange, onSubmit, loading = f
     (data: UpdateApiKeyProfilesInput) => {
       // Clear any previous form-level errors
       form.clearErrors('profiles');
-      onSubmit(data);
+      onSubmit({
+        ...data,
+        profiles: data.profiles.map((profile) => prepareProfileForSubmit(profile, isPersonalApiKey)),
+      });
     },
-    [form, onSubmit]
+    [form, isPersonalApiKey, onSubmit]
   );
 
   const addProfile = useCallback(() => {
-    appendProfile({
+    const profile: UpdateApiKeyProfile = {
       name: `Profile ${profileFields.length + 1}`,
       modelMappings: [],
-      channelIDs: [],
-      channelTags: [],
-      channelTagsMatchMode: 'any',
       modelIDs: [],
-      loadBalanceStrategy: null,
-    });
-  }, [appendProfile, profileFields]);
+    };
+
+    appendProfile(
+      isPersonalApiKey
+        ? profile
+        : {
+            ...profile,
+            channelIDs: [],
+            channelTags: [],
+            channelTagsMatchMode: 'any',
+            loadBalanceStrategy: 'round-robin',
+          }
+    );
+  }, [appendProfile, isPersonalApiKey, profileFields.length]);
 
   const removeProfileHandler = useCallback(
     (index: number) => {
@@ -304,7 +340,7 @@ export function ApiKeyProfilesDialog({ open, onOpenChange, onSubmit, loading = f
                 <div className='flex items-center justify-between'>
                   <h3 className='text-lg font-medium'>{t('apikeys.profiles.profilesTitle')}</h3>
                   <div className='flex items-center gap-2'>
-                    {isProjectOwner && (
+                    {canConfigureSharedRouting && (
                       <ApiKeyLoadTemplatePopover
                         apiKeyID={apiKeyId}
                         projectID={selectedProjectId}
@@ -360,7 +396,8 @@ export function ApiKeyProfilesDialog({ open, onOpenChange, onSubmit, loading = f
                               defaultExpanded={isActive}
                               portalContainer={dialogContent}
                               selectedProjectId={selectedProjectId}
-                              canConfigureRouting={isProjectOwner}
+                              canConfigureModels={canConfigureModels}
+                              canConfigureSharedRouting={canConfigureSharedRouting}
                               onSaveTemplate={(idx) => {
                                 setSaveTemplateProfileIndex(idx);
                                 setSaveTemplateOpen(true);
@@ -430,7 +467,7 @@ export function ApiKeyProfilesDialog({ open, onOpenChange, onSubmit, loading = f
             </Button>
           </div>
         </DialogFooter>
-        {isProjectOwner && saveTemplateOpen && saveTemplateProfileIndex !== null && (
+        {canConfigureSharedRouting && saveTemplateOpen && saveTemplateProfileIndex !== null && (
           <ApiKeySaveTemplateDialog
             open={saveTemplateOpen}
             onOpenChange={(open) => {
@@ -460,8 +497,10 @@ interface ProfileCardProps {
   portalContainer?: HTMLElement | null;
   /** 当前选中的 project ID */
   selectedProjectId?: string | null;
-  /** Only project owners may edit channel/model routing details. */
-  canConfigureRouting: boolean;
+  /** Owners and personal-key users may edit model filters and mappings. */
+  canConfigureModels: boolean;
+  /** Only project owners may edit shared-channel selection, and never on personal keys. */
+  canConfigureSharedRouting: boolean;
   onSaveTemplate: (profileIndex: number) => void;
 }
 
@@ -477,12 +516,13 @@ function ProfileCard({
   defaultExpanded = false,
   portalContainer,
   selectedProjectId,
-  canConfigureRouting,
+  canConfigureModels,
+  canConfigureSharedRouting,
   onSaveTemplate,
 }: ProfileCardProps) {
   const [localProfileName, setLocalProfileName] = useState('');
   const [isCollapsed, setIsCollapsed] = useState(!defaultExpanded);
-  const { data: channelsData } = useAllChannelSummarys(selectedProjectId, { enabled: canConfigureRouting });
+  const { data: channelsData } = useAllChannelSummarys(selectedProjectId, { enabled: canConfigureSharedRouting });
 
   const debouncedProfileName = useDebounce(localProfileName, 500);
 
@@ -594,13 +634,8 @@ function ProfileCard({
             >
               {isCollapsed ? <IconChevronDown className='h-4 w-4' /> : <IconChevronUp className='h-4 w-4' />}
             </Button>
-            {canConfigureRouting && (
-              <Button
-                type='button'
-                variant='ghost'
-                size='sm'
-                onClick={() => onSaveTemplate(profileIndex)}
-              >
+            {canConfigureSharedRouting && (
+              <Button type='button' variant='ghost' size='sm' onClick={() => onSaveTemplate(profileIndex)}>
                 {t('apikeys.templates.saveAsTemplateButton')}
               </Button>
             )}
@@ -857,7 +892,8 @@ function ProfileCard({
                       <div>
                         <div className='text-muted-foreground text-xs'>{t('apikeys.profiles.quotaCost')}</div>
                         <div className='text-sm'>
-                          {(quotaUsage.usage.totalCost ?? 0).toLocaleString(undefined, { maximumFractionDigits: 6 })}/{currentQuota?.cost ?? '∞'}
+                          {(quotaUsage.usage.totalCost ?? 0).toLocaleString(undefined, { maximumFractionDigits: 6 })}/
+                          {currentQuota?.cost ?? '∞'}
                         </div>
                       </div>
                     </div>
@@ -867,8 +903,7 @@ function ProfileCard({
                         {quotaUsage.window.start ? format(quotaUsage.window.start, 'PPpp', { locale }) : '-'}
                       </div>
                       <div>
-                        {t('common.filters.endTime')}{' '}
-                        {quotaUsageEnd ? format(quotaUsageEnd, 'PPpp', { locale }) : '-'}
+                        {t('common.filters.endTime')} {quotaUsageEnd ? format(quotaUsageEnd, 'PPpp', { locale }) : '-'}
                       </div>
                     </div>
                   </div>
@@ -877,194 +912,154 @@ function ProfileCard({
             )}
           </div>
 
-          {canConfigureRouting && (
+          {canConfigureModels && (
             <>
-              {/* Load Balancer Strategy */}
               <div className='border-t pt-6'>
-            <FormField
-              control={form.control}
-              name={`profiles.${profileIndex}.loadBalanceStrategy`}
-              render={({ field }) => (
-                <FormItem className='space-y-4'>
-                  <div className='flex items-center justify-between gap-3'>
-                    <div>
-                      <h4 className='text-sm font-medium'>{t('apikeys.profiles.loadBalancerStrategy')}</h4>
-                      <FormDescription className='mt-1 text-xs'>
-                        {field.value === 'adaptive'
-                          ? t('system.retry.loadBalancerStrategy.documentation.adaptive')
-                          : field.value === 'failover'
-                          ? t('system.retry.loadBalancerStrategy.documentation.failover')
-                          : field.value === 'circuit-breaker'
-                          ? t('system.retry.loadBalancerStrategy.documentation.circuit-breaker')
-                          : field.value === 'round-robin'
-                          ? t('system.retry.loadBalancerStrategy.documentation.round-robin')
-                          : t('apikeys.profiles.loadBalancerStrategyDescription')}
-                      </FormDescription>
-                    </div>
-                    <FormControl>
-                      <Select
-                        onValueChange={(val) => field.onChange(val === 'system_default' ? null : val)}
-                        value={field.value || 'system_default'}
-                      >
-                        <SelectTrigger className='w-[140px]'>
-                          <SelectValue placeholder={t('apikeys.profiles.loadBalancerStrategyPlaceholder')} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value='system_default'>{t('apikeys.profiles.loadBalancerStrategyPlaceholder')}</SelectItem>
-                          <SelectItem value='adaptive'>{t('system.retry.loadBalancerStrategy.options.adaptive')}</SelectItem>
-                          <SelectItem value='failover'>{t('system.retry.loadBalancerStrategy.options.failover')}</SelectItem>
-                          <SelectItem value='circuit-breaker'>{t('system.retry.loadBalancerStrategy.options.circuitBreaker')}</SelectItem>
-                          <SelectItem value='round-robin'>{t('system.retry.loadBalancerStrategy.options.roundRobin')}</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </FormControl>
-                  </div>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-              </div>
+                <div className='flex items-center justify-between'>
+                  <h4 className='text-sm font-medium'>{t('apikeys.profiles.modelMappings')}</h4>
+                  <Button type='button' variant='outline' size='sm' onClick={addMapping} className='mb-3 flex items-center gap-2'>
+                    <IconPlus className='h-4 w-4' />
+                    {t('apikeys.profiles.addMapping')}
+                  </Button>
+                </div>
 
-              <div className='border-t pt-6'>
-            <div className='flex items-center justify-between'>
-              <h4 className='text-sm font-medium'>{t('apikeys.profiles.modelMappings')}</h4>
-              <Button type='button' variant='outline' size='sm' onClick={addMapping} className='mb-3 flex items-center gap-2'>
-                <IconPlus className='h-4 w-4' />
-                {t('apikeys.profiles.addMapping')}
-              </Button>
-            </div>
-
-            {mappingFields.length === 0 && (
-              <p className='text-muted-foreground py-4 text-center text-sm'>{t('apikeys.profiles.noMappings')}</p>
-            )}
-
-            <div className='space-y-3'>
-              {mappingFields.map((mapping, mappingIndex) => (
-                <MappingRow
-                  key={mapping.id}
-                  profileIndex={profileIndex}
-                  mappingIndex={mappingIndex}
-                  form={form}
-                  onRemove={() => removeMapping(mappingIndex)}
-                  availableModels={availableModels}
-                  t={t}
-                  portalContainer={portalContainer}
-                />
-              ))}
-            </div>
-              </div>
-
-          {/* Model IDs Restrictions Section */}
-              <div className='border-t pt-6'>
-            <h4 className='mb-3 text-sm font-medium'>{t('apikeys.profiles.allowedModels')}</h4>
-            <p className='text-muted-foreground mb-3 text-xs'>{t('apikeys.profiles.allowedModelsDescription')}</p>
-            <FormField
-              control={form.control}
-              name={`profiles.${profileIndex}.modelIDs`}
-              render={({ field }) => (
-                <FormItem>
-                  <FormControl>
-                    <TagsAutocompleteInput
-                      value={field.value || []}
-                      onChange={field.onChange}
-                      placeholder={t('apikeys.profiles.allowedModels')}
-                      suggestions={availableModels}
-                      className='h-auto min-h-9 py-1'
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-              </div>
-
-          {/* Channel Restrictions Section */}
-              <div className='border-t pt-6'>
-            <h4 className='mb-3 text-sm font-medium'>{t('apikeys.profiles.allowedChannels')}</h4>
-            <p className='text-muted-foreground mb-3 text-xs'>{t('apikeys.profiles.allowedChannelsDescription')}</p>
-            <FormField
-              control={form.control}
-              name={`profiles.${profileIndex}.channelIDs`}
-              render={({ field }) => (
-                <FormItem>
-                  <FormControl>
-                    <TagsAutocompleteInput
-                      value={(field.value || []).map((id) => {
-                        const channel = channelsData?.edges?.find((edge) => parseInt(extractNumberID(edge.node.id), 10) === id);
-                        return channel?.node.name || id.toString();
-                      })}
-                      onChange={(tags) => {
-                        const ids = tags
-                          .map((tag) => {
-                            const channel = channelsData?.edges?.find((edge) => edge.node.name === tag);
-                            return channel ? parseInt(extractNumberID(channel.node.id), 10) : parseInt(tag);
-                          })
-                          .filter((id) => !isNaN(id));
-                        field.onChange(ids);
-                      }}
-                      placeholder={t('apikeys.profiles.allowedChannels')}
-                      suggestions={channelsData?.edges?.map((edge) => edge.node.name) || []}
-                      className='h-auto min-h-9 py-1'
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-              </div>
-
-          {/* Channel Tags Restrictions Section */}
-              <div className='border-t pt-6'>
-            <div className='mb-3 flex items-start justify-between gap-3'>
-              <div>
-                <h4 className='text-sm font-medium'>
-                  {t(isExcludeMode ? 'apikeys.profiles.excludedChannelTags' : 'apikeys.profiles.allowedChannelTags')}
-                </h4>
-                <p className='text-muted-foreground mt-1 text-xs'>
-                  {t(isExcludeMode ? 'apikeys.profiles.excludedChannelTagsDescription' : 'apikeys.profiles.allowedChannelTagsDescription')}
-                </p>
-              </div>
-              <FormField
-                control={form.control}
-                name={`profiles.${profileIndex}.channelTagsMatchMode`}
-                render={({ field }) => (
-                  <FormItem className='w-[180px]'>
-                    <FormLabel>{t('apikeys.profiles.allowedChannelTagsMatchMode')}</FormLabel>
-                    <FormControl>
-                      <Select value={field.value || 'any'} onValueChange={field.onChange}>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value='any'>{t('apikeys.profiles.allowedChannelTagsMatchModeAny')}</SelectItem>
-                          <SelectItem value='all'>{t('apikeys.profiles.allowedChannelTagsMatchModeAll')}</SelectItem>
-                          <SelectItem value='none'>{t('apikeys.profiles.allowedChannelTagsMatchModeNone')}</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
+                {mappingFields.length === 0 && (
+                  <p className='text-muted-foreground py-4 text-center text-sm'>{t('apikeys.profiles.noMappings')}</p>
                 )}
-              />
-            </div>
-            <FormField
-              control={form.control}
-              name={`profiles.${profileIndex}.channelTags`}
-              render={({ field }) => (
-                <FormItem>
-                  <FormControl>
-                    <TagsAutocompleteInput
-                      value={field.value || []}
-                      onChange={field.onChange}
-                      placeholder={t(isExcludeMode ? 'apikeys.profiles.excludedChannelTags' : 'apikeys.profiles.allowedChannelTags')}
-                      suggestions={allTags}
-                      className='h-auto min-h-9 py-1'
+
+                <div className='space-y-3'>
+                  {mappingFields.map((mapping, mappingIndex) => (
+                    <MappingRow
+                      key={mapping.id}
+                      profileIndex={profileIndex}
+                      mappingIndex={mappingIndex}
+                      form={form}
+                      onRemove={() => removeMapping(mappingIndex)}
+                      availableModels={availableModels}
+                      t={t}
+                      portalContainer={portalContainer}
                     />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+                  ))}
+                </div>
+              </div>
+
+              {/* Model IDs Restrictions Section */}
+              <div className='border-t pt-6'>
+                <h4 className='mb-3 text-sm font-medium'>{t('apikeys.profiles.allowedModels')}</h4>
+                <p className='text-muted-foreground mb-3 text-xs'>{t('apikeys.profiles.allowedModelsDescription')}</p>
+                <FormField
+                  control={form.control}
+                  name={`profiles.${profileIndex}.modelIDs`}
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormControl>
+                        <TagsAutocompleteInput
+                          value={field.value || []}
+                          onChange={field.onChange}
+                          placeholder={t('apikeys.profiles.allowedModels')}
+                          suggestions={availableModels}
+                          className='h-auto min-h-9 py-1'
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+            </>
+          )}
+
+          {canConfigureSharedRouting && (
+            <>
+              {/* Channel Restrictions Section */}
+              <div className='border-t pt-6'>
+                <h4 className='mb-3 text-sm font-medium'>{t('apikeys.profiles.allowedChannels')}</h4>
+                <p className='text-muted-foreground mb-3 text-xs'>{t('apikeys.profiles.allowedChannelsDescription')}</p>
+                <FormField
+                  control={form.control}
+                  name={`profiles.${profileIndex}.channelIDs`}
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormControl>
+                        <TagsAutocompleteInput
+                          value={(field.value || []).map((id) => {
+                            const channel = channelsData?.edges?.find((edge) => parseInt(extractNumberID(edge.node.id), 10) === id);
+                            return channel?.node.name || id.toString();
+                          })}
+                          onChange={(tags) => {
+                            const ids = tags
+                              .map((tag) => {
+                                const channel = channelsData?.edges?.find((edge) => edge.node.name === tag);
+                                return channel ? parseInt(extractNumberID(channel.node.id), 10) : parseInt(tag);
+                              })
+                              .filter((id) => !isNaN(id));
+                            field.onChange(ids);
+                          }}
+                          placeholder={t('apikeys.profiles.allowedChannels')}
+                          suggestions={channelsData?.edges?.map((edge) => edge.node.name) || []}
+                          className='h-auto min-h-9 py-1'
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              {/* Channel Tags Restrictions Section */}
+              <div className='border-t pt-6'>
+                <div className='mb-3 flex items-start justify-between gap-3'>
+                  <div>
+                    <h4 className='text-sm font-medium'>
+                      {t(isExcludeMode ? 'apikeys.profiles.excludedChannelTags' : 'apikeys.profiles.allowedChannelTags')}
+                    </h4>
+                    <p className='text-muted-foreground mt-1 text-xs'>
+                      {t(
+                        isExcludeMode ? 'apikeys.profiles.excludedChannelTagsDescription' : 'apikeys.profiles.allowedChannelTagsDescription'
+                      )}
+                    </p>
+                  </div>
+                  <FormField
+                    control={form.control}
+                    name={`profiles.${profileIndex}.channelTagsMatchMode`}
+                    render={({ field }) => (
+                      <FormItem className='w-[180px]'>
+                        <FormLabel>{t('apikeys.profiles.allowedChannelTagsMatchMode')}</FormLabel>
+                        <FormControl>
+                          <Select value={field.value || 'any'} onValueChange={field.onChange}>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value='any'>{t('apikeys.profiles.allowedChannelTagsMatchModeAny')}</SelectItem>
+                              <SelectItem value='all'>{t('apikeys.profiles.allowedChannelTagsMatchModeAll')}</SelectItem>
+                              <SelectItem value='none'>{t('apikeys.profiles.allowedChannelTagsMatchModeNone')}</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+                <FormField
+                  control={form.control}
+                  name={`profiles.${profileIndex}.channelTags`}
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormControl>
+                        <TagsAutocompleteInput
+                          value={field.value || []}
+                          onChange={field.onChange}
+                          placeholder={t(isExcludeMode ? 'apikeys.profiles.excludedChannelTags' : 'apikeys.profiles.allowedChannelTags')}
+                          suggestions={allTags}
+                          className='h-auto min-h-9 py-1'
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
               </div>
             </>
           )}

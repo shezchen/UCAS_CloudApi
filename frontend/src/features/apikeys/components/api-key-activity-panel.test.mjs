@@ -19,3 +19,29 @@ test('shared upstream quota failures are explicitly scoped while retaining the p
   assert.equal(englishResources['resources.channels.health.failure.upstream_quota'], 'Shared upstream quota exhausted');
   assert.equal(chineseResources['resources.channels.health.failure.upstream_quota'], '共享上游渠道额度已耗尽');
 });
+
+test('activity displays the real execution attempt chain and final rescue channel', () => {
+  assert.match(source, /event\.attempts\.map/);
+  assert.match(source, /data-testid='api-key-activity-attempt-chain'/);
+  assert.match(source, /data-testid='api-key-activity-attempt'/);
+  assert.match(source, /event\.recovered/);
+  assert.match(source, /event\.finalChannel/);
+
+  assert.match(english['apikeys.activity.attemptChain'], /attempt/);
+  assert.match(chinese['apikeys.activity.attemptChain'], /渠道尝试/);
+  assert.match(english['apikeys.activity.rescuedBy'], /Recovered/);
+  assert.match(chinese['apikeys.activity.rescuedBy'], /救回/);
+});
+
+test('only completed executions render as successful while unfinished states remain neutral', () => {
+  assert.match(source, /if \(normalizedStatus === 'completed'\)/);
+  assert.match(source, /return 'pending'/);
+  assert.match(source, /resultKind === 'pending'/);
+  assert.match(source, /attemptResultKind === 'pending'/);
+  assert.match(source, /border-amber-500/);
+
+  assert.equal(english['apikeys.activity.inProgress'], 'In progress');
+  assert.equal(chinese['apikeys.activity.inProgress'], '处理中');
+  assert.match(english['apikeys.activity.inProgressDetail'], /\{\{status\}\}/);
+  assert.match(chinese['apikeys.activity.inProgressDetail'], /\{\{status\}\}/);
+});

@@ -136,26 +136,11 @@ func (s *cancelOnCloseStream) Close() error {
 	return err
 }
 
-// hasFinishReason checks if an llm.Response event contains a finish reason.
-func hasFinishReason(resp *llm.Response) bool {
-	if resp == nil {
-		return false
-	}
-
-	for _, choice := range resp.Choices {
-		if choice.FinishReason != nil {
-			return true
-		}
-	}
-
-	return false
-}
-
 // IsTerminalLlmStreamEvent reports whether an event normally completes a
 // unified LLM stream. Health tracking uses the same terminal definition as the
 // retry/empty-response path so the two cannot drift.
 func IsTerminalLlmStreamEvent(resp *llm.Response) bool {
-	return resp == llm.DoneResponse || (resp != nil && resp.Object == "[DONE]") || hasFinishReason(resp)
+	return ResponseTerminalOutcome(resp).Terminal
 }
 
 func (p *pipeline) hasStreamRetryBudget() bool {
@@ -203,6 +188,15 @@ func (p *pipeline) preReadLlmStream(
 
 		event := llmStream.Current()
 		buffered = append(buffered, event)
+
+		// Explicit protocol failure wins over content and generic finish_reason.
+		// This keeps response.incomplete retryable before client commitment even
+		// when a provider includes partial text or tool calls in the terminal event.
+		if outcome := ResponseTerminalOutcome(event); outcome.Terminal && !outcome.Successful {
+			llmStream.Close()
+
+			return nil, outcome.Err
+		}
 
 		if hasResponseContent(event) {
 			// Has content, not empty - prepend buffered events back

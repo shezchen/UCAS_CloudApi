@@ -28,6 +28,9 @@ type ChannelModelsCandidate struct {
 	Priority  int
 	Models    []biz.ChannelModelEntry
 	APIFormat string // selected endpoint API format for this candidate
+	// ForcedCredential is request-local metadata for exact TestSingleAPIKey
+	// attribution. Static key providers do not write their key into context.
+	ForcedCredential string
 }
 
 // resolvedAssociationCandidate keeps the association-level metadata produced by
@@ -748,6 +751,12 @@ type SpecifiedChannelSelector struct {
 	// SelectedAPIKey, if non-empty, forces the outbound to use this specific API key.
 	// Used by the channel key test flow to test a single key.
 	SelectedAPIKey string
+	// ForcedAPIFormat and ForcedActualModel are used only by programmatic
+	// production-route verification. They ensure TestChannel exercises the exact
+	// protocol/model route that failed instead of silently selecting the first
+	// chat-capable endpoint or a newer model mapping.
+	ForcedAPIFormat   string
+	ForcedActualModel string
 }
 
 func NewSpecifiedChannelSelector(channelService *biz.ChannelService, channelID objects.GUID) *SpecifiedChannelSelector {
@@ -772,18 +781,38 @@ func (s *SpecifiedChannelSelector) Select(ctx context.Context, req *llm.Request)
 	entries := channel.GetDirectModelEntries()
 
 	entry, ok := entries[req.Model]
-	if !ok {
+	if !ok && s.ForcedActualModel == "" {
 		return nil, fmt.Errorf("model %s not supported in channel %s", req.Model, channel.Name)
+	}
+	if !ok {
+		entry = biz.ChannelModelEntry{RequestModel: req.Model, ActualModel: s.ForcedActualModel}
 	}
 
 	endpoints := channel.ResolveEndpoints()
 	apiFormat := SelectAPIFormat(endpoints, req)
+	if s.ForcedAPIFormat != "" {
+		found := false
+		for _, endpoint := range endpoints {
+			if endpoint.APIFormat == s.ForcedAPIFormat {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("API format %s not configured in channel %s", s.ForcedAPIFormat, channel.Name)
+		}
+		apiFormat = s.ForcedAPIFormat
+	}
+	if s.ForcedActualModel != "" {
+		entry.ActualModel = s.ForcedActualModel
+	}
 
 	candidate := &ChannelModelsCandidate{
-		Channel:   channel,
-		Priority:  0,
-		Models:    []biz.ChannelModelEntry{entry},
-		APIFormat: apiFormat,
+		Channel:          channel,
+		Priority:         0,
+		Models:           []biz.ChannelModelEntry{entry},
+		APIFormat:        apiFormat,
+		ForcedCredential: s.SelectedAPIKey,
 	}
 
 	return []*ChannelModelsCandidate{candidate}, nil

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"strings"
 
 	"github.com/looplj/axonhub/internal/dumper"
@@ -14,6 +13,7 @@ import (
 	"github.com/looplj/axonhub/internal/server/biz"
 	"github.com/looplj/axonhub/llm"
 	"github.com/looplj/axonhub/llm/httpclient"
+	"github.com/looplj/axonhub/llm/pipeline"
 	"github.com/looplj/axonhub/llm/streams"
 	"github.com/looplj/axonhub/llm/transformer"
 )
@@ -131,49 +131,25 @@ func isSuccessfulTerminalStreamEvent(event *httpclient.StreamEvent) bool {
 		eventType == httpclient.BinaryStreamDoneEventType
 }
 
-// aggregatedTerminalFailure returns an actionable error for an explicit
-// protocol terminal that was not successful. It is intentionally separate from
-// channel health: a response.incomplete after useful output can still prove the
-// channel usable while the request/execution remains non-completed in storage.
+// aggregatedTerminalFailure delegates explicit protocol semantics to the
+// pipeline's single terminal classifier. Partial content never upgrades a
+// response.incomplete/failed/canceled terminal into a successful attempt.
 func aggregatedTerminalFailure(meta llm.ResponseMeta) error {
-	if !meta.Terminal || meta.Completed {
-		return nil
+	outcome := pipeline.ResponseMetaTerminalOutcome(meta)
+	if outcome.Terminal && !outcome.Successful {
+		return outcome.Err
 	}
-	return protocolTerminalFailure(meta.ProtocolStatus, meta.IncompleteReason)
+
+	return nil
 }
 
 func responseProtocolTerminalFailure(response *llm.Response) error {
-	if response == nil || strings.TrimSpace(response.ProtocolStatus) == "" {
-		return nil
-	}
-	return protocolTerminalFailure(response.ProtocolStatus, response.IncompleteReason)
-}
-
-func protocolTerminalFailure(protocolStatus string, incompleteReason string) error {
-	status := strings.ToLower(strings.TrimSpace(protocolStatus))
-	if status == "completed" {
-		return nil
-	}
-	if status == "" {
-		status = "not_completed"
-	}
-	code := "response_" + status
-	message := "upstream response ended with protocol status " + status
-	if status == "incomplete" {
-		message = "upstream response incomplete"
-	}
-	if reason := strings.TrimSpace(incompleteReason); reason != "" {
-		message += ": " + reason
+	outcome := pipeline.ResponseTerminalOutcome(response)
+	if outcome.Terminal && !outcome.Successful {
+		return outcome.Err
 	}
 
-	return &llm.ResponseError{
-		StatusCode: http.StatusBadGateway,
-		Detail: llm.ErrorDetail{
-			Type:    "api_error",
-			Code:    code,
-			Message: message,
-		},
-	}
+	return nil
 }
 
 func (ts *InboundPersistentStream) Err() error {

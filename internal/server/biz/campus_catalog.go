@@ -20,7 +20,6 @@ import (
 	"github.com/looplj/axonhub/internal/ent"
 	"github.com/looplj/axonhub/internal/ent/apikey"
 	"github.com/looplj/axonhub/internal/ent/channel"
-	"github.com/looplj/axonhub/internal/ent/channelprobe"
 	"github.com/looplj/axonhub/internal/ent/project"
 	"github.com/looplj/axonhub/internal/ent/request"
 	"github.com/looplj/axonhub/internal/ent/requestexecution"
@@ -59,6 +58,7 @@ type CampusCatalogServiceParams struct {
 func NewCampusCatalogService(params CampusCatalogServiceParams) *CampusCatalogService {
 	return &CampusCatalogService{
 		client:                             params.Ent,
+		unifiedRoutes:                      params.ChannelService.UnifiedRouteState(),
 		quotaService:                       params.QuotaService,
 		walletService:                      NewTokenWalletService(params.Ent),
 		listEnabledModels:                  params.ModelService.ListEnabledModels,
@@ -69,6 +69,7 @@ func NewCampusCatalogService(params CampusCatalogServiceParams) *CampusCatalogSe
 
 type CampusCatalogService struct {
 	client                             *ent.Client
+	unifiedRoutes                      *UnifiedRouteState
 	quotaService                       *QuotaService
 	walletService                      *TokenWalletService
 	listEnabledModels                  func(context.Context) ([]ModelFacade, error)
@@ -183,12 +184,41 @@ type CampusChannelResource struct {
 }
 
 type CampusChannelHealth struct {
-	State               string     `json:"state"`
-	RecentSuccessRate   float64    `json:"recentSuccessRate"`
-	RecentRequestCount  int        `json:"recentRequestCount"`
-	LastCheckedAt       *time.Time `json:"lastCheckedAt,omitempty"`
-	LastSuccessAt       *time.Time `json:"lastSuccessAt,omitempty"`
-	LastFailureCategory string     `json:"lastFailureCategory,omitempty"`
+	Known                  bool                       `json:"known,omitempty"`
+	Available              bool                       `json:"available,omitempty"`
+	TestInFlight           bool                       `json:"testInFlight,omitempty"`
+	TestModel              string                     `json:"testModel,omitempty"`
+	TestProtocol           string                     `json:"testProtocol,omitempty"`
+	LastTestError          string                     `json:"lastTestError,omitempty"`
+	LastTestAt             *time.Time                 `json:"lastTestAt,omitempty"`
+	State                  string                     `json:"state"`
+	RouteCount             int                        `json:"routeCount,omitempty"`
+	KnownRouteCount        int                        `json:"knownRouteCount,omitempty"`
+	AvailableRouteCount    int                        `json:"availableRouteCount,omitempty"`
+	UnavailableRouteCount  int                        `json:"unavailableRouteCount,omitempty"`
+	UnknownRouteCount      int                        `json:"unknownRouteCount,omitempty"`
+	TestInFlightRouteCount int                        `json:"testInFlightRouteCount,omitempty"`
+	Routes                 []CampusChannelRouteHealth `json:"routes,omitempty"`
+	RecentSuccessRate      float64                    `json:"recentSuccessRate"`
+	RecentRequestCount     int                        `json:"recentRequestCount"`
+	LastCheckedAt          *time.Time                 `json:"lastCheckedAt,omitempty"`
+	LastSuccessAt          *time.Time                 `json:"lastSuccessAt,omitempty"`
+	LastFailureCategory    string                     `json:"lastFailureCategory,omitempty"`
+}
+
+// CampusChannelRouteHealth is a credential-safe projection of one exact route
+// for which TestChannel has produced a verdict or is currently running. The
+// stable slot distinguishes multiple credentials without exposing their
+// fingerprints, values, or prefixes.
+type CampusChannelRouteHealth struct {
+	CredentialSlot int        `json:"credentialSlot"`
+	Model          string     `json:"model"`
+	Protocol       string     `json:"protocol"`
+	Known          bool       `json:"known"`
+	Available      bool       `json:"available"`
+	TestInFlight   bool       `json:"testInFlight,omitempty"`
+	LastTestError  string     `json:"lastTestError,omitempty"`
+	LastTestAt     *time.Time `json:"lastTestAt,omitempty"`
 }
 
 type CampusAPIActivity struct {
@@ -211,11 +241,30 @@ type CampusAPIActivityKey struct {
 }
 
 type CampusAPIActivityEvent struct {
-	RequestID     string    `json:"requestId"`
-	APIKeyID      string    `json:"apiKeyId"`
-	APIKeyName    string    `json:"apiKeyName"`
-	APIKeySuffix  string    `json:"apiKeySuffix"`
+	RequestID     string                     `json:"requestId"`
+	APIKeyID      string                     `json:"apiKeyId"`
+	APIKeyName    string                     `json:"apiKeyName"`
+	APIKeySuffix  string                     `json:"apiKeySuffix"`
+	Model         string                     `json:"model"`
+	Status        string                     `json:"status"`
+	StatusCode    *int                       `json:"statusCode,omitempty"`
+	ErrorCategory string                     `json:"errorCategory,omitempty"`
+	ErrorMessage  string                     `json:"errorMessage,omitempty"`
+	LatencyMs     *int64                     `json:"latencyMs,omitempty"`
+	CreatedAt     time.Time                  `json:"createdAt"`
+	Recovered     bool                       `json:"recovered"`
+	FinalChannel  string                     `json:"finalChannel,omitempty"`
+	Attempts      []CampusAPIActivityAttempt `json:"attempts"`
+}
+
+// CampusAPIActivityAttempt is the privacy-safe execution chain for one API
+// request. It never exposes credentials, URLs, headers, request bodies or
+// response bodies.
+type CampusAPIActivityAttempt struct {
+	Sequence      int       `json:"sequence"`
+	Channel       string    `json:"channel,omitempty"`
 	Model         string    `json:"model"`
+	APIFormat     string    `json:"apiFormat,omitempty"`
 	Status        string    `json:"status"`
 	StatusCode    *int      `json:"statusCode,omitempty"`
 	ErrorCategory string    `json:"errorCategory,omitempty"`
@@ -785,11 +834,15 @@ func (svc *CampusCatalogService) listPublicChannels(ctx context.Context, project
 			channel.FieldID,
 			channel.FieldName,
 			channel.FieldType,
+			channel.FieldBaseURL,
 			channel.FieldStatus,
 			channel.FieldUserID,
 			channel.FieldExpiresAt,
+			channel.FieldCredentials,
+			channel.FieldDisabledAPIKeys,
 			channel.FieldSupportedModels,
 			channel.FieldSettings,
+			channel.FieldEndpoints,
 			channel.FieldRemark,
 		).
 		WithUser(func(query *ent.UserQuery) {
@@ -804,10 +857,6 @@ func (svc *CampusCatalogService) listPublicChannels(ctx context.Context, project
 	channelIDs := make([]int, 0, len(channels))
 	for _, ch := range channels {
 		channelIDs = append(channelIDs, ch.ID)
-	}
-	healthByChannel, err := svc.channelHealthMap(ctx, channelIDs, now)
-	if err != nil {
-		return nil, err
 	}
 	effectiveTokensByChannel, err := svc.channelEffectiveTokens(ctx, projectID, channelIDs)
 	if err != nil {
@@ -835,13 +884,7 @@ func (svc *CampusCatalogService) listPublicChannels(ctx context.Context, project
 			ModelCount:      len(models),
 			EffectiveTokens: effectiveTokensByChannel[ch.ID],
 			CanProbe:        ch.Status == channel.StatusEnabled && firstCampusProbeModel(ch) != "",
-			Health:          healthByChannel[ch.ID],
-		}
-		if ch.Status != channel.StatusEnabled {
-			resource.Health = &CampusChannelHealth{
-				State:               "unhealthy",
-				LastFailureCategory: "administratively_disabled",
-			}
+			Health:          svc.channelTestHealth(ch),
 		}
 
 		if ch.UserID != nil {
@@ -1003,119 +1046,158 @@ func campusModelVersionNumbers(modelID string) []int {
 	return numbers
 }
 
-func (svc *CampusCatalogService) channelHealthMap(
-	ctx context.Context,
-	channelIDs []int,
-	now time.Time,
-) (map[int]*CampusChannelHealth, error) {
-	result := make(map[int]*CampusChannelHealth, len(channelIDs))
-	if len(channelIDs) == 0 {
-		return result, nil
+// channelTestHealth aggregates exact, completed TestChannel verdicts for the
+// channel's current route configuration. Production failures and historical
+// request statistics never mutate this state. Verdicts for credentials,
+// models, protocols, URLs, or proxies that are no longer configured are
+// deliberately ignored.
+func (svc *CampusCatalogService) channelTestHealth(ch *ent.Channel) *CampusChannelHealth {
+	health := &CampusChannelHealth{
+		State:  "unknown",
+		Routes: []CampusChannelRouteHealth{},
+	}
+	if svc.unifiedRoutes == nil || ch == nil {
+		return health
 	}
 
-	for _, channelID := range channelIDs {
-		result[channelID] = &CampusChannelHealth{State: "unknown"}
+	bizChannel := &Channel{Channel: ch}
+	credentialSlots := currentCampusRouteCredentialSlots(ch)
+	actualModels := currentCampusRouteModels(bizChannel)
+	formats := currentCampusRouteFormats(bizChannel)
+	if len(credentialSlots) == 0 || len(actualModels) == 0 || len(formats) == 0 {
+		return health
 	}
 
-	cutoff := now.Add(-6 * time.Hour)
-	probes, err := svc.client.ChannelProbe.Query().
-		Where(
-			channelprobe.ChannelIDIn(channelIDs...),
-			channelprobe.TimestampGTE(cutoff.Unix()),
-		).
-		Order(ent.Asc(channelprobe.FieldTimestamp), ent.Asc(channelprobe.FieldID)).
-		All(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("query public channel health: %w", err)
-	}
+	snapshots := svc.unifiedRoutes.ChannelTestSnapshots(ch.ID)
+	var latestKey RouteKey
+	var latest RouteAvailability
+	hasLatest := false
+	for credentialID, credentialSlot := range credentialSlots {
+		for actualModel := range actualModels {
+			for apiFormat, configRevision := range formats {
+				key := RouteKey{
+					ChannelID:      ch.ID,
+					CredentialID:   credentialID,
+					ActualModel:    actualModel,
+					APIFormat:      apiFormat,
+					ConfigRevision: configRevision,
+				}
+				snapshot := snapshots[key]
 
-	type healthAccumulator struct {
-		total         int
-		success       int
-		lastPoint     *ent.ChannelProbe
-		previousPoint *ent.ChannelProbe
-		lastSuccessAt *time.Time
-	}
-	accumulators := make(map[int]*healthAccumulator, len(channelIDs))
-	for _, probe := range probes {
-		accumulator := accumulators[probe.ChannelID]
-		if accumulator == nil {
-			accumulator = &healthAccumulator{}
-			accumulators[probe.ChannelID] = accumulator
+				route := CampusChannelRouteHealth{
+					CredentialSlot: credentialSlot,
+					Model:          key.ActualModel,
+					Protocol:       key.APIFormat,
+					Known:          snapshot.Availability.Known,
+					Available:      snapshot.Availability.Known && snapshot.Availability.Available,
+					TestInFlight:   snapshot.InFlight,
+				}
+				if snapshot.Availability.Known {
+					testedAt := snapshot.Availability.LastTestAt
+					route.LastTestAt = &testedAt
+					route.LastTestError = SanitizeCampusDiagnosticError(snapshot.Availability.LastTestError)
+					health.KnownRouteCount++
+					if snapshot.Availability.Available {
+						health.AvailableRouteCount++
+					} else {
+						health.UnavailableRouteCount++
+					}
+					if !hasLatest || testedAt.After(latest.LastTestAt) {
+						latestKey = key
+						latest = snapshot.Availability
+						hasLatest = true
+					}
+				} else {
+					health.UnknownRouteCount++
+				}
+				if snapshot.InFlight {
+					health.TestInFlightRouteCount++
+				}
+				health.Routes = append(health.Routes, route)
+			}
 		}
-		accumulator.total += max(probe.TotalRequestCount, 0)
-		accumulator.success += max(probe.SuccessRequestCount, 0)
-		accumulator.previousPoint = accumulator.lastPoint
-		accumulator.lastPoint = probe
-		if probe.SuccessRequestCount > 0 {
-			successAt := time.Unix(probe.Timestamp, 0).UTC()
-			accumulator.lastSuccessAt = &successAt
-		}
 	}
 
-	for channelID, accumulator := range accumulators {
-		if accumulator.lastPoint == nil {
-			continue
+	sort.Slice(health.Routes, func(i, j int) bool {
+		left, right := health.Routes[i], health.Routes[j]
+		if left.Model != right.Model {
+			return left.Model < right.Model
 		}
-		checkedAt := time.Unix(accumulator.lastPoint.Timestamp, 0).UTC()
-		health := &CampusChannelHealth{
-			State:              "unknown",
-			RecentRequestCount: accumulator.total,
-			LastCheckedAt:      &checkedAt,
-			LastSuccessAt:      accumulator.lastSuccessAt,
+		if left.Protocol != right.Protocol {
+			return left.Protocol < right.Protocol
 		}
-		if accumulator.total > 0 {
-			health.RecentSuccessRate = float64(accumulator.success) / float64(accumulator.total)
-		}
+		return left.CredentialSlot < right.CredentialSlot
+	})
+	health.RouteCount = len(health.Routes)
+	health.TestInFlight = health.TestInFlightRouteCount > 0
+	health.Known = health.RouteCount > 0 && health.UnknownRouteCount == 0
 
-		latestFailed := accumulator.lastPoint.TotalRequestCount > 0 &&
-			accumulator.lastPoint.SuccessRequestCount == 0
-		previousFailed := accumulator.previousPoint != nil &&
-			accumulator.previousPoint.TotalRequestCount > 0 &&
-			accumulator.previousPoint.SuccessRequestCount == 0
-		latestSucceeded := accumulator.lastPoint.SuccessRequestCount > 0
-
-		switch {
-		case latestFailed:
-			health.State = "unhealthy"
-		case latestSucceeded && previousFailed:
-			health.State = "recovering"
-		case health.RecentSuccessRate >= 0.9:
-			health.State = "healthy"
-		case health.RecentSuccessRate > 0:
-			health.State = "degraded"
-		case accumulator.total > 0:
-			health.State = "unhealthy"
-		default:
-			health.State = "unknown"
-		}
-		result[channelID] = health
+	switch {
+	case health.AvailableRouteCount > 0 && health.UnavailableRouteCount > 0:
+		health.State = "mixed"
+	case health.UnknownRouteCount > 0 || health.KnownRouteCount == 0:
+		health.State = "unknown"
+	case health.AvailableRouteCount == health.KnownRouteCount:
+		health.State = "available"
+		health.Available = true
+	default:
+		health.State = "unavailable"
 	}
 
-	failures, err := svc.client.RequestExecution.Query().
-		Where(
-			requestexecution.ChannelIDIn(channelIDs...),
-			requestexecution.CreatedAtGTE(cutoff),
-			requestexecution.StatusIn(requestexecution.StatusFailed, requestexecution.StatusCanceled),
-		).
-		Order(ent.Desc(requestexecution.FieldCreatedAt), ent.Desc(requestexecution.FieldID)).
-		All(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("query public channel failure categories: %w", err)
-	}
-	seenFailure := make(map[int]struct{}, len(channelIDs))
-	for _, execution := range failures {
-		if _, ok := seenFailure[execution.ChannelID]; ok {
-			continue
-		}
-		seenFailure[execution.ChannelID] = struct{}{}
-		result[execution.ChannelID].LastFailureCategory = campusFailureCategory(
-			execution.ResponseStatusCode,
-			execution.ErrorMessage,
-		)
+	// These legacy summary fields describe only the latest retained route test;
+	// State and the route counts above are the channel aggregate.
+	if hasLatest {
+		testedAt := latest.LastTestAt
+		health.TestModel = latestKey.ActualModel
+		health.TestProtocol = latestKey.APIFormat
+		health.LastTestError = SanitizeCampusDiagnosticError(latest.LastTestError)
+		health.LastTestAt = &testedAt
+		health.LastCheckedAt = &testedAt
 	}
 
-	return result, nil
+	return health
+}
+
+func currentCampusRouteCredentialSlots(ch *ent.Channel) map[string]int {
+	if ch == nil {
+		return nil
+	}
+
+	fingerprints := RouteCredentialFingerprints(&Channel{Channel: ch})
+
+	result := make(map[string]int, len(fingerprints))
+	for index, fingerprint := range fingerprints {
+		result[fingerprint] = index + 1
+	}
+	return result
+}
+
+func currentCampusRouteModels(ch *Channel) map[string]struct{} {
+	result := make(map[string]struct{})
+	if ch == nil {
+		return result
+	}
+	for _, entry := range ch.GetModelEntries() {
+		actualModel := strings.TrimSpace(entry.ActualModel)
+		if actualModel != "" {
+			result[actualModel] = struct{}{}
+		}
+	}
+	return result
+}
+
+func currentCampusRouteFormats(ch *Channel) map[string]string {
+	result := make(map[string]string)
+	if ch == nil {
+		return result
+	}
+	for _, endpoint := range ch.ResolveEndpoints() {
+		apiFormat := strings.TrimSpace(endpoint.APIFormat)
+		if apiFormat != "" {
+			result[apiFormat] = RouteConfigRevision(ch, apiFormat, nil)
+		}
+	}
+	return result
 }
 
 func campusFailureCategory(statusCode *int, message string) string {
@@ -1265,24 +1347,31 @@ func (svc *CampusCatalogService) GetChannelHealth(ctx context.Context, channelID
 		if _, err := svc.verifyCampusProjectAccess(bypassCtx, currentUser, projectID); err != nil {
 			return nil, err
 		}
-		exists, err := svc.client.Channel.Query().
+		ch, err := svc.client.Channel.Query().
 			Where(
 				channel.IDEQ(channelID),
+				channel.StatusIn(channel.StatusEnabled, channel.StatusDisabled),
 				channel.Or(channel.ExpiresAtIsNil(), channel.ExpiresAtGT(time.Now())),
 			).
-			Exist(bypassCtx)
+			Select(
+				channel.FieldID,
+				channel.FieldType,
+				channel.FieldBaseURL,
+				channel.FieldCredentials,
+				channel.FieldDisabledAPIKeys,
+				channel.FieldSupportedModels,
+				channel.FieldSettings,
+				channel.FieldEndpoints,
+			).
+			Only(bypassCtx)
 		if err != nil {
+			if ent.IsNotFound(err) {
+				return nil, ErrCampusChannelNotFound
+			}
 			return nil, fmt.Errorf("verify public channel health target: %w", err)
 		}
-		if !exists {
-			return nil, ErrCampusChannelNotFound
-		}
 
-		healthByChannel, err := svc.channelHealthMap(bypassCtx, []int{channelID}, time.Now())
-		if err != nil {
-			return nil, err
-		}
-		return healthByChannel[channelID], nil
+		return svc.channelTestHealth(ch), nil
 	})
 }
 
@@ -1352,7 +1441,11 @@ func (svc *CampusCatalogService) GetAPIActivity(ctx context.Context, selectedAPI
 				request.CreatedAtGTE(windowStartedAt),
 			).
 			WithExecutions(func(query *ent.RequestExecutionQuery) {
-				query.Order(ent.Desc(requestexecution.FieldCreatedAt), ent.Desc(requestexecution.FieldID))
+				query.
+					WithChannel(func(channelQuery *ent.ChannelQuery) {
+						channelQuery.Select(channel.FieldID, channel.FieldName)
+					}).
+					Order(ent.Asc(requestexecution.FieldCreatedAt), ent.Asc(requestexecution.FieldID))
 			}).
 			WithUsageLogs().
 			Order(ent.Desc(request.FieldCreatedAt), ent.Desc(request.FieldID)).
@@ -1401,10 +1494,30 @@ func (svc *CampusCatalogService) GetAPIActivity(ctx context.Context, selectedAPI
 				Status:       status,
 				LatencyMs:    req.MetricsLatencyMs,
 				CreatedAt:    req.CreatedAt,
+				Attempts:     make([]CampusAPIActivityAttempt, 0, len(req.Edges.Executions)),
 			}
-			if len(req.Edges.Executions) > 0 {
-				execution := req.Edges.Executions[0]
-				event.Status = string(execution.Status)
+			for index, execution := range req.Edges.Executions {
+				attempt := CampusAPIActivityAttempt{
+					Sequence:   index + 1,
+					Model:      execution.ModelID,
+					APIFormat:  execution.Format,
+					Status:     string(execution.Status),
+					StatusCode: execution.ResponseStatusCode,
+					LatencyMs:  execution.MetricsLatencyMs,
+					CreatedAt:  execution.CreatedAt,
+				}
+				if execution.Edges.Channel != nil {
+					attempt.Channel = execution.Edges.Channel.Name
+				}
+				if execution.Status == requestexecution.StatusFailed ||
+					execution.Status == requestexecution.StatusCanceled {
+					attempt.ErrorCategory = campusFailureCategory(execution.ResponseStatusCode, execution.ErrorMessage)
+					attempt.ErrorMessage = sanitizeRequestExecutionErrorMessage(execution.ErrorMessage)
+				}
+				event.Attempts = append(event.Attempts, attempt)
+			}
+			if len(event.Attempts) > 0 {
+				execution := req.Edges.Executions[len(req.Edges.Executions)-1]
 				event.StatusCode = execution.ResponseStatusCode
 				if execution.ModelID != "" {
 					event.Model = execution.ModelID
@@ -1416,6 +1529,15 @@ func (svc *CampusCatalogService) GetAPIActivity(ctx context.Context, selectedAPI
 					execution.Status == requestexecution.StatusCanceled {
 					event.ErrorCategory = campusFailureCategory(execution.ResponseStatusCode, execution.ErrorMessage)
 					event.ErrorMessage = sanitizeRequestExecutionErrorMessage(execution.ErrorMessage)
+				}
+				event.FinalChannel = event.Attempts[len(event.Attempts)-1].Channel
+				if req.Status == request.StatusCompleted && execution.Status == requestexecution.StatusCompleted {
+					for _, earlier := range req.Edges.Executions[:len(req.Edges.Executions)-1] {
+						if earlier.Status == requestexecution.StatusFailed || earlier.Status == requestexecution.StatusCanceled {
+							event.Recovered = true
+							break
+						}
+					}
 				}
 			}
 			result.Events = append(result.Events, event)

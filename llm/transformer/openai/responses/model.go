@@ -543,6 +543,9 @@ type Item struct {
 	// Text for output_text/input_text type.
 	Text *string `json:"text,omitempty"`
 
+	// Refusal text for a message content item with type="refusal".
+	Refusal *string `json:"refusal,omitempty"`
+
 	// Image generation fields
 
 	// Background for image generated, e.g: opaque

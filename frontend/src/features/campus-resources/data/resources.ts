@@ -21,13 +21,41 @@ const campusResourceApiKeySchema = z.object({
   modelDetails: z.array(campusModelDetailSchema).optional().default([]),
 });
 
+const campusChannelRouteHealthSchema = z.object({
+  credentialSlot: z.number().int().positive(),
+  model: z.string(),
+  protocol: z.string(),
+  known: z.boolean(),
+  available: z.boolean(),
+  testInFlight: z.boolean().optional().default(false),
+  lastTestError: z.string().optional(),
+  lastTestAt: z.string().optional(),
+});
+
 const campusChannelHealthSchema = z.object({
-  state: z.enum(['healthy', 'degraded', 'unhealthy', 'recovering', 'unknown']).optional().default('unknown'),
+  state: z
+    .enum(['available', 'unavailable', 'mixed', 'testing', 'unknown', 'healthy', 'degraded', 'unhealthy', 'recovering'])
+    .optional()
+    .default('unknown'),
+  known: z.boolean().optional(),
+  available: z.boolean().optional(),
+  testInFlight: z.boolean().optional().default(false),
+  testModel: z.string().optional(),
+  testProtocol: z.string().optional(),
+  lastTestError: z.string().optional(),
+  lastTestAt: z.string().optional(),
   recentSuccessRate: z.number().nonnegative().optional(),
   recentRequestCount: z.number().int().nonnegative().optional(),
   lastCheckedAt: z.string().optional(),
   lastSuccessAt: z.string().optional(),
   lastFailureCategory: z.string().optional(),
+  routeCount: z.number().int().nonnegative().optional().default(0),
+  knownRouteCount: z.number().int().nonnegative().optional().default(0),
+  availableRouteCount: z.number().int().nonnegative().optional().default(0),
+  unavailableRouteCount: z.number().int().nonnegative().optional().default(0),
+  unknownRouteCount: z.number().int().nonnegative().optional().default(0),
+  testInFlightRouteCount: z.number().int().nonnegative().optional().default(0),
+  routes: z.array(campusChannelRouteHealthSchema).optional().default([]),
 });
 
 const campusResourceChannelSchema = z.object({
@@ -134,6 +162,7 @@ const campusChannelModelCapabilitiesSchema = z.object({
 
 export type CampusModelDetail = z.infer<typeof campusModelDetailSchema>;
 export type CampusResourceChannel = z.infer<typeof campusResourceChannelSchema>;
+export type CampusChannelRouteHealth = z.infer<typeof campusChannelRouteHealthSchema>;
 export type CampusManagedChannel = z.infer<typeof campusManagedChannelSchema>;
 export type CampusUsageOverview = z.infer<typeof campusUsageOverviewSchema>;
 export type CampusDonationBenefits = z.infer<typeof campusDonationBenefitsSchema>;

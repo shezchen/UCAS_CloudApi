@@ -184,6 +184,7 @@ func convertUserMessage(msg llm.Message) Item {
 	}
 
 	return Item{
+		ID:      validMessageItemIDOrEmpty(msg.ID),
 		Type:    "message",
 		Role:    msg.Role,
 		Content: &Input{Items: contentItems},
@@ -196,6 +197,7 @@ func convertAssistantMessage(msg llm.Message) []Item {
 	var (
 		items         []Item
 		toolCallItems []Item
+		messageID     = validMessageItemIDOrEmpty(msg.ID)
 	)
 
 	// Handle reasoning content first.
@@ -250,11 +252,13 @@ func convertAssistantMessage(msg llm.Message) []Item {
 		}
 
 		items = append(items, Item{
+			ID:      messageID,
 			Type:    "message",
 			Role:    msg.Role,
 			Status:  lo.ToPtr("completed"),
 			Content: &Input{Items: contentItems},
 		})
+		messageID = ""
 		contentItems = nil
 	}
 
@@ -281,6 +285,10 @@ func convertAssistantMessage(msg llm.Message) []Item {
 				}
 			}
 		}
+	}
+	if msg.Refusal != "" {
+		refusal := msg.Refusal
+		contentItems = append(contentItems, Item{Type: "refusal", Refusal: &refusal})
 	}
 
 	// In the common assistant flow, the visible message content precedes any
@@ -611,6 +619,7 @@ func convertOutputToMessage(output []Item, transformerMetadata map[string]any) l
 		contentParts         []llm.MessageContentPart
 		textContent          strings.Builder
 		reasoningContent     strings.Builder
+		refusalContent       strings.Builder
 		reasoningSignature   *string
 		messageID            string
 		toolCalls            []llm.ToolCall
@@ -641,12 +650,21 @@ func convertOutputToMessage(output []Item, transformerMetadata map[string]any) l
 				continue
 			}
 			for _, contentItem := range outputItem.Content.Items {
-				if contentItem.Type == "output_text" {
+				switch contentItem.Type {
+				case "output_text":
 					annotations = appendOutputText(&textContent, &visibleTextRuneCount, annotations, contentItem)
+				case "refusal":
+					if contentItem.Refusal != nil {
+						refusalContent.WriteString(*contentItem.Refusal)
+					}
 				}
 			}
 		case "output_text":
 			annotations = appendOutputText(&textContent, &visibleTextRuneCount, annotations, outputItem)
+		case "refusal":
+			if outputItem.Refusal != nil {
+				refusalContent.WriteString(*outputItem.Refusal)
+			}
 		case "function_call":
 			toolCalls = append(toolCalls, llm.ToolCall{
 				ID:   outputItem.CallID,
@@ -744,6 +762,9 @@ func convertOutputToMessage(output []Item, transformerMetadata map[string]any) l
 		Role:        "assistant",
 		ToolCalls:   toolCalls,
 		Annotations: annotations,
+	}
+	if refusalContent.Len() > 0 {
+		msg.Refusal = refusalContent.String()
 	}
 
 	if reasoningContent.Len() > 0 {

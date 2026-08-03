@@ -201,6 +201,28 @@ func TestSpecifiedChannelSelector_Select_ModelNotSupported(t *testing.T) {
 	require.Contains(t, err.Error(), "model gpt-4 not supported")
 }
 
+func TestSpecifiedChannelSelector_ForcesExactProductionRoute(t *testing.T) {
+	ctx, client := setupTest(t)
+	ch, err := client.Channel.Create().
+		SetType(channel.TypeOpenai).
+		SetName("Multi endpoint").
+		SetBaseURL("https://provider.example/v1").
+		SetCredentials(objects.ChannelCredentials{APIKey: "test-key"}).
+		SetSupportedModels([]string{"public-model"}).
+		SetDefaultTestModel("public-model").
+		SetEndpoints([]objects.ChannelEndpoint{{APIFormat: llm.APIFormatOpenAIResponse.String(), Path: "/responses"}}).
+		Save(ctx)
+	require.NoError(t, err)
+
+	selector := NewSpecifiedChannelSelector(newTestChannelServiceForChannels(client), objects.GUID{ID: ch.ID})
+	selector.ForcedAPIFormat = llm.APIFormatOpenAIResponse.String()
+	selector.ForcedActualModel = "provider-model"
+	result, err := selector.Select(ctx, &llm.Request{Model: "public-model", RequestType: llm.RequestTypeChat})
+	require.NoError(t, err)
+	require.Equal(t, llm.APIFormatOpenAIResponse.String(), result[0].APIFormat)
+	require.Equal(t, "provider-model", result[0].Models[0].ActualModel)
+}
+
 // TestSpecifiedChannelSelector_Select_ChannelNotFound tests SpecifiedChannelSelector with non-existent channel.
 func TestSpecifiedChannelSelector_Select_ChannelNotFound(t *testing.T) {
 	ctx, client := setupTest(t)

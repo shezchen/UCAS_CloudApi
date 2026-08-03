@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 
 	"github.com/looplj/axonhub/internal/ent/channel"
@@ -120,6 +121,7 @@ func applyPassThroughRequestBody(outbound *PersistentOutboundTransformer, system
 
 		channel := outbound.GetCurrentChannel()
 		llmReq := outbound.state.LlmRequest
+		codexResponsesLite := outbound.isCodexResponsesLiteRequest()
 
 		// Multipart bodies cannot be reused: the outbound transformer rebuilds the
 		// multipart payload with a new boundary in Content-Type, so replaying the inbound
@@ -147,6 +149,12 @@ func applyPassThroughRequestBody(outbound *PersistentOutboundTransformer, system
 			)
 
 			return request, nil
+		}
+		if codexResponsesLite {
+			body, err = normalizeCodexResponsesLiteMessageIDs(body)
+			if err != nil {
+				return nil, fmt.Errorf("normalize Codex Responses Lite message ids: %w", err)
+			}
 		}
 
 		request.Body = body
@@ -182,6 +190,53 @@ func mergePassThroughRequestBody(rawBody []byte, apiFormat llm.APIFormat, model,
 	}
 
 	return body, nil
+}
+
+// normalizeCodexResponsesLiteMessageIDs removes invalid IDs from message input
+// items before a Lite envelope is replayed to the Codex upstream. Responses
+// accepts message IDs with the msg_ prefix; an AxonHub-generated item_ ID from
+// an older response must not be forwarded as though it were an upstream ID.
+// Other item types keep their IDs because reasoning and tool items use their own
+// provider-defined prefixes.
+func normalizeCodexResponsesLiteMessageIDs(body []byte) ([]byte, error) {
+	input := gjson.GetBytes(body, "input")
+	if !input.IsArray() {
+		return body, nil
+	}
+
+	normalized := append([]byte(nil), body...)
+	var normalizeErr error
+
+	input.ForEach(func(index, item gjson.Result) bool {
+		if normalizeErr != nil {
+			return false
+		}
+
+		itemType := strings.ToLower(strings.TrimSpace(item.Get("type").String()))
+		isMessage := itemType == "message" || (itemType == "" && item.Get("role").String() != "")
+		if !isMessage {
+			return true
+		}
+
+		id := strings.TrimSpace(item.Get("id").String())
+		if id == "" || strings.HasPrefix(id, "msg_") {
+			return true
+		}
+
+		path := fmt.Sprintf("input.%d.id", index.Int())
+		normalized, normalizeErr = sjson.DeleteBytes(normalized, path)
+		if normalizeErr != nil {
+			normalizeErr = fmt.Errorf("remove invalid Codex Responses message id at %s: %w", path, normalizeErr)
+		}
+
+		return normalizeErr == nil
+	})
+
+	if normalizeErr != nil {
+		return nil, normalizeErr
+	}
+
+	return normalized, nil
 }
 
 // passThroughBodySupported reports whether the raw inbound body can safely replace the

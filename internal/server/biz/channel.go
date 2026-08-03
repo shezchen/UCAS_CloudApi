@@ -213,6 +213,7 @@ func NewChannelService(params ChannelServiceParams) *ChannelService {
 		channelPerfMetrics: make(map[int]*channelMetrics),
 		channelErrorCounts: make(map[int]map[int]int),
 		apiKeyErrorCounts:  make(map[int]map[string]map[int]int),
+		unifiedRouteState:  NewUnifiedRouteState(),
 		perfCh:             make(chan *PerformanceRecord, 1024),
 	}
 	watcherMode := params.CacheConfig.Mode
@@ -292,6 +293,11 @@ type ChannelService struct {
 	apiKeyErrorCounts     map[int]map[string]map[int]int
 	apiKeyErrorCountsLock sync.Mutex
 
+	// unifiedRouteState is the sole production route-order and TestChannel
+	// availability state. It deliberately does not consume request metrics.
+	unifiedRouteState *UnifiedRouteState
+	unifiedRouteOnce  sync.Once
+
 	// settingsMutationMu serializes read-modify-write updates to ChannelSettings.
 	// In particular, generic channel edits must not overwrite contributor-owned
 	// model metadata overrides written through the narrow mutation below.
@@ -307,6 +313,15 @@ type ChannelService struct {
 
 	// perfCh is the channel for performance records for async processing.
 	perfCh chan *PerformanceRecord
+}
+
+func (svc *ChannelService) UnifiedRouteState() *UnifiedRouteState {
+	svc.unifiedRouteOnce.Do(func() {
+		if svc.unifiedRouteState == nil {
+			svc.unifiedRouteState = NewUnifiedRouteState()
+		}
+	})
+	return svc.unifiedRouteState
 }
 
 func (svc *ChannelService) RegisterScheduledTasks(ctx context.Context, s *scheduler.Scheduler) error {

@@ -9,7 +9,16 @@ type ProviderExtensions struct {
 }
 
 type OpenAIResponsesProviderExtensions struct {
-	Request *OpenAIResponsesRequestExtensions `json:"-"`
+	Request  *OpenAIResponsesRequestExtensions  `json:"-"`
+	Response *OpenAIResponsesResponseExtensions `json:"-"`
+}
+
+// OpenAIResponsesResponseExtensions carries the original ordered Responses
+// output items across the unified response model. RawOutputItems is deliberately
+// non-serializable through llm.Response so response content is not duplicated in
+// persisted transformer metadata.
+type OpenAIResponsesResponseExtensions struct {
+	RawOutputItems []json.RawMessage `json:"-"`
 }
 
 type OpenAIResponsesRequestExtensions struct {
@@ -59,9 +68,27 @@ func CloneProviderExtensions(src *ProviderExtensions) *ProviderExtensions {
 				RawInputItems:  cloneOpenAIResponsesRawFragments(src.OpenAIResponses.Request.RawInputItems),
 			}
 		}
+		if src.OpenAIResponses.Response != nil {
+			cloned.OpenAIResponses.Response = &OpenAIResponsesResponseExtensions{
+				RawOutputItems: cloneRawMessages(src.OpenAIResponses.Response.RawOutputItems),
+			}
+		}
 	}
 
 	return cloned
+}
+
+func cloneRawMessages(src []json.RawMessage) []json.RawMessage {
+	if len(src) == 0 {
+		return nil
+	}
+
+	out := make([]json.RawMessage, len(src))
+	for i := range src {
+		out[i] = cloneRawMessage(src[i])
+	}
+
+	return out
 }
 
 func cloneOpenAIResponsesRawFragments(src []OpenAIResponsesRawFragment) []OpenAIResponsesRawFragment {

@@ -936,6 +936,10 @@ func convertToResponsesAPIResponse(chatResp *llm.Response) *Response {
 
 	// Convert usage
 	resp.Usage = ConvertLLMUsageToResponsesUsage(chatResp.Usage)
+	if preservedOutput, ok := getPreservedResponsesOutputItems(chatResp); ok {
+		resp.Output = preservedOutput
+		return resp
+	}
 
 	// Convert choices to output items
 	for _, choice := range chatResp.Choices {

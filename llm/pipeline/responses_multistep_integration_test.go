@@ -307,3 +307,125 @@ func TestPipeline_ResponsesPreviousResponseIDTwoToolTurnsRemainChained(t *testin
 	require.Equal(t, "resp_stateful_1", upstreamRequests[1]["previous_response_id"])
 	require.Equal(t, "resp_stateful_2", upstreamRequests[2]["previous_response_id"])
 }
+
+func TestPipeline_ResponsesNonStreamInterleavedReasoningItemsSurviveReplay(t *testing.T) {
+	firstOutput := []any{
+		map[string]any{
+			"id": "rs_nonstream_A", "type": "reasoning", "status": "completed",
+			"summary":           []any{map[string]any{"type": "summary_text", "text": "reasoning A"}},
+			"encrypted_content": "enc_nonstream_A",
+		},
+		map[string]any{
+			"id": "fc_nonstream_A", "type": "function_call", "status": "completed",
+			"call_id": "call_nonstream_A", "name": "first_tool", "arguments": `{"step":1}`,
+		},
+		map[string]any{
+			"id": "rs_nonstream_B", "type": "reasoning", "status": "completed",
+			"summary":           []any{map[string]any{"type": "summary_text", "text": "reasoning B"}},
+			"encrypted_content": "enc_nonstream_B",
+		},
+		map[string]any{
+			"id": "ctc_nonstream_B", "type": "custom_tool_call", "status": "completed",
+			"call_id": "call_nonstream_B", "name": "apply_patch", "input": "*** Begin Patch",
+		},
+	}
+	finalOutput := []any{
+		map[string]any{
+			"id": "rs_nonstream_C", "type": "reasoning", "status": "completed",
+			"summary": []any{}, "encrypted_content": "enc_nonstream_C",
+		},
+		map[string]any{
+			"id": "msg_nonstream_final", "type": "message", "status": "completed", "role": "assistant",
+			"content": []any{map[string]any{
+				"type": "output_text", "text": "all tools completed", "annotations": []any{},
+			}},
+		},
+	}
+
+	responseBody := func(responseID string, output []any) []byte {
+		body, err := json.Marshal(map[string]any{
+			"id": responseID, "object": "response", "created_at": 1700000000,
+			"model": "gpt-5.6-sol", "status": "completed", "output": output,
+			"usage": map[string]any{"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+		})
+		require.NoError(t, err)
+		return body
+	}
+
+	var upstreamRequests []map[string]any
+	executor := &mockExecutor{doFunc: func(_ context.Context, request *httpclient.Request) (*httpclient.Response, error) {
+		var payload map[string]any
+		require.NoError(t, json.Unmarshal(request.Body, &payload))
+		upstreamRequests = append(upstreamRequests, payload)
+
+		body := responseBody("resp_nonstream_first", firstOutput)
+		if len(upstreamRequests) == 2 {
+			body = responseBody("resp_nonstream_final", finalOutput)
+		}
+		return &httpclient.Response{
+			StatusCode: http.StatusOK,
+			Headers:    http.Header{"Content-Type": []string{"application/json"}},
+			Body:       body,
+		}, nil
+	}}
+	inbound := responsestransformer.NewInboundTransformer()
+	outbound, err := responsestransformer.NewOutboundTransformer("https://api.openai.com", "test-api-key")
+	require.NoError(t, err)
+	pipe := pipeline.NewFactory(executor).Pipeline(inbound, outbound)
+
+	runTurn := func(input []any) map[string]any {
+		body, marshalErr := json.Marshal(map[string]any{
+			"model": "gpt-5.6-sol", "stream": false, "store": false, "input": input,
+		})
+		require.NoError(t, marshalErr)
+		result, processErr := pipe.Process(t.Context(), &httpclient.Request{
+			Method: http.MethodPost, URL: "/v1/responses", ContentType: "application/json",
+			Headers: http.Header{"Content-Type": []string{"application/json"}}, Body: body,
+		})
+		require.NoError(t, processErr)
+		require.False(t, result.Stream)
+		require.NotNil(t, result.Response)
+
+		var response map[string]any
+		require.NoError(t, json.Unmarshal(result.Response.Body, &response))
+		return response
+	}
+
+	turn1 := runTurn([]any{map[string]any{
+		"type": "message", "role": "user", "content": "run both tools",
+	}})
+	require.Equal(t, firstOutput, turn1["output"])
+
+	nextInput := append([]any{}, turn1["output"].([]any)...)
+	nextInput = append(nextInput,
+		map[string]any{"type": "function_call_output", "call_id": "call_nonstream_A", "output": "first done"},
+		map[string]any{"type": "custom_tool_call_output", "call_id": "call_nonstream_B", "output": "second done"},
+	)
+	turn2 := runTurn(nextInput)
+	require.Equal(t, finalOutput, turn2["output"])
+	require.Len(t, upstreamRequests, 2)
+
+	replayed, ok := upstreamRequests[1]["input"].([]any)
+	require.True(t, ok)
+	require.Len(t, replayed, 6)
+	for i, expected := range []struct {
+		typeName string
+		id       string
+		callID   string
+	}{
+		{typeName: "reasoning", id: "rs_nonstream_A"},
+		{typeName: "function_call", id: "fc_nonstream_A", callID: "call_nonstream_A"},
+		{typeName: "reasoning", id: "rs_nonstream_B"},
+		{typeName: "custom_tool_call", id: "ctc_nonstream_B", callID: "call_nonstream_B"},
+	} {
+		item, itemOK := replayed[i].(map[string]any)
+		require.True(t, itemOK)
+		require.Equal(t, expected.typeName, item["type"])
+		require.Equal(t, expected.id, item["id"])
+		if expected.callID != "" {
+			require.Equal(t, expected.callID, item["call_id"])
+		}
+	}
+	require.Equal(t, "enc_nonstream_A", replayed[0].(map[string]any)["encrypted_content"])
+	require.Equal(t, "enc_nonstream_B", replayed[2].(map[string]any)["encrypted_content"])
+}

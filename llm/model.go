@@ -649,6 +649,11 @@ type Response struct {
 	// Model is the model used to generate the response.
 	Model string `json:"model"`
 
+	// ProviderExtensions stores provider/API-format private response data needed
+	// for lossless same-protocol transformation. It is never serialized through
+	// the common response model.
+	ProviderExtensions *ProviderExtensions `json:"-"`
+
 	// The unique ID of the previous response for multi-turn Responses API responses.
 	PreviousResponseID *string `json:"previous_response_id,omitempty"`
 

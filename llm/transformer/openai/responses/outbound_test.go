@@ -408,7 +408,7 @@ func TestOutboundTransformer_TransformRequest_DoesNotReplayRawToolWhenToolsChang
 	require.Equal(t, "different_tool", tool["name"])
 }
 
-func TestProviderExtensions_NotSerializedWithLLMRequest(t *testing.T) {
+func TestProviderExtensions_NotSerializedWithCommonLLMModels(t *testing.T) {
 	req := &llm.Request{
 		Model: "gpt-4o",
 		Messages: []llm.Message{{
@@ -432,6 +432,21 @@ func TestProviderExtensions_NotSerializedWithLLMRequest(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(data), "raw prompt")
 	require.NotContains(t, string(data), "raw choice")
+	require.NotContains(t, string(data), "provider_extensions")
+
+	resp := &llm.Response{
+		ID: "resp_private_extensions",
+		ProviderExtensions: &llm.ProviderExtensions{
+			OpenAIResponses: &llm.OpenAIResponsesProviderExtensions{
+				Response: &llm.OpenAIResponsesResponseExtensions{
+					RawOutputItems: []json.RawMessage{json.RawMessage(`{"id":"rs_private","encrypted_content":"private reasoning"}`)},
+				},
+			},
+		},
+	}
+	data, err = json.Marshal(resp)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), "private reasoning")
 	require.NotContains(t, string(data), "provider_extensions")
 }
 

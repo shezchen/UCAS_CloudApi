@@ -448,6 +448,60 @@ func getResponsesToolCallItemID(toolCall llm.ToolCall) string {
 	return itemID
 }
 
+func preserveResponsesOutputItems(response *llm.Response, output []Item) error {
+	if response == nil {
+		return nil
+	}
+	reasoningItems := 0
+	for i := range output {
+		if output[i].Type == "reasoning" {
+			reasoningItems++
+		}
+	}
+	// The unified message shape already preserves one reasoning item alongside
+	// tools and text. Keep the private ordered sidecar only for the otherwise
+	// unrepresentable multi-reasoning case, avoiding changes to ordinary
+	// Responses-to-Chat normalization.
+	if reasoningItems < 2 {
+		return nil
+	}
+
+	rawItems := make([]json.RawMessage, len(output))
+	for i := range output {
+		raw, err := json.Marshal(output[i])
+		if err != nil {
+			return fmt.Errorf("marshal Responses output item %d: %w", i, err)
+		}
+		rawItems[i] = raw
+	}
+
+	response.ProviderExtensions = &llm.ProviderExtensions{
+		OpenAIResponses: &llm.OpenAIResponsesProviderExtensions{
+			Response: &llm.OpenAIResponsesResponseExtensions{RawOutputItems: rawItems},
+		},
+	}
+
+	return nil
+}
+
+func getPreservedResponsesOutputItems(response *llm.Response) ([]Item, bool) {
+	if response == nil || response.ProviderExtensions == nil ||
+		response.ProviderExtensions.OpenAIResponses == nil ||
+		response.ProviderExtensions.OpenAIResponses.Response == nil {
+		return nil, false
+	}
+
+	rawItems := response.ProviderExtensions.OpenAIResponses.Response.RawOutputItems
+	items := make([]Item, len(rawItems))
+	for i := range rawItems {
+		if err := json.Unmarshal(rawItems[i], &items[i]); err != nil {
+			return nil, false
+		}
+	}
+
+	return items, true
+}
+
 type WebSearchSource struct {
 	Type  string `json:"type,omitempty"`
 	URL   string `json:"url,omitempty"`

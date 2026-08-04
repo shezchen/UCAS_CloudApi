@@ -472,6 +472,8 @@ func responsesItemIDPrefix(itemType string) (string, bool) {
 		return "ctc_", true
 	case "message":
 		return "msg_", true
+	case "agent_message":
+		return "amsg_", true
 	default:
 		return "", false
 	}

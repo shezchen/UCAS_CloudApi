@@ -1402,12 +1402,14 @@ func TestNormalizeResponsesRequestItemIDsIsScopedByProtocol(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			request := &httpclient.Request{
 				APIFormat: string(tt.apiFormat),
-				Body:      []byte(`{"input":[{"type":"reasoning","id":"item_legacy","encrypted_content":"opaque"}]}`),
+				Body:      []byte(`{"input":[{"type":"reasoning","id":"item_legacy","encrypted_content":"opaque"},{"type":"agent_message","id":"msg_amsg_legacy","content":[]}]}`),
 			}
 			processed, err := normalizeResponsesRequestItemIDs().OnOutboundRawRequest(t.Context(), request)
 			require.NoError(t, err)
 			require.Equal(t, tt.shouldRemoveID, !gjson.GetBytes(processed.Body, "input.0.id").Exists())
+			require.Equal(t, tt.shouldRemoveID, !gjson.GetBytes(processed.Body, "input.1.id").Exists())
 			require.Equal(t, "opaque", gjson.GetBytes(processed.Body, "input.0.encrypted_content").String())
+			require.True(t, gjson.GetBytes(processed.Body, "input.1.content").IsArray())
 		})
 	}
 }

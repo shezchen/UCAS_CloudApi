@@ -245,8 +245,8 @@ func (s *responsesInboundStream) Next() bool {
 
 		// Handle reasoning content (thinking) delta
 		if choice.Delta != nil && choice.Delta.ReasoningContent != nil && *choice.Delta.ReasoningContent != "" {
-			sourceID := ""
-			if item, ok := getResponsesReasoningItemMetadata(chunk.TransformerMetadata); ok {
+			sourceID := validResponsesItemIDOrEmpty("reasoning", choice.Delta.ID)
+			if item, ok := getResponsesReasoningItemMetadata(chunk.TransformerMetadata); ok && item.ID != "" {
 				sourceID = item.ID
 			}
 			if err := s.handleReasoningContent(choice.Delta.ReasoningContent, sourceID); err != nil {
@@ -432,7 +432,8 @@ func getResponsesReasoningItemMetadata(metadata map[string]any) (responsesReason
 	}
 
 	if item, ok := raw.(responsesReasoningItemMetadata); ok {
-		return item, item.ID != ""
+		item.ID = validResponsesItemIDOrEmpty("reasoning", item.ID)
+		return item, true
 	}
 
 	data, err := json.Marshal(raw)
@@ -445,7 +446,8 @@ func getResponsesReasoningItemMetadata(metadata map[string]any) (responsesReason
 		return responsesReasoningItemMetadata{}, false
 	}
 
-	return item, item.ID != ""
+	item.ID = validResponsesItemIDOrEmpty("reasoning", item.ID)
+	return item, true
 }
 
 func (s *responsesInboundStream) handleReasoningContent(content *string, sourceID string) error {
@@ -488,8 +490,9 @@ func (s *responsesInboundStream) handleReasoningContent(content *string, sourceI
 }
 
 func (s *responsesInboundStream) handleReasoningSignature(delta *llm.Message, metadata map[string]any) error {
-	sourceID := delta.ID
-	if item, ok := getResponsesReasoningItemMetadata(metadata); ok {
+	sourceID := validResponsesItemIDOrEmpty("reasoning", delta.ID)
+	item, hasMetadata := getResponsesReasoningItemMetadata(metadata)
+	if hasMetadata && item.ID != "" {
 		sourceID = item.ID
 	}
 
@@ -499,7 +502,7 @@ func (s *responsesInboundStream) handleReasoningSignature(delta *llm.Message, me
 
 	s.accumulatedReasoningSignature.WriteString(*delta.ReasoningSignature)
 
-	if item, ok := getResponsesReasoningItemMetadata(metadata); ok && item.Done {
+	if hasMetadata && item.Done {
 		return s.closeReasoningItem()
 	}
 
@@ -514,6 +517,8 @@ func (s *responsesInboundStream) handleReasoningSignature(delta *llm.Message, me
 }
 
 func (s *responsesInboundStream) ensureReasoningItemStarted(sourceID string) error {
+	sourceID = validResponsesItemIDOrEmpty("reasoning", sourceID)
+
 	// Start reasoning output item if not started.
 	if s.hasReasoningItemStarted {
 		if sourceID == "" || s.currentReasoningSourceID == "" || s.currentReasoningSourceID == sourceID {

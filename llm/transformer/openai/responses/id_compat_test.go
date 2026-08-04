@@ -28,9 +28,11 @@ func TestValidResponsesItemIDOrEmpty_IsTypeAware(t *testing.T) {
 		{name: "function keeps fc namespace", itemType: "function_call", id: "fc_provider_1", expected: "fc_provider_1"},
 		{name: "custom keeps ctc namespace", itemType: "custom_tool_call", id: "ctc_provider_1", expected: "ctc_provider_1"},
 		{name: "message keeps msg namespace", itemType: "message", id: " msg_provider_1 ", expected: "msg_provider_1"},
+		{name: "agent message keeps amsg namespace", itemType: "agent_message", id: "amsg_provider_1", expected: "amsg_provider_1"},
 		{name: "legacy reasoning id is omitted", itemType: "reasoning", id: "item_legacy", expected: ""},
 		{name: "function cannot use reasoning namespace", itemType: "function_call", id: "rs_wrong_type", expected: ""},
 		{name: "custom cannot use function namespace", itemType: "custom_tool_call", id: "fc_wrong_type", expected: ""},
+		{name: "agent message cannot use message namespace", itemType: "agent_message", id: "msg_amsg_wrong_type", expected: ""},
 		{name: "empty suffix is omitted", itemType: "message", id: "msg_", expected: ""},
 		{name: "unknown item type is not guessed", itemType: "future_item", id: "future_1", expected: ""},
 	}
@@ -87,6 +89,15 @@ func TestNormalizeRequestInputItemIDs_LeavesNonArrayInputUnchanged(t *testing.T)
 	normalized, err := NormalizeRequestInputItemIDs(body)
 	require.NoError(t, err)
 	require.Equal(t, body, normalized)
+}
+
+func TestNormalizeRequestInputItemIDs_UsesAgentMessageNamespace(t *testing.T) {
+	body := []byte(`{"input":[{"type":"agent_message","id":"amsg_native","content":[]},{"type":"agent_message","id":"msg_amsg_legacy","content":[]}]}`)
+
+	normalized, err := NormalizeRequestInputItemIDs(body)
+	require.NoError(t, err)
+	require.Equal(t, "amsg_native", gjson.GetBytes(normalized, "input.0.id").String())
+	require.False(t, gjson.GetBytes(normalized, "input.1.id").Exists())
 }
 
 func TestResponsesLegacyItemIDsAreOmittedOnUpstreamReplay(t *testing.T) {

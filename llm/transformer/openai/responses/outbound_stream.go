@@ -245,8 +245,9 @@ func (s *responsesOutboundStream) transformStreamChunk(event *httpclient.StreamE
 			// Initialize tool call tracking
 			toolCallIdx := len(s.state.toolCalls)
 			s.state.toolCalls[item.CallID] = &llm.ToolCall{
-				ID:   item.CallID,
-				Type: "function",
+				ID:                  item.CallID,
+				Type:                "function",
+				TransformerMetadata: responsesToolCallItemMetadata(item.ID),
 				Function: llm.FunctionCall{
 					Name:      item.Name,
 					Namespace: item.Namespace,
@@ -263,9 +264,10 @@ func (s *responsesOutboundStream) transformStreamChunk(event *httpclient.StreamE
 					Delta: &llm.Message{
 						ToolCalls: []llm.ToolCall{
 							{
-								ID:    item.CallID,
-								Type:  "function",
-								Index: toolCallIdx,
+								ID:                  item.CallID,
+								Type:                "function",
+								Index:               toolCallIdx,
+								TransformerMetadata: responsesToolCallItemMetadata(item.ID),
 								Function: llm.FunctionCall{
 									Name:      item.Name,
 									Namespace: item.Namespace,
@@ -280,8 +282,9 @@ func (s *responsesOutboundStream) transformStreamChunk(event *httpclient.StreamE
 			// Custom tool call - initialize tracking, input will be streamed via delta events
 			toolCallIdx := len(s.state.toolCalls)
 			s.state.toolCalls[item.CallID] = &llm.ToolCall{
-				ID:   item.CallID,
-				Type: llm.ToolTypeResponsesCustomTool,
+				ID:                  item.CallID,
+				Type:                llm.ToolTypeResponsesCustomTool,
+				TransformerMetadata: responsesToolCallItemMetadata(item.ID),
 				ResponseCustomToolCall: &llm.ResponseCustomToolCall{
 					CallID: item.CallID,
 					Name:   item.Name,
@@ -297,9 +300,10 @@ func (s *responsesOutboundStream) transformStreamChunk(event *httpclient.StreamE
 					Delta: &llm.Message{
 						ToolCalls: []llm.ToolCall{
 							{
-								ID:    item.CallID,
-								Type:  llm.ToolTypeResponsesCustomTool,
-								Index: toolCallIdx,
+								ID:                  item.CallID,
+								Type:                llm.ToolTypeResponsesCustomTool,
+								Index:               toolCallIdx,
+								TransformerMetadata: responsesToolCallItemMetadata(item.ID),
 								ResponseCustomToolCall: &llm.ResponseCustomToolCall{
 									CallID: item.CallID,
 									Name:   item.Name,
@@ -437,6 +441,13 @@ func (s *responsesOutboundStream) transformStreamChunk(event *httpclient.StreamE
 	case StreamEventTypeReasoningSummaryTextDelta:
 		// Reasoning content delta
 		s.state.reasoningContent.WriteString(streamEvent.Delta)
+		if streamEvent.ItemID != nil && *streamEvent.ItemID != "" {
+			resp.TransformerMetadata = map[string]any{
+				responsesReasoningItemTransformerMetadataKey: map[string]any{
+					"id": *streamEvent.ItemID,
+				},
+			}
+		}
 
 		resp.Choices = []llm.Choice{
 			{

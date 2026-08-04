@@ -408,6 +408,13 @@ func convertReasoningWithFollowing(items []Item, startIdx int) (*llm.Message, in
 		Role:               "assistant",
 		ReasoningSignature: reasoningItem.EncryptedContent,
 	}
+	if reasoningItem.ID != "" {
+		msg.TransformerMetadata = map[string]any{
+			responsesReasoningItemTransformerMetadataKey: map[string]any{
+				"id": reasoningItem.ID,
+			},
+		}
+	}
 
 	// Extract reasoning content
 	var reasoningText strings.Builder
@@ -430,8 +437,9 @@ func convertReasoningWithFollowing(items []Item, startIdx int) (*llm.Message, in
 		case "function_call":
 			// Merge function_call into the same assistant message
 			msg.ToolCalls = append(msg.ToolCalls, llm.ToolCall{
-				ID:   nextItem.CallID,
-				Type: "function",
+				ID:                  nextItem.CallID,
+				Type:                "function",
+				TransformerMetadata: responsesToolCallItemMetadata(nextItem.ID),
 				Function: llm.FunctionCall{
 					Name:      nextItem.Name,
 					Namespace: nextItem.Namespace,
@@ -448,8 +456,9 @@ func convertReasoningWithFollowing(items []Item, startIdx int) (*llm.Message, in
 			}
 
 			msg.ToolCalls = append(msg.ToolCalls, llm.ToolCall{
-				ID:   nextItem.CallID,
-				Type: llm.ToolTypeResponsesCustomTool,
+				ID:                  nextItem.CallID,
+				Type:                llm.ToolTypeResponsesCustomTool,
+				TransformerMetadata: responsesToolCallItemMetadata(nextItem.ID),
 				ResponseCustomToolCall: &llm.ResponseCustomToolCall{
 					CallID: nextItem.CallID,
 					Name:   nextItem.Name,
@@ -538,8 +547,9 @@ func convertItemToMessage(item *Item) (*llm.Message, error) {
 			Role: "assistant",
 			ToolCalls: []llm.ToolCall{
 				{
-					ID:   item.CallID,
-					Type: "function",
+					ID:                  item.CallID,
+					Type:                "function",
+					TransformerMetadata: responsesToolCallItemMetadata(item.ID),
 					Function: llm.FunctionCall{
 						Name:      item.Name,
 						Namespace: item.Namespace,
@@ -560,8 +570,9 @@ func convertItemToMessage(item *Item) (*llm.Message, error) {
 			Role: "assistant",
 			ToolCalls: []llm.ToolCall{
 				{
-					ID:   item.CallID,
-					Type: llm.ToolTypeResponsesCustomTool,
+					ID:                  item.CallID,
+					Type:                llm.ToolTypeResponsesCustomTool,
+					TransformerMetadata: responsesToolCallItemMetadata(item.ID),
 					ResponseCustomToolCall: &llm.ResponseCustomToolCall{
 						CallID: item.CallID,
 						Name:   item.Name,
@@ -925,6 +936,10 @@ func convertToResponsesAPIResponse(chatResp *llm.Response) *Response {
 
 	// Convert usage
 	resp.Usage = ConvertLLMUsageToResponsesUsage(chatResp.Usage)
+	if preservedOutput, ok := getPreservedResponsesOutputItems(chatResp); ok {
+		resp.Output = preservedOutput
+		return resp
+	}
 
 	// Convert choices to output items
 	for _, choice := range chatResp.Choices {
@@ -942,16 +957,25 @@ func convertToResponsesAPIResponse(chatResp *llm.Response) *Response {
 		messageItemID := normalizeMessageItemID(message.ID)
 
 		// Handle reasoning content
-		if reasoningItem, ok := buildReasoningItem(*message); ok {
+		if reasoningItem, ok := buildReasoningItem(*message, chatResp.TransformerMetadata); ok {
 			resp.Output = append(resp.Output, reasoningItem)
 		}
 
 		// Handle tool calls (function calls and custom tool calls)
 		if len(message.ToolCalls) > 0 {
 			for _, toolCall := range message.ToolCalls {
+				itemID := getResponsesToolCallItemID(toolCall)
+				if itemID == "" {
+					if toolCall.ResponseCustomToolCall != nil {
+						itemID = generateCustomToolCallItemID()
+					} else {
+						itemID = generateFunctionCallItemID()
+					}
+				}
+
 				if toolCall.ResponseCustomToolCall != nil {
 					resp.Output = append(resp.Output, Item{
-						ID:     toolCall.ID,
+						ID:     itemID,
 						Type:   "custom_tool_call",
 						CallID: toolCall.ResponseCustomToolCall.CallID,
 						Name:   toolCall.ResponseCustomToolCall.Name,
@@ -960,7 +984,7 @@ func convertToResponsesAPIResponse(chatResp *llm.Response) *Response {
 					})
 				} else {
 					resp.Output = append(resp.Output, Item{
-						ID:        toolCall.ID,
+						ID:        itemID,
 						Type:      "function_call",
 						CallID:    toolCall.ID,
 						Name:      toolCall.Function.Name,
@@ -1079,6 +1103,18 @@ func generateItemID() string {
 	return fmt.Sprintf("item_%s", lo.RandomString(16, lo.AlphanumericCharset))
 }
 
+func generateFunctionCallItemID() string {
+	return fmt.Sprintf("fc_%s", lo.RandomString(16, lo.AlphanumericCharset))
+}
+
+func generateCustomToolCallItemID() string {
+	return fmt.Sprintf("ctc_%s", lo.RandomString(16, lo.AlphanumericCharset))
+}
+
+func generateReasoningItemID() string {
+	return fmt.Sprintf("rs_%s", lo.RandomString(16, lo.AlphanumericCharset))
+}
+
 // generateMessageID creates an identifier that remains valid when a Responses
 // client sends a returned assistant message back as a later input item. OpenAI
 // validates message item identifiers by their msg_ prefix.
@@ -1108,11 +1144,17 @@ func normalizeMessageItemID(id string) string {
 
 // buildReasoningItem creates a reasoning Item from a message's reasoning content and signature.
 // Returns the item and true if the message has reasoning data, otherwise returns zero value and false.
-func buildReasoningItem(msg llm.Message) (Item, bool) {
+func buildReasoningItem(msg llm.Message, transformerMetadata map[string]any) (Item, bool) {
 	hasContent := msg.ReasoningContent != nil && *msg.ReasoningContent != ""
 	hasSignature := msg.ReasoningSignature != nil && *msg.ReasoningSignature != ""
+	itemID := ""
+	if metadata, ok := getResponsesReasoningItemMetadata(msg.TransformerMetadata); ok {
+		itemID = metadata.ID
+	} else if metadata, ok := getResponsesReasoningItemMetadata(transformerMetadata); ok {
+		itemID = metadata.ID
+	}
 
-	if !hasContent && !hasSignature {
+	if !hasContent && !hasSignature && itemID == "" {
 		return Item{}, false
 	}
 
@@ -1124,8 +1166,12 @@ func buildReasoningItem(msg llm.Message) (Item, bool) {
 		})
 	}
 
+	if itemID == "" {
+		itemID = generateReasoningItemID()
+	}
+
 	return Item{
-		ID:               generateItemID(),
+		ID:               itemID,
 		Type:             "reasoning",
 		Status:           lo.ToPtr("completed"),
 		Summary:          summary,

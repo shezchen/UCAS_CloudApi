@@ -3,6 +3,7 @@ package responses
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/samber/lo"
@@ -74,7 +75,8 @@ func TestResponsesRequestRoundTrip_InterleavedMessagesKeepTheirOwnProviderIDs(t 
 		"msg_user_second",
 		"msg_provider_third",
 	}, messageIDs)
-	require.Len(t, reasoningIDs, 3)
+	require.Equal(t, []string{"rs_first", "rs_second", "rs_third"}, reasoningIDs,
+		"reasoning item identity must survive replay with following assistant messages")
 }
 
 func TestResponsesGeneratedMessageIDs_ConsecutiveMessagesAfterReasoningRemainSeparateOnReplay(t *testing.T) {
@@ -227,4 +229,210 @@ func TestResponsesStreamRoundTrip_InterleavedReasoningTextAndRefusalDoNotCrossWi
 		require.True(t, isValidMessageItemID(item.ID), "next-turn outbound message reference is invalid: %q", item.ID)
 	}
 	require.Equal(t, doneMessageIDs, nextTurnMessageIDs)
+}
+
+func TestResponsesStreamRoundTrip_PreservesReasoningIDWhenSummaryPrecedesEncryptedContent(t *testing.T) {
+	outbound, err := NewOutboundTransformer("https://api.openai.com", "test-api-key")
+	require.NoError(t, err)
+
+	const reasoningID = "rs_provider_summary_first"
+	providerEvents := []*httpclient.StreamEvent{
+		{Type: "response.created", Data: []byte(`{"type":"response.created","response":{"id":"resp_reasoning_summary_first","object":"response","created_at":1700000000,"model":"gpt-5.6-sol","status":"in_progress","output":[]}}`)},
+		{Type: "response.output_item.added", Data: []byte(`{"type":"response.output_item.added","output_index":0,"item":{"id":"rs_provider_summary_first","type":"reasoning","status":"in_progress","summary":[]}}`)},
+		{Type: "response.reasoning_summary_part.added", Data: []byte(`{"type":"response.reasoning_summary_part.added","item_id":"rs_provider_summary_first","output_index":0,"summary_index":0,"part":{"type":"summary_text","text":""}}`)},
+		{Type: "response.reasoning_summary_text.delta", Data: []byte(`{"type":"response.reasoning_summary_text.delta","item_id":"rs_provider_summary_first","output_index":0,"summary_index":0,"delta":"I need to inspect the repository."}`)},
+		{Type: "response.reasoning_summary_text.done", Data: []byte(`{"type":"response.reasoning_summary_text.done","item_id":"rs_provider_summary_first","output_index":0,"summary_index":0,"text":"I need to inspect the repository."}`)},
+		{Type: "response.output_item.done", Data: []byte(`{"type":"response.output_item.done","output_index":0,"item":{"id":"rs_provider_summary_first","type":"reasoning","status":"completed","summary":[{"type":"summary_text","text":"I need to inspect the repository."}],"encrypted_content":"enc_reasoning_summary_first"}}`)},
+		{Type: "response.completed", Data: []byte(`{"type":"response.completed","response":{"id":"resp_reasoning_summary_first","object":"response","created_at":1700000000,"model":"gpt-5.6-sol","status":"completed","output":[],"usage":{"input_tokens":5,"output_tokens":2,"total_tokens":7}}}`)},
+	}
+
+	llmStream, err := outbound.TransformStream(t.Context(), nil, streams.SliceStream(providerEvents))
+	require.NoError(t, err)
+	llmEvents, err := streams.All(llmStream)
+	require.NoError(t, err)
+
+	var summaryDeltaSeen bool
+	for _, event := range llmEvents {
+		if event == llm.DoneResponse || len(event.Choices) == 0 || event.Choices[0].Delta == nil ||
+			event.Choices[0].Delta.ReasoningContent == nil {
+			continue
+		}
+
+		summaryDeltaSeen = true
+		metadata, ok := getResponsesReasoningItemMetadata(event.TransformerMetadata)
+		require.True(t, ok, "reasoning summary delta must carry its Responses item identity")
+		require.Equal(t, reasoningID, metadata.ID)
+		require.False(t, metadata.Done)
+	}
+	require.True(t, summaryDeltaSeen)
+
+	inbound := NewInboundTransformer()
+	replayedStream, err := inbound.TransformStream(t.Context(), streams.SliceStream(llmEvents))
+	require.NoError(t, err)
+
+	var (
+		addedID string
+		deltaID string
+		doneID  string
+	)
+	for replayedStream.Next() {
+		var event StreamEvent
+		require.NoError(t, json.Unmarshal(replayedStream.Current().Data, &event))
+
+		switch event.Type {
+		case StreamEventTypeOutputItemAdded:
+			if event.Item != nil && event.Item.Type == "reasoning" {
+				addedID = event.Item.ID
+			}
+		case StreamEventTypeReasoningSummaryTextDelta:
+			deltaID = lo.FromPtr(event.ItemID)
+		case StreamEventTypeOutputItemDone:
+			if event.Item != nil && event.Item.Type == "reasoning" {
+				doneID = event.Item.ID
+			}
+		}
+	}
+	require.NoError(t, replayedStream.Err())
+	require.Equal(t, reasoningID, addedID)
+	require.Equal(t, reasoningID, deltaID)
+	require.Equal(t, reasoningID, doneID)
+}
+
+func TestResponsesResponseRoundTrip_PreservesReasoningItemID(t *testing.T) {
+	const reasoningID = "rs_provider_non_stream"
+	metadata := map[string]any{}
+	message := convertOutputToMessage([]Item{{
+		ID:               reasoningID,
+		Type:             "reasoning",
+		Status:           lo.ToPtr("completed"),
+		Summary:          []ReasoningSummary{{Type: "summary_text", Text: "Inspect the repository."}},
+		EncryptedContent: lo.ToPtr("enc_provider_non_stream"),
+	}}, metadata)
+
+	preserved, ok := getResponsesReasoningItemMetadata(metadata)
+	require.True(t, ok, "non-streaming Responses output must retain its reasoning item identity")
+	require.Equal(t, reasoningID, preserved.ID)
+
+	response := convertToResponsesAPIResponse(&llm.Response{
+		ID:                  "resp_reasoning_non_stream",
+		Object:              "chat.completion",
+		Model:               "gpt-5.6-sol",
+		Created:             1700000000,
+		TransformerMetadata: metadata,
+		Choices: []llm.Choice{{
+			Index:        0,
+			Message:      &message,
+			FinishReason: lo.ToPtr("stop"),
+		}},
+	})
+
+	require.NotEmpty(t, response.Output)
+	require.Equal(t, "reasoning", response.Output[0].Type)
+	require.Equal(t, reasoningID, response.Output[0].ID)
+	require.NotContains(t, response.Output[0].ID, "item_")
+}
+
+func TestBuildReasoningItem_UsesReasoningNamespaceWithoutProviderIdentity(t *testing.T) {
+	item, ok := buildReasoningItem(llm.Message{
+		ReasoningContent: lo.ToPtr("Cross-protocol reasoning."),
+	}, nil)
+	require.True(t, ok)
+	require.True(t, strings.HasPrefix(item.ID, "rs_"), item.ID)
+	require.NotContains(t, item.ID, "item_")
+}
+
+func TestResponsesNonStreamRoundTrip_PreservesToolItemIDsSeparatelyFromCallIDs(t *testing.T) {
+	providerItems := []Item{
+		{
+			ID:        "fc_provider_weather",
+			Type:      "function_call",
+			CallID:    "call_provider_weather",
+			Name:      "get_weather",
+			Arguments: `{"city":"Beijing"}`,
+		},
+		{
+			ID:     "ctc_provider_patch",
+			Type:   "custom_tool_call",
+			CallID: "call_provider_patch",
+			Name:   "apply_patch",
+			Input:  lo.ToPtr("*** Begin Patch"),
+		},
+	}
+
+	message := convertOutputToMessage(providerItems, nil)
+	require.Len(t, message.ToolCalls, 2)
+	require.Equal(t, "call_provider_weather", message.ToolCalls[0].ID)
+	require.Equal(t, "fc_provider_weather", getResponsesToolCallItemID(message.ToolCalls[0]))
+	require.Equal(t, "call_provider_patch", message.ToolCalls[1].ResponseCustomToolCall.CallID)
+	require.Equal(t, "ctc_provider_patch", getResponsesToolCallItemID(message.ToolCalls[1]))
+
+	response := convertToResponsesAPIResponse(&llm.Response{
+		ID:      "resp_tool_identity",
+		Object:  "chat.completion",
+		Model:   "gpt-5.6-sol",
+		Created: 1700000000,
+		Choices: []llm.Choice{{Index: 0, Message: &message}},
+	})
+	require.Len(t, response.Output, 2)
+	require.Equal(t, "fc_provider_weather", response.Output[0].ID)
+	require.Equal(t, "call_provider_weather", response.Output[0].CallID)
+	require.Equal(t, "ctc_provider_patch", response.Output[1].ID)
+	require.Equal(t, "call_provider_patch", response.Output[1].CallID)
+
+	messages, err := convertInputToMessages(&Input{Items: providerItems})
+	require.NoError(t, err)
+	replayed := convertInputFromMessages(messages, llm.TransformOptions{ArrayInputs: lo.ToPtr(true)})
+	require.Len(t, replayed.Items, 2)
+	require.Equal(t, "fc_provider_weather", replayed.Items[0].ID)
+	require.Equal(t, "call_provider_weather", replayed.Items[0].CallID)
+	require.Equal(t, "ctc_provider_patch", replayed.Items[1].ID)
+	require.Equal(t, "call_provider_patch", replayed.Items[1].CallID)
+}
+
+func TestResponsesStreamRoundTrip_PreservesToolItemIDsSeparatelyFromCallIDs(t *testing.T) {
+	outbound, err := NewOutboundTransformer("https://api.openai.com", "test-api-key")
+	require.NoError(t, err)
+
+	providerEvents := []*httpclient.StreamEvent{
+		{Type: "response.created", Data: []byte(`{"type":"response.created","response":{"id":"resp_tool_ids","object":"response","created_at":1700000000,"model":"gpt-5.6-sol","status":"in_progress","output":[]}}`)},
+		{Type: "response.output_item.added", Data: []byte(`{"type":"response.output_item.added","output_index":0,"item":{"id":"fc_provider_weather","type":"function_call","status":"in_progress","call_id":"call_provider_weather","name":"get_weather","arguments":""}}`)},
+		{Type: "response.function_call_arguments.delta", Data: []byte(`{"type":"response.function_call_arguments.delta","item_id":"fc_provider_weather","output_index":0,"delta":"{\"city\":\"Beijing\"}"}`)},
+		{Type: "response.function_call_arguments.done", Data: []byte(`{"type":"response.function_call_arguments.done","item_id":"fc_provider_weather","output_index":0,"call_id":"call_provider_weather","name":"get_weather","arguments":"{\"city\":\"Beijing\"}"}`)},
+		{Type: "response.output_item.done", Data: []byte(`{"type":"response.output_item.done","output_index":0,"item":{"id":"fc_provider_weather","type":"function_call","status":"completed","call_id":"call_provider_weather","name":"get_weather","arguments":"{\"city\":\"Beijing\"}"}}`)},
+		{Type: "response.output_item.added", Data: []byte(`{"type":"response.output_item.added","output_index":1,"item":{"id":"ctc_provider_patch","type":"custom_tool_call","status":"in_progress","call_id":"call_provider_patch","name":"apply_patch","input":""}}`)},
+		{Type: "response.custom_tool_call_input.delta", Data: []byte(`{"type":"response.custom_tool_call_input.delta","item_id":"ctc_provider_patch","output_index":1,"delta":"*** Begin Patch"}`)},
+		{Type: "response.custom_tool_call_input.done", Data: []byte(`{"type":"response.custom_tool_call_input.done","item_id":"ctc_provider_patch","output_index":1,"call_id":"call_provider_patch","name":"apply_patch","input":"*** Begin Patch"}`)},
+		{Type: "response.output_item.done", Data: []byte(`{"type":"response.output_item.done","output_index":1,"item":{"id":"ctc_provider_patch","type":"custom_tool_call","status":"completed","call_id":"call_provider_patch","name":"apply_patch","input":"*** Begin Patch"}}`)},
+		{Type: "response.completed", Data: []byte(`{"type":"response.completed","response":{"id":"resp_tool_ids","object":"response","created_at":1700000000,"model":"gpt-5.6-sol","status":"completed","output":[],"usage":{"input_tokens":5,"output_tokens":2,"total_tokens":7}}}`)},
+	}
+
+	llmStream, err := outbound.TransformStream(t.Context(), nil, streams.SliceStream(providerEvents))
+	require.NoError(t, err)
+	llmEvents, err := streams.All(llmStream)
+	require.NoError(t, err)
+
+	inbound := NewInboundTransformer()
+	replayedStream, err := inbound.TransformStream(t.Context(), streams.SliceStream(llmEvents))
+	require.NoError(t, err)
+
+	added := make(map[string]string)
+	done := make(map[string]string)
+	for replayedStream.Next() {
+		var event StreamEvent
+		require.NoError(t, json.Unmarshal(replayedStream.Current().Data, &event))
+		if event.Item == nil {
+			continue
+		}
+
+		switch event.Type {
+		case StreamEventTypeOutputItemAdded:
+			added[event.Item.Type] = event.Item.ID + ":" + event.Item.CallID
+		case StreamEventTypeOutputItemDone:
+			done[event.Item.Type] = event.Item.ID + ":" + event.Item.CallID
+		}
+	}
+	require.NoError(t, replayedStream.Err())
+	require.Equal(t, "fc_provider_weather:call_provider_weather", added["function_call"])
+	require.Equal(t, "ctc_provider_patch:call_provider_patch", added["custom_tool_call"])
+	require.Equal(t, added, done)
 }

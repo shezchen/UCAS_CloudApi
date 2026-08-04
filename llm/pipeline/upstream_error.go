@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -47,6 +48,69 @@ func WrapUpstreamError(err error) error {
 func IsUpstreamError(err error) bool {
 	var upstreamErr *UpstreamError
 	return errors.As(err, &upstreamErr)
+}
+
+// IsDeterministicRequestError reports the narrow Responses item-identity
+// rejection that cannot be repaired by replaying the same malformed history
+// against another route. The generic invalid_request_error/invalid_value pair
+// is not sufficient evidence: providers also use it for route-dependent model,
+// tool, reasoning, and account capabilities that another channel may support.
+func IsDeterministicRequestError(err error) bool {
+	statusCode := upstreamAttemptStatusCode(err)
+	if statusCode != http.StatusBadRequest && statusCode != http.StatusUnprocessableEntity {
+		return false
+	}
+
+	errorType, errorCode := upstreamAttemptErrorIdentity(err)
+	if !strings.EqualFold(errorType, "invalid_request_error") ||
+		!strings.EqualFold(errorCode, "invalid_value") {
+		return false
+	}
+
+	return isResponsesItemIdentityRejection(upstreamAttemptEvidence(err))
+}
+
+func isResponsesItemIdentityRejection(evidence string) bool {
+	if !strings.Contains(evidence, "input[") || !strings.Contains(evidence, "].id") {
+		return false
+	}
+	if !strings.Contains(evidence, "expected an id that begins with") &&
+		!strings.Contains(evidence, "expected an id that starts with") {
+		return false
+	}
+
+	for _, prefix := range []string{"rs", "fc", "ctc", "msg"} {
+		if strings.Contains(evidence, "'"+prefix+"'") ||
+			strings.Contains(evidence, `"`+prefix+`"`) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func upstreamAttemptErrorIdentity(err error) (errorType, errorCode string) {
+	var responseErr *llm.ResponseError
+	if errors.As(err, &responseErr) {
+		return strings.TrimSpace(responseErr.Detail.Type), strings.TrimSpace(responseErr.Detail.Code)
+	}
+
+	var httpErr *httpclient.Error
+	if !errors.As(err, &httpErr) || len(httpErr.Body) == 0 {
+		return "", ""
+	}
+
+	var envelope struct {
+		Error struct {
+			Type string `json:"type"`
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(httpErr.Body, &envelope) != nil {
+		return "", ""
+	}
+
+	return strings.TrimSpace(envelope.Error.Type), strings.TrimSpace(envelope.Error.Code)
 }
 
 // UpstreamAttemptFailureCategory is a privacy-safe classification of one

@@ -25,6 +25,7 @@ func (t *InboundTransformer) TransformStream(
 		source:              stream,
 		ctx:                 ctx,
 		toolCalls:           make(map[int]*llm.ToolCall),
+		toolCallItemID:      make(map[int]string),
 		transformerMetadata: make(map[string]any),
 	}, nil
 }
@@ -71,6 +72,7 @@ type responsesInboundStream struct {
 
 	// Tool call tracking
 	toolCalls           map[int]*llm.ToolCall
+	toolCallItemID      map[int]string // Maps tool call index to its Responses fc_*/ctc_* item ID.
 	currentToolCallIdx  int
 	toolCallItemStarted map[int]bool
 	toolCallOutputIndex map[int]int // Maps tool call index to output index
@@ -243,7 +245,11 @@ func (s *responsesInboundStream) Next() bool {
 
 		// Handle reasoning content (thinking) delta
 		if choice.Delta != nil && choice.Delta.ReasoningContent != nil && *choice.Delta.ReasoningContent != "" {
-			if err := s.handleReasoningContent(choice.Delta.ReasoningContent); err != nil {
+			sourceID := ""
+			if item, ok := getResponsesReasoningItemMetadata(chunk.TransformerMetadata); ok {
+				sourceID = item.ID
+			}
+			if err := s.handleReasoningContent(choice.Delta.ReasoningContent, sourceID); err != nil {
 				s.err = err
 				return false
 			}
@@ -442,8 +448,8 @@ func getResponsesReasoningItemMetadata(metadata map[string]any) (responsesReason
 	return item, item.ID != ""
 }
 
-func (s *responsesInboundStream) handleReasoningContent(content *string) error {
-	if err := s.ensureReasoningItemStarted(""); err != nil {
+func (s *responsesInboundStream) handleReasoningContent(content *string, sourceID string) error {
+	if err := s.ensureReasoningItemStarted(sourceID); err != nil {
 		return err
 	}
 
@@ -530,7 +536,7 @@ func (s *responsesInboundStream) ensureReasoningItemStarted(sourceID string) err
 
 	s.currentItemID = sourceID
 	if s.currentItemID == "" {
-		s.currentItemID = generateItemID()
+		s.currentItemID = generateReasoningItemID()
 	}
 	item := &Item{
 		ID:      s.currentItemID,
@@ -748,6 +754,7 @@ func (s *responsesInboundStream) initToolCall(tc llm.ToolCall) error {
 		ID:                     tc.ID,
 		Type:                   tc.Type,
 		ResponseCustomToolCall: tc.ResponseCustomToolCall,
+		TransformerMetadata:    tc.TransformerMetadata,
 		Function: llm.FunctionCall{
 			Name:      tc.Function.Name,
 			Namespace: tc.Function.Namespace,
@@ -755,10 +762,15 @@ func (s *responsesInboundStream) initToolCall(tc llm.ToolCall) error {
 		},
 	}
 
-	itemID := tc.ID
+	itemID := getResponsesToolCallItemID(tc)
 	if itemID == "" {
-		itemID = generateItemID()
+		if tc.ResponseCustomToolCall != nil {
+			itemID = generateCustomToolCallItemID()
+		} else {
+			itemID = generateFunctionCallItemID()
+		}
 	}
+	s.toolCallItemID[toolCallIndex] = itemID
 
 	switch {
 	case tc.ResponseCustomToolCall != nil:
@@ -813,10 +825,7 @@ func (s *responsesInboundStream) handleFunctionCallDelta(tc llm.ToolCall) error 
 	s.toolCalls[toolCallIndex].Function.Arguments += tc.Function.Arguments
 
 	if tc.Function.Arguments != "" {
-		itemID := s.toolCalls[toolCallIndex].ID
-		if itemID == "" {
-			itemID = s.currentItemID
-		}
+		itemID := s.toolCallItemID[toolCallIndex]
 
 		err := s.enqueueEvent(&StreamEvent{
 			Type:         StreamEventTypeFunctionCallArgumentsDelta,
@@ -838,10 +847,7 @@ func (s *responsesInboundStream) handleCustomToolCallDelta(tc llm.ToolCall) erro
 	s.toolCalls[toolCallIndex].ResponseCustomToolCall.Input += tc.ResponseCustomToolCall.Input
 
 	if tc.ResponseCustomToolCall.Input != "" {
-		itemID := s.toolCalls[toolCallIndex].ID
-		if itemID == "" {
-			itemID = s.currentItemID
-		}
+		itemID := s.toolCallItemID[toolCallIndex]
 
 		err := s.enqueueEvent(&StreamEvent{
 			Type:        StreamEventTypeCustomToolCallInputDelta,
@@ -1103,10 +1109,7 @@ func (s *responsesInboundStream) closeCurrentOutputItem() error {
 			continue
 		}
 
-		itemID := tc.ID
-		if itemID == "" {
-			itemID = s.currentItemID
-		}
+		itemID := s.toolCallItemID[idx]
 
 		switch {
 		case tc.ResponseCustomToolCall != nil:

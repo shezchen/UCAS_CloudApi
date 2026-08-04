@@ -198,63 +198,48 @@ func TestExtractStatusCodeFromError(t *testing.T) {
 	}
 }
 
-func TestIsExplicitUnsupportedModelError(t *testing.T) {
+func TestIsExplicitUnsupportedModel(t *testing.T) {
 	tests := []struct {
 		name     string
-		err      error
+		status   int
+		message  string
 		expected bool
 	}{
 		{
-			name: "http body model not supported",
-			err: &httpclient.Error{
-				StatusCode: http.StatusBadRequest,
-				Body:       []byte(`The requested model is not supported.`),
-			},
+			name:     "http body model not supported",
+			status:   http.StatusBadRequest,
+			message:  "The requested model is not supported.",
 			expected: true,
 		},
 		{
-			name: "llm response error model_not_found",
-			err: &llm.ResponseError{
-				StatusCode: http.StatusNotFound,
-				Detail: llm.ErrorDetail{
-					Message: "Request rejected",
-					Code:    "model_not_found",
-				},
-			},
+			name:     "llm response error model_not_found",
+			status:   http.StatusNotFound,
+			message:  "Request rejected model_not_found",
 			expected: true,
 		},
 		{
-			name: "auth error is not unsupported model",
-			err: &httpclient.Error{
-				StatusCode: http.StatusUnauthorized,
-				Body:       []byte(`model is not supported`),
-			},
+			name:     "auth error is not unsupported model",
+			status:   http.StatusUnauthorized,
+			message:  "model is not supported",
 			expected: false,
 		},
 		{
-			name: "generic 400 is not unsupported model",
-			err: &httpclient.Error{
-				StatusCode: http.StatusBadRequest,
-				Body:       []byte(`invalid authentication token`),
-			},
+			name:     "generic 400 is not unsupported model",
+			status:   http.StatusBadRequest,
+			message:  "invalid authentication token",
 			expected: false,
 		},
 		{
-			name: "model path with generic 404 is not unsupported model",
-			err: &httpclient.Error{
-				Method:     http.MethodGet,
-				URL:        "https://provider.example/v1/models/gpt-5.6-sol",
-				StatusCode: http.StatusNotFound,
-				Status:     "404 Not Found",
-				Body:       []byte(`resource not found`),
-			},
+			name:     "model path with generic 404 is not unsupported model",
+			status:   http.StatusNotFound,
+			message:  "resource not found",
 			expected: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, isExplicitUnsupportedModelError(tt.err))
+			assert.Equal(t, tt.expected, isExplicitUnsupportedModel(tt.status, tt.message))
 		})
 	}
 }
@@ -326,136 +311,4 @@ func TestFinalizeUpstreamCandidatesExhaustedError_Single402ClarifiesQuotaScope(t
 	assert.Contains(t, responseErr.Detail.Message, "You have exceeded your monthly quota")
 	assert.NotContains(t, responseErr.Detail.Message, "sk-sensitive-token-123456")
 	assert.Contains(t, responseErr.Detail.Message, "[REDACTED]")
-}
-
-func TestIsRetryableError(t *testing.T) {
-	tests := []struct {
-		name     string
-		err      error
-		expected bool
-	}{
-		{
-			name:     "error is nil",
-			err:      nil,
-			expected: false,
-		},
-		{
-			name: "429 Too Many Requests is retryable",
-			err: &httpclient.Error{
-				StatusCode: http.StatusTooManyRequests,
-			},
-			expected: true,
-		},
-		{
-			name: "400 Bad Request is not retryable",
-			err: &httpclient.Error{
-				StatusCode: http.StatusBadRequest,
-			},
-			expected: false,
-		},
-		{
-			name: "500 Internal Server Error is retryable",
-			err: &llm.ResponseError{
-				StatusCode: http.StatusInternalServerError,
-			},
-			expected: true,
-		},
-		{
-			name:     "generic error is not retryable",
-			err:      errors.New("generic error"),
-			expected: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := isRetryableError(tt.err)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestIsRetryableErrorForChannel(t *testing.T) {
-	channel := &biz.Channel{
-		Channel: &ent.Channel{
-			Settings: &objects.ChannelSettings{
-				RetryableStatusCodes: []int{400, 403},
-				RetryableErrorPatterns: []objects.RetryableErrorPattern{
-					{Pattern: "Console API returned 403"},
-					{Pattern: `Console API returned \d+`, Regex: true},
-				},
-			},
-		},
-	}
-
-	tests := []struct {
-		name     string
-		err      error
-		channel  *biz.Channel
-		expected bool
-	}{
-		{
-			name:     "error is nil",
-			err:      nil,
-			channel:  channel,
-			expected: false,
-		},
-		{
-			name: "default retryable status remains retryable",
-			err: &httpclient.Error{
-				StatusCode: http.StatusInternalServerError,
-			},
-			channel:  nil,
-			expected: true,
-		},
-		{
-			name: "configured 400 status is retryable",
-			err: &httpclient.Error{
-				StatusCode: http.StatusBadRequest,
-			},
-			channel:  channel,
-			expected: true,
-		},
-		{
-			name: "unconfigured 401 status is not retryable",
-			err: &httpclient.Error{
-				StatusCode: http.StatusUnauthorized,
-			},
-			channel:  channel,
-			expected: false,
-		},
-		{
-			name:     "configured error text is retryable",
-			err:      errors.New("failed to stream request: error: Console API returned 403, code: upstream_error, type: upstream_error"),
-			channel:  channel,
-			expected: true,
-		},
-		{
-			name:     "configured error regex is retryable",
-			err:      errors.New("failed to stream request: error: Console API returned 502, code: upstream_error, type: upstream_error"),
-			channel:  channel,
-			expected: true,
-		},
-		{
-			name:     "status-less unmatched error is retryable once by policy",
-			err:      errors.New("failed to stream request: error: credentials rejected"),
-			channel:  channel,
-			expected: true,
-		},
-		{
-			name: "configured status is not retryable without channel settings",
-			err: &httpclient.Error{
-				StatusCode: http.StatusBadRequest,
-			},
-			channel:  &biz.Channel{Channel: &ent.Channel{}},
-			expected: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := isRetryableErrorForChannel(tt.err, tt.channel)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
 }

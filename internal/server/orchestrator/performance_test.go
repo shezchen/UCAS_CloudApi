@@ -80,6 +80,28 @@ func TestPerformanceRecording_OnInboundLlmRequest_SetsStreamFlag(t *testing.T) {
 	}
 }
 
+func TestPerformanceRecording_DeterministicResponsesItemIdentityIsHealthNeutral(t *testing.T) {
+	perf := &biz.PerformanceRecord{ChannelID: 7, StartTime: time.Now()}
+	middleware := &performanceRecording{outbound: &PersistentOutboundTransformer{
+		state: &PersistenceState{Perf: perf},
+	}}
+	err := &llm.ResponseError{
+		StatusCode: http.StatusBadRequest,
+		Detail: llm.ErrorDetail{
+			Message: "Invalid 'input[10].id': 'item_bad'. Expected an ID that begins with 'rs'.",
+			Type:    "invalid_request_error",
+			Code:    "invalid_value",
+		},
+	}
+
+	middleware.OnOutboundRawError(context.Background(), err)
+
+	require.True(t, perf.RequestCompleted)
+	require.True(t, perf.Canceled, "request-payload rejection must not count against channel health")
+	require.False(t, perf.Success)
+	require.Zero(t, perf.ResponseStatusCode)
+}
+
 // TestPerformanceRecording_OnOutboundRawRequest_PreservesStreamFlag verifies that
 // the Stream flag set in OnInboundLlmRequest is preserved when OnOutboundRawRequest
 // creates a new PerformanceRecord. This test would FAIL if the bug were reverted.

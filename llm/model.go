@@ -410,6 +410,11 @@ type Message struct {
 	// should emit them in place; others (OpenAI Chat Completions, plain text
 	// UIs) can safely drop the field.
 	InlineToolResults []InlineToolResult `json:"inline_tool_results,omitempty"`
+
+	// TransformerMetadata preserves provider-specific item identity while a
+	// provider response is represented by the unified message model. It is a
+	// transformer help field and must not contain request or response content.
+	TransformerMetadata map[string]any `json:"transformer_metadata,omitempty"`
 }
 
 // InlineToolResult represents a tool result that is emitted inline within the
@@ -643,6 +648,11 @@ type Response struct {
 
 	// Model is the model used to generate the response.
 	Model string `json:"model"`
+
+	// ProviderExtensions stores provider/API-format private response data needed
+	// for lossless same-protocol transformation. It is never serialized through
+	// the common response model.
+	ProviderExtensions *ProviderExtensions `json:"-"`
 
 	// The unique ID of the previous response for multi-turn Responses API responses.
 	PreviousResponseID *string `json:"previous_response_id,omitempty"`

@@ -322,6 +322,14 @@ func (p *pipeline) Process(ctx context.Context, request *httpclient.Request) (*R
 			return nil, lastErr
 		}
 
+		// A deterministic request-schema rejection is independent of the
+		// selected route. Replaying the same invalid payload only multiplies the
+		// same 400 response, delays the honest error, and falsely implicates every
+		// otherwise healthy channel.
+		if IsDeterministicRequestError(lastErr) {
+			break
+		}
+
 		// Determine retry strategy
 		canRetry := false
 		timeoutRetry := isResponseTimeoutError(lastErr)

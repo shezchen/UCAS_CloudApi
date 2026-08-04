@@ -524,6 +524,9 @@ func (t *OutboundTransformer) transformStandardResponse(
 	if httpResp.Request != nil && httpResp.Request.TransformerMetadata != nil {
 		llmResp.TransformerMetadata = maps.Clone(httpResp.Request.TransformerMetadata)
 	}
+	if err := preserveResponsesOutputItems(llmResp, resp.Output); err != nil {
+		return nil, err
+	}
 
 	msg := convertOutputToMessage(resp.Output, llmResp.TransformerMetadata)
 

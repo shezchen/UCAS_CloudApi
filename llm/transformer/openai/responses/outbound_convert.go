@@ -203,12 +203,21 @@ func convertAssistantMessage(msg llm.Message) []Item {
 	// Handle reasoning content first.
 	// For Requests, reasoning is represented as an `input` item with type="reasoning".
 	// The Responses API uses the `summary` field to hold the reasoning summary text.
+	reasoningItemID := ""
+	if metadata, ok := getResponsesReasoningItemMetadata(msg.TransformerMetadata); ok {
+		reasoningItemID = metadata.ID
+	}
+
 	var encryptedContent *string
-	if msg.ReasoningSignature != nil {
+	if reasoningItemID != "" {
+		// This metadata is only attached to an item decoded from Responses, so
+		// its opaque encrypted content can be replayed without provider guessing.
+		encryptedContent = msg.ReasoningSignature
+	} else if msg.ReasoningSignature != nil {
 		encryptedContent = shared.DecodeOpenAIEncryptedContent(msg.ReasoningSignature)
 	}
 
-	if encryptedContent != nil {
+	if reasoningItemID != "" || encryptedContent != nil {
 		summary := []ReasoningSummary{}
 		if msg.ReasoningContent != nil && *msg.ReasoningContent != "" {
 			summary = append(summary, ReasoningSummary{
@@ -218,6 +227,7 @@ func convertAssistantMessage(msg llm.Message) []Item {
 		}
 
 		items = append(items, Item{
+			ID:               reasoningItemID,
 			Type:             "reasoning",
 			EncryptedContent: encryptedContent,
 			Summary:          summary,
@@ -228,6 +238,7 @@ func convertAssistantMessage(msg llm.Message) []Item {
 	for _, tc := range msg.ToolCalls {
 		if tc.ResponseCustomToolCall != nil {
 			toolCallItems = append(toolCallItems, Item{
+				ID:     getResponsesToolCallItemID(tc),
 				Type:   "custom_tool_call",
 				CallID: tc.ResponseCustomToolCall.CallID,
 				Name:   tc.ResponseCustomToolCall.Name,
@@ -235,6 +246,7 @@ func convertAssistantMessage(msg llm.Message) []Item {
 			})
 		} else {
 			toolCallItems = append(toolCallItems, Item{
+				ID:        getResponsesToolCallItemID(tc),
 				Type:      "function_call",
 				CallID:    tc.ID,
 				Name:      tc.Function.Name,
@@ -621,6 +633,7 @@ func convertOutputToMessage(output []Item, transformerMetadata map[string]any) l
 		reasoningContent     strings.Builder
 		refusalContent       strings.Builder
 		reasoningSignature   *string
+		reasoningMetadata    map[string]any
 		messageID            string
 		toolCalls            []llm.ToolCall
 		annotations          []llm.Annotation
@@ -667,8 +680,9 @@ func convertOutputToMessage(output []Item, transformerMetadata map[string]any) l
 			}
 		case "function_call":
 			toolCalls = append(toolCalls, llm.ToolCall{
-				ID:   outputItem.CallID,
-				Type: "function",
+				ID:                  outputItem.CallID,
+				Type:                "function",
+				TransformerMetadata: responsesToolCallItemMetadata(outputItem.ID),
 				Function: llm.FunctionCall{
 					Name:      outputItem.Name,
 					Namespace: outputItem.Namespace,
@@ -682,8 +696,9 @@ func convertOutputToMessage(output []Item, transformerMetadata map[string]any) l
 			}
 
 			toolCalls = append(toolCalls, llm.ToolCall{
-				ID:   outputItem.CallID,
-				Type: llm.ToolTypeResponsesCustomTool,
+				ID:                  outputItem.CallID,
+				Type:                llm.ToolTypeResponsesCustomTool,
+				TransformerMetadata: responsesToolCallItemMetadata(outputItem.ID),
 				ResponseCustomToolCall: &llm.ResponseCustomToolCall{
 					CallID: outputItem.CallID,
 					Name:   outputItem.Name,
@@ -691,6 +706,20 @@ func convertOutputToMessage(output []Item, transformerMetadata map[string]any) l
 				},
 			})
 		case "reasoning":
+			if outputItem.ID != "" {
+				reasoningMetadata = map[string]any{
+					responsesReasoningItemTransformerMetadataKey: map[string]any{
+						"id":   outputItem.ID,
+						"done": true,
+					},
+				}
+			}
+			if outputItem.ID != "" && transformerMetadata != nil {
+				transformerMetadata[responsesReasoningItemTransformerMetadataKey] = map[string]any{
+					"id":   outputItem.ID,
+					"done": true,
+				}
+			}
 			for _, summary := range outputItem.Summary {
 				reasoningContent.WriteString(summary.Text)
 			}
@@ -758,10 +787,11 @@ func convertOutputToMessage(output []Item, transformerMetadata map[string]any) l
 	flushText()
 
 	msg := llm.Message{
-		ID:          messageID,
-		Role:        "assistant",
-		ToolCalls:   toolCalls,
-		Annotations: annotations,
+		ID:                  messageID,
+		Role:                "assistant",
+		ToolCalls:           toolCalls,
+		Annotations:         annotations,
+		TransformerMetadata: reasoningMetadata,
 	}
 	if refusalContent.Len() > 0 {
 		msg.Refusal = refusalContent.String()

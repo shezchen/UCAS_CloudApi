@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
+
 	"github.com/looplj/axonhub/llm"
 	"github.com/looplj/axonhub/llm/internal/pkg/xjson"
 	"github.com/looplj/axonhub/llm/transformer"
@@ -459,19 +462,25 @@ func getResponsesToolCallItemID(toolCall llm.ToolCall) string {
 // structured Responses item type. Older gateway versions emitted item_* (and
 // sometimes call_*) for several types; those IDs are opaque and must not be
 // guessed into a different namespace when replaying a request.
-func validResponsesItemIDOrEmpty(itemType, id string) string {
-	id = strings.TrimSpace(id)
-	prefix := ""
+func responsesItemIDPrefix(itemType string) (string, bool) {
 	switch itemType {
 	case "reasoning":
-		prefix = "rs_"
+		return "rs_", true
 	case "function_call":
-		prefix = "fc_"
+		return "fc_", true
 	case "custom_tool_call":
-		prefix = "ctc_"
+		return "ctc_", true
 	case "message":
-		prefix = "msg_"
+		return "msg_", true
 	default:
+		return "", false
+	}
+}
+
+func validResponsesItemIDOrEmpty(itemType, id string) string {
+	id = strings.TrimSpace(id)
+	prefix, known := responsesItemIDPrefix(itemType)
+	if !known {
 		return ""
 	}
 
@@ -480,6 +489,58 @@ func validResponsesItemIDOrEmpty(itemType, id string) string {
 	}
 
 	return id
+}
+
+// NormalizeRequestInputItemIDs removes legacy or cross-type IDs from known
+// structured Responses input items immediately before an upstream request is
+// sent. It edits only the id field: call_id, encrypted reasoning, history
+// order, and unknown future item types remain byte-for-byte untouched.
+func NormalizeRequestInputItemIDs(body []byte) ([]byte, error) {
+	input := gjson.GetBytes(body, "input")
+	if !input.IsArray() {
+		return body, nil
+	}
+
+	normalized := append([]byte(nil), body...)
+	var normalizeErr error
+
+	input.ForEach(func(index, item gjson.Result) bool {
+		if normalizeErr != nil {
+			return false
+		}
+
+		itemType := strings.ToLower(strings.TrimSpace(item.Get("type").String()))
+		if itemType == "" && item.Get("role").String() != "" {
+			itemType = "message"
+		}
+		if _, known := responsesItemIDPrefix(itemType); !known {
+			return true
+		}
+
+		itemID := item.Get("id")
+		if !itemID.Exists() {
+			return true
+		}
+
+		path := fmt.Sprintf("input.%d.id", index.Int())
+		validID := validResponsesItemIDOrEmpty(itemType, itemID.String())
+		if validID == "" {
+			normalized, normalizeErr = sjson.DeleteBytes(normalized, path)
+		} else if validID != itemID.String() {
+			normalized, normalizeErr = sjson.SetBytes(normalized, path, validID)
+		}
+		if normalizeErr != nil {
+			normalizeErr = fmt.Errorf("normalize Responses item id at %s: %w", path, normalizeErr)
+		}
+
+		return normalizeErr == nil
+	})
+
+	if normalizeErr != nil {
+		return nil, normalizeErr
+	}
+
+	return normalized, nil
 }
 
 func hasResponsesReasoningReplayMetadata(metadata map[string]any) bool {

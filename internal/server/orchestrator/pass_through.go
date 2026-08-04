@@ -7,7 +7,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 
 	"github.com/looplj/axonhub/internal/ent/channel"
@@ -17,6 +16,7 @@ import (
 	"github.com/looplj/axonhub/llm/httpclient"
 	"github.com/looplj/axonhub/llm/pipeline"
 	"github.com/looplj/axonhub/llm/streams"
+	openairesponses "github.com/looplj/axonhub/llm/transformer/openai/responses"
 )
 
 const codexResponsesLiteHeader = "X-OpenAI-Internal-Codex-Responses-Lite"
@@ -121,8 +121,6 @@ func applyPassThroughRequestBody(outbound *PersistentOutboundTransformer, system
 
 		channel := outbound.GetCurrentChannel()
 		llmReq := outbound.state.LlmRequest
-		codexResponsesLite := outbound.isCodexResponsesLiteRequest()
-
 		// Multipart bodies cannot be reused: the outbound transformer rebuilds the
 		// multipart payload with a new boundary in Content-Type, so replaying the inbound
 		// bytes would mismatch the header, and form fields cannot be patched via sjson.
@@ -150,13 +148,6 @@ func applyPassThroughRequestBody(outbound *PersistentOutboundTransformer, system
 
 			return request, nil
 		}
-		if codexResponsesLite {
-			body, err = normalizeCodexResponsesLiteMessageIDs(body)
-			if err != nil {
-				return nil, fmt.Errorf("normalize Codex Responses Lite message ids: %w", err)
-			}
-		}
-
 		request.Body = body
 		outbound.state.PassThroughApplied = true
 
@@ -192,51 +183,25 @@ func mergePassThroughRequestBody(rawBody []byte, apiFormat llm.APIFormat, model,
 	return body, nil
 }
 
-// normalizeCodexResponsesLiteMessageIDs removes invalid IDs from message input
-// items before a Lite envelope is replayed to the Codex upstream. Responses
-// accepts message IDs with the msg_ prefix; an AxonHub-generated item_ ID from
-// an older response must not be forwarded as though it were an upstream ID.
-// Other item types keep their IDs because reasoning and tool items use their own
-// provider-defined prefixes.
-func normalizeCodexResponsesLiteMessageIDs(body []byte) ([]byte, error) {
-	input := gjson.GetBytes(body, "input")
-	if !input.IsArray() {
-		return body, nil
-	}
-
-	normalized := append([]byte(nil), body...)
-	var normalizeErr error
-
-	input.ForEach(func(index, item gjson.Result) bool {
-		if normalizeErr != nil {
-			return false
+// normalizeResponsesRequestItemIDs is the single last-mile guard for both
+// transformed and raw pass-through Responses requests. Keep it after all body
+// overrides so no client or channel-specific path can bypass typed ID rules.
+func normalizeResponsesRequestItemIDs() pipeline.Middleware {
+	return pipeline.OnRawRequest("normalize-responses-request-item-ids", func(_ context.Context, request *httpclient.Request) (*httpclient.Request, error) {
+		if request == nil || (request.APIFormat != string(llm.APIFormatOpenAIResponse) &&
+			request.APIFormat != string(llm.APIFormatOpenAIResponseCompact)) {
+			return request, nil
 		}
 
-		itemType := strings.ToLower(strings.TrimSpace(item.Get("type").String()))
-		isMessage := itemType == "message" || (itemType == "" && item.Get("role").String() != "")
-		if !isMessage {
-			return true
+		body, err := openairesponses.NormalizeRequestInputItemIDs(request.Body)
+		if err != nil {
+			return nil, fmt.Errorf("normalize Responses request item ids: %w", err)
 		}
 
-		id := strings.TrimSpace(item.Get("id").String())
-		if id == "" || strings.HasPrefix(id, "msg_") {
-			return true
-		}
+		request.Body = body
 
-		path := fmt.Sprintf("input.%d.id", index.Int())
-		normalized, normalizeErr = sjson.DeleteBytes(normalized, path)
-		if normalizeErr != nil {
-			normalizeErr = fmt.Errorf("remove invalid Codex Responses message id at %s: %w", path, normalizeErr)
-		}
-
-		return normalizeErr == nil
+		return request, nil
 	})
-
-	if normalizeErr != nil {
-		return nil, normalizeErr
-	}
-
-	return normalized, nil
 }
 
 // passThroughBodySupported reports whether the raw inbound body can safely replace the

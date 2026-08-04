@@ -244,6 +244,7 @@ func (processor *ChatCompletionOrchestrator) Process(ctx context.Context, reques
 		applyUserAgentPassThrough(outbound, processor.SystemService),
 		applyOverrideRequestHeaders(outbound),
 		enforceCodexResponsesLiteInvariant(outbound),
+		normalizeResponsesRequestItemIDs(),
 
 		// Unified performance tracking middleware.
 		withPerformanceRecording(outbound),

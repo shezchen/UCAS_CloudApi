@@ -3,12 +3,14 @@ package responses
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 
 	"github.com/looplj/axonhub/llm"
 	"github.com/looplj/axonhub/llm/httpclient"
@@ -38,6 +40,53 @@ func TestValidResponsesItemIDOrEmpty_IsTypeAware(t *testing.T) {
 			require.Equal(t, tt.expected, validResponsesItemIDOrEmpty(tt.itemType, tt.id))
 		})
 	}
+}
+
+func TestNormalizeRequestInputItemIDs_MigratesKnownTypesWithoutTouchingConversationState(t *testing.T) {
+	body := []byte(`{
+		"model":"gpt-5.6-sol",
+		"previous_response_id":"resp_previous",
+		"input":[
+			{"type":"reasoning","id":"item_legacy_reasoning","encrypted_content":"opaque","summary":[{"type":"summary_text","text":"keep"}]},
+			{"type":"function_call","id":"call_wrong_namespace","call_id":"call_function","name":"shell","arguments":"{}"},
+			{"type":"custom_tool_call","id":"fc_wrong_namespace","call_id":"call_custom","name":"apply_patch","input":"patch"},
+			{"type":"message","id":"item_legacy_message","role":"assistant","content":[]},
+			{"role":"user","id":"msg_valid_implicit","content":[]},
+			{"type":"reasoning","id":" rs_valid_trimmed ","encrypted_content":"opaque-valid"},
+			{"type":"function_call","id":"fc_valid","call_id":"call_valid","name":"shell","arguments":"{}"},
+			{"type":"custom_tool_call","id":"ctc_valid","call_id":"call_valid_custom","name":"apply_patch","input":"patch"},
+			{"type":"message","id":"","role":"user","content":[]},
+			{"type":"reasoning","id":null,"summary":[]},
+			{"type":"function_call_output","id":"item_extension_owned","call_id":"call_function","output":"ok"},
+			{"type":"future_item","id":"item_future_owned","payload":{"id":"nested_untouched"}}
+		]
+	}`)
+
+	normalized, err := NormalizeRequestInputItemIDs(body)
+	require.NoError(t, err)
+
+	for _, index := range []int{0, 1, 2, 3, 8, 9} {
+		require.False(t, gjson.GetBytes(normalized, fmt.Sprintf("input.%d.id", index)).Exists(), "input[%d] id", index)
+	}
+	require.Equal(t, "msg_valid_implicit", gjson.GetBytes(normalized, "input.4.id").String())
+	require.Equal(t, "rs_valid_trimmed", gjson.GetBytes(normalized, "input.5.id").String())
+	require.Equal(t, "fc_valid", gjson.GetBytes(normalized, "input.6.id").String())
+	require.Equal(t, "ctc_valid", gjson.GetBytes(normalized, "input.7.id").String())
+	require.Equal(t, "item_extension_owned", gjson.GetBytes(normalized, "input.10.id").String())
+	require.Equal(t, "item_future_owned", gjson.GetBytes(normalized, "input.11.id").String())
+	require.Equal(t, "nested_untouched", gjson.GetBytes(normalized, "input.11.payload.id").String())
+	require.Equal(t, "call_function", gjson.GetBytes(normalized, "input.1.call_id").String())
+	require.Equal(t, "call_custom", gjson.GetBytes(normalized, "input.2.call_id").String())
+	require.Equal(t, "opaque", gjson.GetBytes(normalized, "input.0.encrypted_content").String())
+	require.Equal(t, "keep", gjson.GetBytes(normalized, "input.0.summary.0.text").String())
+	require.Equal(t, "resp_previous", gjson.GetBytes(normalized, "previous_response_id").String())
+}
+
+func TestNormalizeRequestInputItemIDs_LeavesNonArrayInputUnchanged(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.6-sol","input":"hello","client_extension":{"id":"item_client"}}`)
+	normalized, err := NormalizeRequestInputItemIDs(body)
+	require.NoError(t, err)
+	require.Equal(t, body, normalized)
 }
 
 func TestResponsesLegacyItemIDsAreOmittedOnUpstreamReplay(t *testing.T) {

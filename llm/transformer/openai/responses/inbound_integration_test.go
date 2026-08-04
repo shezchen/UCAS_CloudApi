@@ -313,12 +313,14 @@ func TestInboundTransformer_TransformResponse_WithTestData(t *testing.T) {
 				// First tool call
 				output0 := resp.Output[0]
 				require.Equal(t, "function_call", output0.Type)
-				require.Equal(t, "call_eda8722c71944fe394a8893c0de8146a", output0.ID)
+				require.Regexp(t, `^fc_[[:alnum:]]{16}$`, output0.ID)
+				require.Equal(t, "call_eda8722c71944fe394a8893c0de8146a", output0.CallID)
 
 				// Second tool call
 				output1 := resp.Output[1]
 				require.Equal(t, "function_call", output1.Type)
-				require.Equal(t, "call_bd313747960f44af8bef50dc27f0f07e", output1.ID)
+				require.Regexp(t, `^fc_[[:alnum:]]{16}$`, output1.ID)
+				require.Equal(t, "call_bd313747960f44af8bef50dc27f0f07e", output1.CallID)
 			},
 		},
 		{
@@ -340,6 +342,7 @@ func TestInboundTransformer_TransformResponse_WithTestData(t *testing.T) {
 				require.Len(t, resp.Output, 1)
 				output := resp.Output[0]
 				require.Equal(t, "custom_tool_call", output.Type)
+				require.Regexp(t, `^ctc_[[:alnum:]]{16}$`, output.ID)
 				require.Equal(t, "call_patch_002", output.CallID)
 				require.Equal(t, "apply_patch", output.Name)
 				require.NotNil(t, output.Input)

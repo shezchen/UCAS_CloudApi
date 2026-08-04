@@ -424,10 +424,28 @@ type URLCitation struct {
 
 const responsesWebSearchCallsTransformerMetadataKey = "openai_responses_web_search_calls"
 const responsesReasoningItemTransformerMetadataKey = "openai_responses_reasoning_item"
+const responsesToolCallItemIDTransformerMetadataKey = "openai_responses_tool_call_item_id"
 
 type responsesReasoningItemMetadata struct {
 	ID   string `json:"id,omitempty"`
 	Done bool   `json:"done,omitempty"`
+}
+
+func responsesToolCallItemMetadata(itemID string) map[string]any {
+	if itemID == "" {
+		return nil
+	}
+
+	return map[string]any{responsesToolCallItemIDTransformerMetadataKey: itemID}
+}
+
+func getResponsesToolCallItemID(toolCall llm.ToolCall) string {
+	if toolCall.TransformerMetadata == nil {
+		return ""
+	}
+
+	itemID, _ := toolCall.TransformerMetadata[responsesToolCallItemIDTransformerMetadataKey].(string)
+	return itemID
 }
 
 type WebSearchSource struct {

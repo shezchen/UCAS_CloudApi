@@ -410,6 +410,11 @@ type Message struct {
 	// should emit them in place; others (OpenAI Chat Completions, plain text
 	// UIs) can safely drop the field.
 	InlineToolResults []InlineToolResult `json:"inline_tool_results,omitempty"`
+
+	// TransformerMetadata preserves provider-specific item identity while a
+	// provider response is represented by the unified message model. It is a
+	// transformer help field and must not contain request or response content.
+	TransformerMetadata map[string]any `json:"transformer_metadata,omitempty"`
 }
 
 // InlineToolResult represents a tool result that is emitted inline within the

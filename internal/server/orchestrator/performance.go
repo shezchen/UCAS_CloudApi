@@ -176,6 +176,7 @@ func isNeutralAttemptError(ctx context.Context, err error) bool {
 	}
 	return errors.Is(err, context.Canceled) ||
 		errors.Is(err, errSkipCandidateByCircuitBreaker) ||
+		pipeline.IsDeterministicRequestError(err) ||
 		isChannelQueueError(err) ||
 		isLocalRPMExhaustedError(err)
 }

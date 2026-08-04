@@ -696,7 +696,13 @@ func (p *PersistentOutboundTransformer) resultRouteKey(ctx context.Context) *biz
 // OnAttemptFailure never writes route availability. It only starts the same
 // TestChannel verdict path asynchronously; the pipeline can fail over without
 // waiting for diagnostic work.
-func (p *PersistentOutboundTransformer) OnAttemptFailure(ctx context.Context, _ error) {
+func (p *PersistentOutboundTransformer) OnAttemptFailure(ctx context.Context, err error) {
+	// A schema-validating 400 describes the request bytes, not route health.
+	// Do not launch TestChannel or let the failed client payload influence the
+	// binary availability verdict.
+	if pipeline.IsDeterministicRequestError(err) {
+		return
+	}
 	p.triggerProgrammaticTest(ctx, false)
 }
 
@@ -948,22 +954,6 @@ func (p *PersistentOutboundTransformer) CanRetry(err error) bool {
 	// Same-channel status-code and error-pattern retries were a second routing
 	// policy. The unified rescue queue always tries a distinct route first and
 	// owns any configured repetition budget.
-	return false
-}
-
-func (p *PersistentOutboundTransformer) hasDifferentActualModelRemaining() bool {
-	candidate := p.state.CurrentCandidate
-	if candidate == nil || p.state.CurrentModelIndex < 0 || p.state.CurrentModelIndex >= len(candidate.Models) {
-		return false
-	}
-
-	current := candidate.Models[p.state.CurrentModelIndex].ActualModel
-	for i := p.state.CurrentModelIndex + 1; i < len(candidate.Models); i++ {
-		if candidate.Models[i].ActualModel != current {
-			return true
-		}
-	}
-
 	return false
 }
 

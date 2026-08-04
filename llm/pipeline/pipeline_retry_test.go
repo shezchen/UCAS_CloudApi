@@ -627,6 +627,121 @@ func TestPipeline_Process_SingleAttemptKeepsOriginalError(t *testing.T) {
 	require.NotErrorAs(t, err, &exhausted)
 }
 
+func TestPipeline_Process_DeterministicInvalidValueDoesNotRetryAnyRoute(t *testing.T) {
+	providerErr := &httpclient.Error{
+		StatusCode: http.StatusBadRequest,
+		Body:       []byte(`{"error":{"message":"Invalid 'input[10].id': 'item_bad'. Expected an ID that begins with 'rs'.","type":"invalid_request_error","code":"invalid_value"}}`),
+	}
+	responseErr := &llm.ResponseError{
+		StatusCode: http.StatusBadRequest,
+		Detail: llm.ErrorDetail{
+			Message: "Invalid 'input[10].id': 'item_bad'. Expected an ID that begins with 'rs'.",
+			Type:    "invalid_request_error",
+			Code:    "invalid_value",
+		},
+	}
+
+	var (
+		executionAttempts int
+		canRetryCalls     int
+		hasMoreCalls      int
+		nextChannelCalls  int
+	)
+	executor := &mockExecutor{do: func(context.Context, *httpclient.Request) (*httpclient.Response, error) {
+		executionAttempts++
+		return nil, providerErr
+	}}
+	outbound := &mockOutbound{
+		transformError: func(context.Context, *httpclient.Error) *llm.ResponseError {
+			return responseErr
+		},
+		canRetry: func(error) bool {
+			canRetryCalls++
+			return true
+		},
+		hasMoreChannels: func() bool {
+			hasMoreCalls++
+			return true
+		},
+		nextChannel: func(context.Context) error {
+			nextChannelCalls++
+			return nil
+		},
+	}
+
+	p := NewFactory(executor).Pipeline(&mockInbound{}, outbound, WithRetry(10, 3, 0))
+	result, err := p.Process(context.Background(), &httpclient.Request{})
+
+	require.Nil(t, result)
+	require.ErrorIs(t, err, responseErr)
+	require.Equal(t, 1, executionAttempts, "the same invalid request must reach only one upstream route")
+	require.Zero(t, canRetryCalls, "deterministic rejection must stop before same-channel retry")
+	require.Zero(t, hasMoreCalls, "deterministic rejection must stop before cross-channel rescue")
+	require.Zero(t, nextChannelCalls)
+
+	var exhausted *UpstreamCandidatesExhaustedError
+	require.NotErrorAs(t, err, &exhausted, "a single honest 400 must not become aggregate 503")
+}
+
+func TestIsDeterministicRequestError(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{
+			name: "wrapped Responses invalid item ID",
+			err: WrapUpstreamError(&llm.ResponseError{
+				StatusCode: http.StatusBadRequest,
+				Detail:     llm.ErrorDetail{Type: "invalid_request_error", Code: "invalid_value"},
+			}),
+			expected: true,
+		},
+		{
+			name: "raw 422 error envelope",
+			err: &httpclient.Error{
+				StatusCode: http.StatusUnprocessableEntity,
+				Body:       []byte(`{"error":{"type":"invalid_request_error","code":"invalid_value"}}`),
+			},
+			expected: true,
+		},
+		{
+			name: "model support remains route dependent",
+			err: &llm.ResponseError{
+				StatusCode: http.StatusBadRequest,
+				Detail: llm.ErrorDetail{
+					Message: "The selected model is not supported by this account",
+					Type:    "invalid_request_error",
+					Code:    "invalid_value",
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "same code with non-request error type",
+			err: &llm.ResponseError{
+				StatusCode: http.StatusBadRequest,
+				Detail:     llm.ErrorDetail{Type: "api_error", Code: "invalid_value"},
+			},
+			expected: false,
+		},
+		{
+			name: "server error is route retryable",
+			err: &llm.ResponseError{
+				StatusCode: http.StatusInternalServerError,
+				Detail:     llm.ErrorDetail{Type: "invalid_request_error", Code: "invalid_value"},
+			},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.expected, IsDeterministicRequestError(tt.err))
+		})
+	}
+}
+
 func TestClassifyUpstreamAttemptFailure_ModelNotSupportedCode(t *testing.T) {
 	err := WrapUpstreamError(&llm.ResponseError{
 		StatusCode: http.StatusUnprocessableEntity,

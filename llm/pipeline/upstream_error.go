@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -47,6 +48,55 @@ func WrapUpstreamError(err error) error {
 func IsUpstreamError(err error) bool {
 	var upstreamErr *UpstreamError
 	return errors.As(err, &upstreamErr)
+}
+
+// IsDeterministicRequestError reports an upstream rejection that is caused by
+// the request payload itself and therefore cannot be repaired by replaying the
+// same bytes against another route. Keep this deliberately narrow: model
+// support failures remain route-dependent and must still be eligible for
+// failover.
+//
+// OpenAI-compatible Responses providers use the pair
+// type=invalid_request_error, code=invalid_value for schema/identity failures
+// such as replaying an item_* ID where an rs_* reasoning ID is required.
+func IsDeterministicRequestError(err error) bool {
+	statusCode := upstreamAttemptStatusCode(err)
+	if statusCode != http.StatusBadRequest && statusCode != http.StatusUnprocessableEntity {
+		return false
+	}
+
+	evidence := upstreamAttemptEvidence(err)
+	if isUnsupportedModelAttempt(statusCode, evidence) {
+		return false
+	}
+
+	errorType, errorCode := upstreamAttemptErrorIdentity(err)
+	return strings.EqualFold(errorType, "invalid_request_error") &&
+		strings.EqualFold(errorCode, "invalid_value")
+}
+
+func upstreamAttemptErrorIdentity(err error) (errorType, errorCode string) {
+	var responseErr *llm.ResponseError
+	if errors.As(err, &responseErr) {
+		return strings.TrimSpace(responseErr.Detail.Type), strings.TrimSpace(responseErr.Detail.Code)
+	}
+
+	var httpErr *httpclient.Error
+	if !errors.As(err, &httpErr) || len(httpErr.Body) == 0 {
+		return "", ""
+	}
+
+	var envelope struct {
+		Error struct {
+			Type string `json:"type"`
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(httpErr.Body, &envelope) != nil {
+		return "", ""
+	}
+
+	return strings.TrimSpace(envelope.Error.Type), strings.TrimSpace(envelope.Error.Code)
 }
 
 // UpstreamAttemptFailureCategory is a privacy-safe classification of one

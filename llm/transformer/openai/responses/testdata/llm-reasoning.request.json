@@ -22,7 +22,10 @@
             "arguments": "{\"command\": \"git status\", \"workdir\": \"axonhub\"}"
           }
         }
-      ]
+      ],
+      "transformer_metadata": {
+        "openai_responses_reasoning_replay": true
+      }
     },
     {
       "role": "tool",

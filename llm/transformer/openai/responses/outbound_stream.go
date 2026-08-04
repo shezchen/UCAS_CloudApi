@@ -247,7 +247,7 @@ func (s *responsesOutboundStream) transformStreamChunk(event *httpclient.StreamE
 			s.state.toolCalls[item.CallID] = &llm.ToolCall{
 				ID:                  item.CallID,
 				Type:                "function",
-				TransformerMetadata: responsesToolCallItemMetadata(item.ID),
+				TransformerMetadata: responsesToolCallItemMetadataForType("function_call", item.ID),
 				Function: llm.FunctionCall{
 					Name:      item.Name,
 					Namespace: item.Namespace,
@@ -267,7 +267,7 @@ func (s *responsesOutboundStream) transformStreamChunk(event *httpclient.StreamE
 								ID:                  item.CallID,
 								Type:                "function",
 								Index:               toolCallIdx,
-								TransformerMetadata: responsesToolCallItemMetadata(item.ID),
+								TransformerMetadata: responsesToolCallItemMetadataForType("function_call", item.ID),
 								Function: llm.FunctionCall{
 									Name:      item.Name,
 									Namespace: item.Namespace,
@@ -284,7 +284,7 @@ func (s *responsesOutboundStream) transformStreamChunk(event *httpclient.StreamE
 			s.state.toolCalls[item.CallID] = &llm.ToolCall{
 				ID:                  item.CallID,
 				Type:                llm.ToolTypeResponsesCustomTool,
-				TransformerMetadata: responsesToolCallItemMetadata(item.ID),
+				TransformerMetadata: responsesToolCallItemMetadataForType("custom_tool_call", item.ID),
 				ResponseCustomToolCall: &llm.ResponseCustomToolCall{
 					CallID: item.CallID,
 					Name:   item.Name,
@@ -303,7 +303,7 @@ func (s *responsesOutboundStream) transformStreamChunk(event *httpclient.StreamE
 								ID:                  item.CallID,
 								Type:                llm.ToolTypeResponsesCustomTool,
 								Index:               toolCallIdx,
-								TransformerMetadata: responsesToolCallItemMetadata(item.ID),
+								TransformerMetadata: responsesToolCallItemMetadataForType("custom_tool_call", item.ID),
 								ResponseCustomToolCall: &llm.ResponseCustomToolCall{
 									CallID: item.CallID,
 									Name:   item.Name,

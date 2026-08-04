@@ -204,22 +204,25 @@ func convertAssistantMessage(msg llm.Message) []Item {
 	// For Requests, reasoning is represented as an `input` item with type="reasoning".
 	// The Responses API uses the `summary` field to hold the reasoning summary text.
 	reasoningItemID := ""
-	if metadata, ok := getResponsesReasoningItemMetadata(msg.TransformerMetadata); ok {
-		reasoningItemID = metadata.ID
+	reasoningMetadata, hasReasoningMetadata := getResponsesReasoningItemMetadata(msg.TransformerMetadata)
+	if hasReasoningMetadata {
+		reasoningItemID = reasoningMetadata.ID
 	}
 
 	var encryptedContent *string
-	if reasoningItemID != "" {
-		// This metadata is only attached to an item decoded from Responses, so
-		// its opaque encrypted content can be replayed without provider guessing.
+	isResponsesReplay := reasoningItemID != "" || hasResponsesReasoningReplayMetadata(msg.TransformerMetadata)
+	if isResponsesReplay {
+		// Responses encrypted_content is opaque. Its validity is independent of
+		// the item ID, so legacy IDs may be omitted without dropping the blob.
 		encryptedContent = msg.ReasoningSignature
 	} else if msg.ReasoningSignature != nil {
 		encryptedContent = shared.DecodeOpenAIEncryptedContent(msg.ReasoningSignature)
 	}
 
-	if reasoningItemID != "" || encryptedContent != nil {
+	hasReasoningSummary := msg.ReasoningContent != nil && *msg.ReasoningContent != ""
+	if reasoningItemID != "" || encryptedContent != nil || (isResponsesReplay && hasReasoningSummary) {
 		summary := []ReasoningSummary{}
-		if msg.ReasoningContent != nil && *msg.ReasoningContent != "" {
+		if hasReasoningSummary {
 			summary = append(summary, ReasoningSummary{
 				Type: "summary_text",
 				Text: *msg.ReasoningContent,
@@ -682,7 +685,7 @@ func convertOutputToMessage(output []Item, transformerMetadata map[string]any) l
 			toolCalls = append(toolCalls, llm.ToolCall{
 				ID:                  outputItem.CallID,
 				Type:                "function",
-				TransformerMetadata: responsesToolCallItemMetadata(outputItem.ID),
+				TransformerMetadata: responsesToolCallItemMetadataForType("function_call", outputItem.ID),
 				Function: llm.FunctionCall{
 					Name:      outputItem.Name,
 					Namespace: outputItem.Namespace,
@@ -698,7 +701,7 @@ func convertOutputToMessage(output []Item, transformerMetadata map[string]any) l
 			toolCalls = append(toolCalls, llm.ToolCall{
 				ID:                  outputItem.CallID,
 				Type:                llm.ToolTypeResponsesCustomTool,
-				TransformerMetadata: responsesToolCallItemMetadata(outputItem.ID),
+				TransformerMetadata: responsesToolCallItemMetadataForType("custom_tool_call", outputItem.ID),
 				ResponseCustomToolCall: &llm.ResponseCustomToolCall{
 					CallID: outputItem.CallID,
 					Name:   outputItem.Name,
@@ -706,18 +709,19 @@ func convertOutputToMessage(output []Item, transformerMetadata map[string]any) l
 				},
 			})
 		case "reasoning":
-			if outputItem.ID != "" {
+			reasoningID := validResponsesItemIDOrEmpty("reasoning", outputItem.ID)
+			if reasoningID != "" {
 				reasoningMetadata = map[string]any{
 					responsesReasoningItemTransformerMetadataKey: map[string]any{
-						"id":   outputItem.ID,
+						"id":   reasoningID,
 						"done": true,
 					},
 				}
-			}
-			if outputItem.ID != "" && transformerMetadata != nil {
-				transformerMetadata[responsesReasoningItemTransformerMetadataKey] = map[string]any{
-					"id":   outputItem.ID,
-					"done": true,
+				if transformerMetadata != nil {
+					transformerMetadata[responsesReasoningItemTransformerMetadataKey] = map[string]any{
+						"id":   reasoningID,
+						"done": true,
+					}
 				}
 			}
 			for _, summary := range outputItem.Summary {

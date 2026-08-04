@@ -408,12 +408,15 @@ func convertReasoningWithFollowing(items []Item, startIdx int) (*llm.Message, in
 		Role:               "assistant",
 		ReasoningSignature: reasoningItem.EncryptedContent,
 	}
-	if reasoningItem.ID != "" {
+	reasoningItemID := validResponsesItemIDOrEmpty("reasoning", reasoningItem.ID)
+	if reasoningItemID != "" {
 		msg.TransformerMetadata = map[string]any{
-			responsesReasoningItemTransformerMetadataKey: map[string]any{
-				"id": reasoningItem.ID,
-			},
+			responsesReasoningItemTransformerMetadataKey: map[string]any{"id": reasoningItemID},
 		}
+	} else {
+		// The item still came from a Responses request. Keep that provenance
+		// separate from its invalid/missing identity so opaque state survives.
+		msg.TransformerMetadata = map[string]any{responsesReasoningReplayTransformerMetadataKey: true}
 	}
 
 	// Extract reasoning content
@@ -439,7 +442,7 @@ func convertReasoningWithFollowing(items []Item, startIdx int) (*llm.Message, in
 			msg.ToolCalls = append(msg.ToolCalls, llm.ToolCall{
 				ID:                  nextItem.CallID,
 				Type:                "function",
-				TransformerMetadata: responsesToolCallItemMetadata(nextItem.ID),
+				TransformerMetadata: responsesToolCallItemMetadataForType("function_call", nextItem.ID),
 				Function: llm.FunctionCall{
 					Name:      nextItem.Name,
 					Namespace: nextItem.Namespace,
@@ -458,7 +461,7 @@ func convertReasoningWithFollowing(items []Item, startIdx int) (*llm.Message, in
 			msg.ToolCalls = append(msg.ToolCalls, llm.ToolCall{
 				ID:                  nextItem.CallID,
 				Type:                llm.ToolTypeResponsesCustomTool,
-				TransformerMetadata: responsesToolCallItemMetadata(nextItem.ID),
+				TransformerMetadata: responsesToolCallItemMetadataForType("custom_tool_call", nextItem.ID),
 				ResponseCustomToolCall: &llm.ResponseCustomToolCall{
 					CallID: nextItem.CallID,
 					Name:   nextItem.Name,
@@ -549,7 +552,7 @@ func convertItemToMessage(item *Item) (*llm.Message, error) {
 				{
 					ID:                  item.CallID,
 					Type:                "function",
-					TransformerMetadata: responsesToolCallItemMetadata(item.ID),
+					TransformerMetadata: responsesToolCallItemMetadataForType("function_call", item.ID),
 					Function: llm.FunctionCall{
 						Name:      item.Name,
 						Namespace: item.Namespace,
@@ -572,7 +575,7 @@ func convertItemToMessage(item *Item) (*llm.Message, error) {
 				{
 					ID:                  item.CallID,
 					Type:                llm.ToolTypeResponsesCustomTool,
-					TransformerMetadata: responsesToolCallItemMetadata(item.ID),
+					TransformerMetadata: responsesToolCallItemMetadataForType("custom_tool_call", item.ID),
 					ResponseCustomToolCall: &llm.ResponseCustomToolCall{
 						CallID: item.CallID,
 						Name:   item.Name,
@@ -1123,15 +1126,11 @@ func generateMessageID() string {
 }
 
 func isValidMessageItemID(id string) bool {
-	return strings.HasPrefix(strings.TrimSpace(id), "msg_")
+	return validResponsesItemIDOrEmpty("message", id) != ""
 }
 
 func validMessageItemIDOrEmpty(id string) string {
-	if !isValidMessageItemID(id) {
-		return ""
-	}
-
-	return strings.TrimSpace(id)
+	return validResponsesItemIDOrEmpty("message", id)
 }
 
 func normalizeMessageItemID(id string) string {
@@ -1150,8 +1149,12 @@ func buildReasoningItem(msg llm.Message, transformerMetadata map[string]any) (It
 	itemID := ""
 	if metadata, ok := getResponsesReasoningItemMetadata(msg.TransformerMetadata); ok {
 		itemID = metadata.ID
-	} else if metadata, ok := getResponsesReasoningItemMetadata(transformerMetadata); ok {
-		itemID = metadata.ID
+	}
+	if itemID == "" {
+		metadata, ok := getResponsesReasoningItemMetadata(transformerMetadata)
+		if ok {
+			itemID = metadata.ID
+		}
 	}
 
 	if !hasContent && !hasSignature && itemID == "" {

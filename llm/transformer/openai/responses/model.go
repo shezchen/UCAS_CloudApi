@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/looplj/axonhub/llm"
 	"github.com/looplj/axonhub/llm/internal/pkg/xjson"
@@ -424,6 +425,7 @@ type URLCitation struct {
 
 const responsesWebSearchCallsTransformerMetadataKey = "openai_responses_web_search_calls"
 const responsesReasoningItemTransformerMetadataKey = "openai_responses_reasoning_item"
+const responsesReasoningReplayTransformerMetadataKey = "openai_responses_reasoning_replay"
 const responsesToolCallItemIDTransformerMetadataKey = "openai_responses_tool_call_item_id"
 
 type responsesReasoningItemMetadata struct {
@@ -431,7 +433,8 @@ type responsesReasoningItemMetadata struct {
 	Done bool   `json:"done,omitempty"`
 }
 
-func responsesToolCallItemMetadata(itemID string) map[string]any {
+func responsesToolCallItemMetadataForType(itemType, itemID string) map[string]any {
+	itemID = validResponsesItemIDOrEmpty(itemType, itemID)
 	if itemID == "" {
 		return nil
 	}
@@ -445,7 +448,84 @@ func getResponsesToolCallItemID(toolCall llm.ToolCall) string {
 	}
 
 	itemID, _ := toolCall.TransformerMetadata[responsesToolCallItemIDTransformerMetadataKey].(string)
-	return itemID
+	if toolCall.ResponseCustomToolCall != nil || toolCall.Type == llm.ToolTypeResponsesCustomTool {
+		return validResponsesItemIDOrEmpty("custom_tool_call", itemID)
+	}
+
+	return validResponsesItemIDOrEmpty("function_call", itemID)
+}
+
+// validResponsesItemIDOrEmpty accepts only the namespace belonging to the
+// structured Responses item type. Older gateway versions emitted item_* (and
+// sometimes call_*) for several types; those IDs are opaque and must not be
+// guessed into a different namespace when replaying a request.
+func validResponsesItemIDOrEmpty(itemType, id string) string {
+	id = strings.TrimSpace(id)
+	prefix := ""
+	switch itemType {
+	case "reasoning":
+		prefix = "rs_"
+	case "function_call":
+		prefix = "fc_"
+	case "custom_tool_call":
+		prefix = "ctc_"
+	case "message":
+		prefix = "msg_"
+	default:
+		return ""
+	}
+
+	if !strings.HasPrefix(id, prefix) || len(id) == len(prefix) {
+		return ""
+	}
+
+	return id
+}
+
+func hasResponsesReasoningReplayMetadata(metadata map[string]any) bool {
+	if len(metadata) == 0 {
+		return false
+	}
+
+	replay, _ := metadata[responsesReasoningReplayTransformerMetadataKey].(bool)
+	return replay
+}
+
+// normalizeResponsesOutputItemIDs is the final client-facing guard for raw
+// output sidecars. Known structured item types get a valid, stable namespace;
+// unknown extension types are left untouched for forward compatibility.
+func normalizeResponsesOutputItemIDs(items []Item) []Item {
+	if len(items) == 0 {
+		return items
+	}
+
+	normalized := append([]Item(nil), items...)
+	for i := range normalized {
+		switch normalized[i].Type {
+		case "message":
+			normalized[i].ID = normalizeMessageItemID(normalized[i].ID)
+		case "reasoning":
+			if id := validResponsesItemIDOrEmpty(normalized[i].Type, normalized[i].ID); id != "" {
+				normalized[i].ID = id
+			} else {
+				normalized[i].ID = generateReasoningItemID()
+			}
+		case "function_call":
+			if id := validResponsesItemIDOrEmpty(normalized[i].Type, normalized[i].ID); id != "" {
+				normalized[i].ID = id
+			} else {
+				normalized[i].ID = generateFunctionCallItemID()
+			}
+		case "custom_tool_call":
+			if id := validResponsesItemIDOrEmpty(normalized[i].Type, normalized[i].ID); id != "" {
+				normalized[i].ID = id
+			} else {
+				normalized[i].ID = generateCustomToolCallItemID()
+			}
+		}
+	}
+
+	return normalized
 }
 
 func preserveResponsesOutputItems(response *llm.Response, output []Item) error {
@@ -466,9 +546,10 @@ func preserveResponsesOutputItems(response *llm.Response, output []Item) error {
 		return nil
 	}
 
-	rawItems := make([]json.RawMessage, len(output))
-	for i := range output {
-		raw, err := json.Marshal(output[i])
+	normalized := normalizeResponsesOutputItemIDs(output)
+	rawItems := make([]json.RawMessage, len(normalized))
+	for i := range normalized {
+		raw, err := json.Marshal(normalized[i])
 		if err != nil {
 			return fmt.Errorf("marshal Responses output item %d: %w", i, err)
 		}
@@ -499,7 +580,7 @@ func getPreservedResponsesOutputItems(response *llm.Response) ([]Item, bool) {
 		}
 	}
 
-	return items, true
+	return normalizeResponsesOutputItemIDs(items), true
 }
 
 type WebSearchSource struct {

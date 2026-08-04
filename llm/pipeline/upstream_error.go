@@ -50,29 +50,43 @@ func IsUpstreamError(err error) bool {
 	return errors.As(err, &upstreamErr)
 }
 
-// IsDeterministicRequestError reports an upstream rejection that is caused by
-// the request payload itself and therefore cannot be repaired by replaying the
-// same bytes against another route. Keep this deliberately narrow: model
-// support failures remain route-dependent and must still be eligible for
-// failover.
-//
-// OpenAI-compatible Responses providers use the pair
-// type=invalid_request_error, code=invalid_value for schema/identity failures
-// such as replaying an item_* ID where an rs_* reasoning ID is required.
+// IsDeterministicRequestError reports the narrow Responses item-identity
+// rejection that cannot be repaired by replaying the same malformed history
+// against another route. The generic invalid_request_error/invalid_value pair
+// is not sufficient evidence: providers also use it for route-dependent model,
+// tool, reasoning, and account capabilities that another channel may support.
 func IsDeterministicRequestError(err error) bool {
 	statusCode := upstreamAttemptStatusCode(err)
 	if statusCode != http.StatusBadRequest && statusCode != http.StatusUnprocessableEntity {
 		return false
 	}
 
-	evidence := upstreamAttemptEvidence(err)
-	if isUnsupportedModelAttempt(statusCode, evidence) {
+	errorType, errorCode := upstreamAttemptErrorIdentity(err)
+	if !strings.EqualFold(errorType, "invalid_request_error") ||
+		!strings.EqualFold(errorCode, "invalid_value") {
 		return false
 	}
 
-	errorType, errorCode := upstreamAttemptErrorIdentity(err)
-	return strings.EqualFold(errorType, "invalid_request_error") &&
-		strings.EqualFold(errorCode, "invalid_value")
+	return isResponsesItemIdentityRejection(upstreamAttemptEvidence(err))
+}
+
+func isResponsesItemIdentityRejection(evidence string) bool {
+	if !strings.Contains(evidence, "input[") || !strings.Contains(evidence, "].id") {
+		return false
+	}
+	if !strings.Contains(evidence, "expected an id that begins with") &&
+		!strings.Contains(evidence, "expected an id that starts with") {
+		return false
+	}
+
+	for _, prefix := range []string{"rs", "fc", "ctc", "msg"} {
+		if strings.Contains(evidence, "'"+prefix+"'") ||
+			strings.Contains(evidence, `"`+prefix+`"`) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func upstreamAttemptErrorIdentity(err error) (errorType, errorCode string) {

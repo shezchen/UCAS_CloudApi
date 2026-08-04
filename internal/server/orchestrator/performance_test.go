@@ -80,7 +80,7 @@ func TestPerformanceRecording_OnInboundLlmRequest_SetsStreamFlag(t *testing.T) {
 	}
 }
 
-func TestPerformanceRecording_DeterministicInvalidValueIsHealthNeutral(t *testing.T) {
+func TestPerformanceRecording_DeterministicResponsesItemIdentityIsHealthNeutral(t *testing.T) {
 	perf := &biz.PerformanceRecord{ChannelID: 7, StartTime: time.Now()}
 	middleware := &performanceRecording{outbound: &PersistentOutboundTransformer{
 		state: &PersistenceState{Perf: perf},
@@ -88,7 +88,7 @@ func TestPerformanceRecording_DeterministicInvalidValueIsHealthNeutral(t *testin
 	err := &llm.ResponseError{
 		StatusCode: http.StatusBadRequest,
 		Detail: llm.ErrorDetail{
-			Message: "Invalid Responses item identity",
+			Message: "Invalid 'input[10].id': 'item_bad'. Expected an ID that begins with 'rs'.",
 			Type:    "invalid_request_error",
 			Code:    "invalid_value",
 		},

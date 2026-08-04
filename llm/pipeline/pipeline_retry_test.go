@@ -627,7 +627,7 @@ func TestPipeline_Process_SingleAttemptKeepsOriginalError(t *testing.T) {
 	require.NotErrorAs(t, err, &exhausted)
 }
 
-func TestPipeline_Process_DeterministicInvalidValueDoesNotRetryAnyRoute(t *testing.T) {
+func TestPipeline_Process_DeterministicResponsesItemIdentityDoesNotRetryAnyRoute(t *testing.T) {
 	providerErr := &httpclient.Error{
 		StatusCode: http.StatusBadRequest,
 		Body:       []byte(`{"error":{"message":"Invalid 'input[10].id': 'item_bad'. Expected an ID that begins with 'rs'.","type":"invalid_request_error","code":"invalid_value"}}`),
@@ -683,6 +683,49 @@ func TestPipeline_Process_DeterministicInvalidValueDoesNotRetryAnyRoute(t *testi
 	require.NotErrorAs(t, err, &exhausted, "a single honest 400 must not become aggregate 503")
 }
 
+func TestPipeline_Process_RouteDependentInvalidValueCanFailOver(t *testing.T) {
+	providerErr := &httpclient.Error{
+		StatusCode: http.StatusBadRequest,
+		Body:       []byte(`{"error":{"message":"reasoning.context must be all_turns for this account","type":"invalid_request_error","code":"invalid_value"}}`),
+	}
+	responseErr := &llm.ResponseError{
+		StatusCode: http.StatusBadRequest,
+		Detail: llm.ErrorDetail{
+			Message: "reasoning.context must be all_turns for this account",
+			Type:    "invalid_request_error",
+			Code:    "invalid_value",
+		},
+	}
+
+	var executionAttempts, nextChannelCalls int
+	executor := &mockExecutor{do: func(context.Context, *httpclient.Request) (*httpclient.Response, error) {
+		executionAttempts++
+		if executionAttempts == 1 {
+			return nil, providerErr
+		}
+		return &httpclient.Response{}, nil
+	}}
+	outbound := &mockOutbound{
+		transformError: func(context.Context, *httpclient.Error) *llm.ResponseError {
+			return responseErr
+		},
+		canRetry:        func(error) bool { return false },
+		hasMoreChannels: func() bool { return true },
+		nextChannel: func(context.Context) error {
+			nextChannelCalls++
+			return nil
+		},
+	}
+
+	p := NewFactory(executor).Pipeline(&mockInbound{}, outbound, WithRetry(1, 0, 0))
+	result, err := p.Process(context.Background(), &httpclient.Request{})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, 2, executionAttempts, "a route-dependent invalid_value must let another channel rescue the request")
+	require.Equal(t, 1, nextChannelCalls)
+}
+
 func TestIsDeterministicRequestError(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -693,7 +736,11 @@ func TestIsDeterministicRequestError(t *testing.T) {
 			name: "wrapped Responses invalid item ID",
 			err: WrapUpstreamError(&llm.ResponseError{
 				StatusCode: http.StatusBadRequest,
-				Detail:     llm.ErrorDetail{Type: "invalid_request_error", Code: "invalid_value"},
+				Detail: llm.ErrorDetail{
+					Message: "Invalid 'input[10].id': 'item_bad'. Expected an ID that begins with 'rs'.",
+					Type:    "invalid_request_error",
+					Code:    "invalid_value",
+				},
 			}),
 			expected: true,
 		},
@@ -701,9 +748,41 @@ func TestIsDeterministicRequestError(t *testing.T) {
 			name: "raw 422 error envelope",
 			err: &httpclient.Error{
 				StatusCode: http.StatusUnprocessableEntity,
-				Body:       []byte(`{"error":{"type":"invalid_request_error","code":"invalid_value"}}`),
+				Body:       []byte(`{"error":{"message":"Invalid 'input[8].id': 'call_bad'. Expected an ID that starts with 'fc'.","type":"invalid_request_error","code":"invalid_value"}}`),
 			},
 			expected: true,
+		},
+		{
+			name: "type and code alone do not prove route independence",
+			err: &httpclient.Error{
+				StatusCode: http.StatusUnprocessableEntity,
+				Body:       []byte(`{"error":{"type":"invalid_request_error","code":"invalid_value"}}`),
+			},
+			expected: false,
+		},
+		{
+			name: "reasoning capability remains route dependent",
+			err: &llm.ResponseError{
+				StatusCode: http.StatusBadRequest,
+				Detail: llm.ErrorDetail{
+					Message: "reasoning.context must be all_turns for this account",
+					Type:    "invalid_request_error",
+					Code:    "invalid_value",
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "tool capability remains route dependent",
+			err: &llm.ResponseError{
+				StatusCode: http.StatusBadRequest,
+				Detail: llm.ErrorDetail{
+					Message: "The selected tool type is not supported by this provider",
+					Type:    "invalid_request_error",
+					Code:    "invalid_value",
+				},
+			},
+			expected: false,
 		},
 		{
 			name: "model support remains route dependent",

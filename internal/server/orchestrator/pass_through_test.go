@@ -1284,11 +1284,16 @@ func TestApplyPassThroughBodyPreservesCodexResponsesLiteEnvelope(t *testing.T) {
 					"model":"student-alias",
 					"stream":true,
 					"store":true,
-					"parallel_tool_calls":false,
-					"input":[
-						{"type":"message","id":"item_legacy","role":"assistant","content":[{"type":"output_text","text":"old"}]},
-						{"type":"message","id":"msg_valid","role":"developer","content":[{"type":"input_text","text":"base"}],"additional_tools":[{"type":"custom","name":"shell"}]}
-					],
+						"parallel_tool_calls":false,
+						"input":[
+							{"type":"message","id":"item_legacy","role":"assistant","content":[{"type":"output_text","text":"old"}]},
+							{"type":"reasoning","id":"item_BAOrUyHLO7jCHY0N","encrypted_content":"opaque","summary":[]},
+							{"type":"function_call","id":"item_legacy_function","call_id":"call_function","name":"shell","arguments":"{}"},
+							{"type":"custom_tool_call","id":"fc_wrong_custom","call_id":"call_custom","name":"apply_patch","input":"patch"},
+							{"type":"message","id":"msg_valid","role":"developer","content":[{"type":"input_text","text":"base"}],"additional_tools":[{"type":"custom","name":"shell"}]},
+							{"type":"reasoning","id":"rs_valid","encrypted_content":"opaque-valid","summary":[]},
+							{"type":"future_item","id":"item_future","payload":"keep"}
+						],
 					"client_metadata":{"session_id":"session-1"},
 					"stream_options":{"reasoning_summary_delivery":"summary_text_delta"}
 				}`),
@@ -1306,19 +1311,105 @@ func TestApplyPassThroughBodyPreservesCodexResponsesLiteEnvelope(t *testing.T) {
 	require.NoError(t, err)
 	processed, err = enforceCodexResponsesLiteInvariant(outbound).OnOutboundRawRequest(ctx, processed)
 	require.NoError(t, err)
+	processed, err = normalizeResponsesRequestItemIDs().OnOutboundRawRequest(ctx, processed)
+	require.NoError(t, err)
 
 	require.True(t, outbound.state.PassThroughApplied)
 	require.Equal(t, "gpt-5.6-sol", gjson.GetBytes(processed.Body, "model").String())
 	require.False(t, gjson.GetBytes(processed.Body, "parallel_tool_calls").Bool())
 	require.False(t, gjson.GetBytes(processed.Body, "input.0.id").Exists())
-	require.Equal(t, "msg_valid", gjson.GetBytes(processed.Body, "input.1.id").String())
-	require.Equal(t, "shell", gjson.GetBytes(processed.Body, "input.1.additional_tools.0.name").String())
+	require.False(t, gjson.GetBytes(processed.Body, "input.1.id").Exists())
+	require.False(t, gjson.GetBytes(processed.Body, "input.2.id").Exists())
+	require.False(t, gjson.GetBytes(processed.Body, "input.3.id").Exists())
+	require.Equal(t, "call_function", gjson.GetBytes(processed.Body, "input.2.call_id").String())
+	require.Equal(t, "call_custom", gjson.GetBytes(processed.Body, "input.3.call_id").String())
+	require.Equal(t, "msg_valid", gjson.GetBytes(processed.Body, "input.4.id").String())
+	require.Equal(t, "shell", gjson.GetBytes(processed.Body, "input.4.additional_tools.0.name").String())
+	require.Equal(t, "rs_valid", gjson.GetBytes(processed.Body, "input.5.id").String())
+	require.Equal(t, "item_future", gjson.GetBytes(processed.Body, "input.6.id").String())
 	require.Equal(t, "session-1", gjson.GetBytes(processed.Body, "client_metadata.session_id").String())
 	require.Equal(t, "summary_text_delta", gjson.GetBytes(processed.Body, "stream_options.reasoning_summary_delivery").String())
 	require.Equal(t, "all_turns", gjson.GetBytes(processed.Body, "reasoning.context").String())
 	require.Equal(t, "high", gjson.GetBytes(processed.Body, "reasoning.effort").String())
 	require.False(t, gjson.GetBytes(processed.Body, "store").Bool())
 	require.True(t, gjson.GetBytes(processed.Body, "stream").Bool())
+}
+
+func TestResponsesRequestItemIDCompatibilityRunsForExplicitPassThrough(t *testing.T) {
+	items := make([]map[string]any, 38)
+	for i := 0; i < 37; i++ {
+		items[i] = map[string]any{"type": "message", "role": "user", "content": []any{}}
+	}
+	items[37] = map[string]any{
+		"type":              "reasoning",
+		"id":                "item_BAOrUyHLO7jCHY0N",
+		"encrypted_content": "opaque-input-37",
+		"summary":           []any{},
+	}
+	rawBody, err := json.Marshal(map[string]any{
+		"model":                "student-alias",
+		"previous_response_id": "resp_previous",
+		"input":                items,
+	})
+	require.NoError(t, err)
+
+	outbound := &PersistentOutboundTransformer{state: &PersistenceState{
+		CurrentCandidate: &ChannelModelsCandidate{Channel: &biz.Channel{Channel: &ent.Channel{
+			ID:       1,
+			Name:     "responses-pass-through",
+			Type:     channel.TypeOpenai,
+			Settings: &objects.ChannelSettings{PassThroughBody: lo.ToPtr(true)},
+		}}},
+		LlmRequest: &llm.Request{
+			Model:     "gpt-5.6-sol",
+			APIFormat: llm.APIFormatOpenAIResponse,
+			RawRequest: &httpclient.Request{
+				APIFormat: string(llm.APIFormatOpenAIResponse),
+				Body:      rawBody,
+			},
+		},
+	}}
+	request := &httpclient.Request{
+		APIFormat: string(llm.APIFormatOpenAIResponse),
+		Body:      []byte(`{"model":"gpt-5.6-sol","input":[]}`),
+	}
+
+	processed, err := applyPassThroughRequestBody(outbound, nil).OnOutboundRawRequest(t.Context(), request)
+	require.NoError(t, err)
+	processed, err = normalizeResponsesRequestItemIDs().OnOutboundRawRequest(t.Context(), processed)
+	require.NoError(t, err)
+
+	require.True(t, outbound.state.PassThroughApplied)
+	require.False(t, gjson.GetBytes(processed.Body, "input.37.id").Exists())
+	require.Equal(t, "opaque-input-37", gjson.GetBytes(processed.Body, "input.37.encrypted_content").String())
+	require.Equal(t, "resp_previous", gjson.GetBytes(processed.Body, "previous_response_id").String())
+	require.Equal(t, "gpt-5.6-sol", gjson.GetBytes(processed.Body, "model").String())
+}
+
+func TestNormalizeResponsesRequestItemIDsIsScopedByProtocol(t *testing.T) {
+	tests := []struct {
+		name           string
+		apiFormat      llm.APIFormat
+		shouldRemoveID bool
+	}{
+		{name: "responses", apiFormat: llm.APIFormatOpenAIResponse, shouldRemoveID: true},
+		{name: "responses compact", apiFormat: llm.APIFormatOpenAIResponseCompact, shouldRemoveID: true},
+		{name: "chat completions", apiFormat: llm.APIFormatOpenAIChatCompletion, shouldRemoveID: false},
+		{name: "anthropic messages", apiFormat: llm.APIFormatAnthropicMessage, shouldRemoveID: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			request := &httpclient.Request{
+				APIFormat: string(tt.apiFormat),
+				Body:      []byte(`{"input":[{"type":"reasoning","id":"item_legacy","encrypted_content":"opaque"}]}`),
+			}
+			processed, err := normalizeResponsesRequestItemIDs().OnOutboundRawRequest(t.Context(), request)
+			require.NoError(t, err)
+			require.Equal(t, tt.shouldRemoveID, !gjson.GetBytes(processed.Body, "input.0.id").Exists())
+			require.Equal(t, "opaque", gjson.GetBytes(processed.Body, "input.0.encrypted_content").String())
+		})
+	}
 }
 
 func TestApplyPassThroughBodyPreservesMappedModelForJinaRerank(t *testing.T) {

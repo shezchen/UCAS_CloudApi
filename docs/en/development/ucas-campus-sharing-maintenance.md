@@ -2,7 +2,7 @@
 
 > This document covers the campus-sharing extensions in `shezchen/UCAS_CloudApi`. Refer to the other documentation in this repository for general upstream AxonHub behavior.
 >
-> Last audited: 2026-07-31. Branches, commits, images, and production processes can drift. Always inspect the actual Git and runtime state before maintenance.
+> Last audited: 2026-08-06. Branches, commits, images, and production processes can drift. Always inspect the actual Git and runtime state before maintenance.
 
 ## 1. Purpose and non-negotiable principles
 
@@ -28,7 +28,7 @@ UCAS email registration
   → authenticated project member
   → personal API key
   → OpenAI / Anthropic / Gemini compatible endpoint
-  → up to 4 in-flight requests per user + API-key quota + account daily/weekly quota
+  → API-key quota + account daily/weekly quota
   → model access check
   → session affinity + healthy candidates + best-effort fair rotation
   → project-owned or student-donated channel
@@ -151,13 +151,12 @@ Key implementation:
 
 ## 7. Quotas, effective tokens, and the donation wallet
 
-### 7.1 Three limits
+### 7.1 Two quota layers
 
 Calls are constrained in this order:
 
 1. API-key/profile quota, independently configured by the user.
 2. Global account daily and weekly allowances. The Owner sets one pair of values that applies immediately to every current and future account; there are no per-user exceptions.
-3. Per-user concurrency: all keys owned by one user share four in-flight requests. Excess calls receive HTTP `429` and code `concurrency_limit_exceeded`.
 
 Default account allowances:
 
@@ -168,7 +167,9 @@ Default account allowances:
 
 The Owner edits both global values on the Users page. They are read on each quota check, so a change applies on the next check. Setting a value to `0` prevents the normal allowance from accepting newly metered calls.
 
-Concurrency is currently process-local and is correct only for the single-instance V1 deployment. Before horizontal scaling, replace it with a shared atomic limiter.
+There is no fixed account-wide in-flight request cap. Per-channel capacity controls
+remain independent safeguards for upstream providers and must not be confused with
+a user concurrency quota.
 
 ### 7.2 Effective-token definition
 
@@ -212,7 +213,7 @@ Implementation and restore validation: `internal/server/biz/token_wallet.go`, `i
 
 ### 7.4 Quota boundary
 
-Quota checks use settled usage before a request starts and do not reserve the request's maximum usage. One large request or concurrent requests may briefly settle past a limit; the next new request is rejected. Do not describe this as a strict in-request truncation.
+Quota checks use settled usage before a request starts and do not reserve the request's maximum usage. One large request or concurrent requests can settle past a limit; the next new request is rejected after that usage is recorded. Do not describe this as a strict in-request truncation.
 
 ## 8. Fair rotation, affinity, and failover
 
@@ -415,7 +416,7 @@ Compilation alone is not acceptance. At minimum, cover:
 | API keys | Duplicate names, ownership isolation, last-four distinction |
 | Channels | Contributor CRUD, public projection, no Owner deletion while active, expiry, no credential leak |
 | Model sync | Same-name association, new models, unknown defaults, contributor overrides, reasoning tiers; automatic provider/manual merge; remove, clear, and subset actions enter authoritative mode and survive reopen/save; re-enabling restores dynamic synchronization |
-| Quotas | 16M/64M defaults, immediate global Owner update, Beijing boundaries, key quota first, overshoot boundary |
+| Quotas | 16M/64M defaults, immediate global Owner update, Beijing boundaries, key quota first, overshoot boundary, and no account-concurrency rejection above four in-flight requests |
 | Wallet | Floor 50%, self/Owner/probe exclusions, wallet first, concurrent settlement, backup/restore |
 | Rotation | Healthy best-effort fairness, affinity, recovered re-entry, empty output, tool-only output, status-less errors |
 | Probes | Adaptive model, honest status/error, model-only fallback, cooldown, no accounting |

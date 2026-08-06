@@ -101,7 +101,7 @@
   "users.dailyQuota.limitHint": "Default: 16,000,000. Resets daily at 00:00 Beijing time. Setting 0 blocks requests from ordinary quota.",
   "users.dailyQuota.weeklyLimitLabel": "Weekly Effective-Token Limit per Account",
   "users.dailyQuota.weeklyLimitHint": "Default: 64,000,000. Resets every Monday at 00:00 Beijing time.",
-  "users.dailyQuota.accountingNotice": "Effective tokens = input tokens minus cache-read tokens, plus output tokens. Cache reads do not consume daily or weekly quota. Permanent wallet credit is spent first and never resets. Concurrent requests may settle slightly above a limit.",
+  "users.dailyQuota.accountingNotice": "Effective tokens = input tokens minus cache-read tokens, plus output tokens. Cache reads do not consume daily or weekly quota. Permanent wallet credit is spent first and never resets. Concurrent requests can settle above a limit; new requests are rejected after that usage is recorded.",
   "users.dailyQuota.save": "Save Global Limit",
   "users.dailyQuota.saving": "Saving…",
   "users.dailyQuota.messages.updateSuccess": "The default daily and weekly effective-token quotas were updated live",

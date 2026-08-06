@@ -101,7 +101,7 @@
   "users.dailyQuota.limitHint": "默认 16,000,000；北京时间每日 00:00 重置。设为 0 会阻止普通额度的新计量请求。",
   "users.dailyQuota.weeklyLimitLabel": "每账户每周有效 Token 上限",
   "users.dailyQuota.weeklyLimitHint": "默认 64,000,000；北京时间每周一 00:00 重置。",
-  "users.dailyQuota.accountingNotice": "有效 Token = 输入 Token − 缓存读取 Token + 输出 Token。缓存读取不扣日、周额度；永久回馈钱包会优先消费且不随日、周重置。并发中的请求结算后可能略有超出。",
+  "users.dailyQuota.accountingNotice": "有效 Token = 输入 Token − 缓存读取 Token + 输出 Token。缓存读取不扣日、周额度；永久回馈钱包会优先消费且不随日、周重置。并发请求可能在结算后越过额度；用量写入后，新的请求才会被拒绝。",
   "users.dailyQuota.save": "保存全局上限",
   "users.dailyQuota.saving": "保存中…",
   "users.dailyQuota.messages.updateSuccess": "全体账户的日、周默认有效 Token 额度已实时更新",

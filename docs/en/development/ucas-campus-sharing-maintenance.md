@@ -28,7 +28,7 @@ UCAS email registration
   → authenticated project member
   → personal API key
   → OpenAI / Anthropic / Gemini compatible endpoint
-  → up to 4 in-flight requests per user + API-key quota + account daily/weekly quota
+  → API-key quota + account daily/weekly quota
   → model access check
   → session affinity + healthy candidates + best-effort fair rotation
   → project-owned or student-donated channel
@@ -151,13 +151,12 @@ Key implementation:
 
 ## 7. Quotas, effective tokens, and the donation wallet
 
-### 7.1 Three limits
+### 7.1 Two quota layers
 
 Calls are constrained in this order:
 
 1. API-key/profile quota, independently configured by the user.
 2. Global account daily and weekly allowances. The Owner sets one pair of values that applies immediately to every current and future account; there are no per-user exceptions.
-3. Per-user concurrency: all keys owned by one user share four in-flight requests. Excess calls receive HTTP `429` and code `concurrency_limit_exceeded`.
 
 Default account allowances:
 
@@ -168,7 +167,9 @@ Default account allowances:
 
 The Owner edits both global values on the Users page. They are read on each quota check, so a change applies on the next check. Setting a value to `0` prevents the normal allowance from accepting newly metered calls.
 
-Concurrency is currently process-local and is correct only for the single-instance V1 deployment. Before horizontal scaling, replace it with a shared atomic limiter.
+There is no fixed account-wide in-flight request cap. Per-channel capacity controls
+remain independent safeguards for upstream providers and must not be confused with
+a user concurrency quota.
 
 ### 7.2 Effective-token definition
 

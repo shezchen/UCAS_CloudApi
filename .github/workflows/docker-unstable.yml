@@ -81,8 +81,11 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          provenance: false
-          sbom: false
+          # Supply-chain attestations: SLSA provenance + SBOM.
+          # Side effect: per-arch tags show extra "unknown/unknown" attestation
+          # manifests in registry UIs; imagetools create merges them correctly.
+          provenance: mode=max
+          sbom: true
 
   create_manifests:
     name: Create multi-arch manifest (Docker Hub)

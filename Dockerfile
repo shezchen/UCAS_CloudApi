@@ -44,10 +44,17 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 FROM alpine
 
-RUN apk add --no-cache ca-certificates tzdata
+# Run as a dedicated non-root user (uid/gid 1000).
+# `adduser -h /app` creates /app owned by axonhub, so the default SQLite
+# database and mounted config remain writable/readable without root.
+RUN apk add --no-cache ca-certificates tzdata \
+    && addgroup -g 1000 axonhub \
+    && adduser -D -u 1000 -G axonhub -h /app axonhub
 
 WORKDIR /app
-COPY --from=backend-builder /build/axonhub /app/axonhub
+COPY --from=backend-builder --chown=axonhub:axonhub /build/axonhub /app/axonhub
+
+USER axonhub
 
 EXPOSE 8090
 ENTRYPOINT ["/app/axonhub"]

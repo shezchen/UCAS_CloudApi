@@ -19,10 +19,14 @@ axonhub:
   # Environment variables for AxonHub
   env:
     AXONHUB_DB_DIALECT: postgres
-    # Full database connection string - customize this for your environment
-    AXONHUB_DB_DSN: postgres://axonhub:axonhub_password@axonhub-postgresql:5432/axonhub?sslmode=disable
+    # Full database connection string - customize this for your environment.
+    # REQUIRED: replace the CHANGE_ME_ placeholder before deploying; the
+    # password must match postgresql.auth.password below.
+    # WARNING: sslmode=disable is only acceptable for in-cluster traffic to the
+    # bundled PostgreSQL; use sslmode=require (or verify-full) for external databases.
+    AXONHUB_DB_DSN: postgres://axonhub:CHANGE_ME_POSTGRES_USER_123456@axonhub-postgresql:5432/axonhub?sslmode=disable
     # Read replica DSN - leave empty to disable read-write separation (env: AXONHUB_DB_READ_REPLICA_READ_DSN)
-    # AXONHUB_DB_READ_REPLICA_READ_DSN: postgres://axonhub:axonhub_password@axonhub-postgresql:5432/axonhub?sslmode=disable
+    # AXONHUB_DB_READ_REPLICA_READ_DSN: postgres://axonhub:CHANGE_ME_POSTGRES_USER_123456@axonhub-postgresql:5432/axonhub?sslmode=disable
   
   # Service configuration
   service:
@@ -90,10 +94,13 @@ postgresql:
     pullPolicy: IfNotPresent
   
   # Database credentials
+  # REQUIRED: override the CHANGE_ME_ placeholders before deploying, e.g. via
+  # `--set postgresql.auth.password=...` or a values override file.
   auth:
-    postgresPassword: "axonhub_password"  # Should be overridden in production
+    postgresPassword: "CHANGE_ME_POSTGRES_ADMIN_123456"
     username: "axonhub"
-    password: "axonhub_password"  # Should be overridden in production
+    # Must match the password embedded in axonhub.env.AXONHUB_DB_DSN above.
+    password: "CHANGE_ME_POSTGRES_USER_123456"
     database: "axonhub"
   
   # Service configuration

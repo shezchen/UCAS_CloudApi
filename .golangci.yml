@@ -301,10 +301,12 @@ linters:
           - stylecheck
         text: "ST1016:"
 
-      # For compatibility with previous versions.
-      # Also, those reports are not relevant.
+      # G115 uintptr overflow conversion reports are noisy and low-signal.
+      # Security taint checks (G702 command injection, G703 path traversal,
+      # G704 SSRF, G705 XSS) stay enabled; suppress genuine false positives
+      # with a targeted `//nolint:gosec // reason` instead of global excludes.
       - linters: [gosec]
-        text: "(G704: SSRF via taint analysis|G703: Path traversal via taint analysis|G702: Command injection via taint analysis|G115: integer overflow conversion uintptr|G705: XSS via taint analysis)"
+        text: "G115: integer overflow conversion uintptr"
 
       # Exclude lll issues for long lines with go:generate
       - linters:

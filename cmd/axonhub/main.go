@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/andreazorzetto/yh/highlight"
@@ -230,6 +231,14 @@ func validateConfig(config conf.Config) []string {
 
 	if config.APIServer.CORS.Enabled && len(config.APIServer.CORS.AllowedOrigins) == 0 {
 		errors = append(errors, "server.cors.allowed_origins cannot be empty when CORS is enabled")
+	}
+
+	// Wildcard origin combined with credentials lets any site send
+	// authenticated cross-origin requests, defeating the same-origin policy.
+	if config.APIServer.CORS.Enabled && config.APIServer.CORS.AllowCredentials &&
+		slices.Contains(config.APIServer.CORS.AllowedOrigins, "*") {
+		errors = append(errors,
+			`server.cors.allowed_origins must not contain "*" when server.cors.allow_credentials is true; list explicit origins instead`)
 	}
 
 	return errors

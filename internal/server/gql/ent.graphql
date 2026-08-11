@@ -12,7 +12,14 @@ type APIKey implements Node {
   Project ID, default to 1 for backward compatibility
   """
   projectID: ID!
+  """
+  Redacted display form of the key (prefix...suffix). The raw key is returned exactly once at creation/rotation time and is never persisted; verification uses key_hash.
+  """
   key: String!
+  """
+  Leading characters of the raw key for display/identification.
+  """
+  keyPrefix: String
   name: String!
   """
   API Key type: user, service_account, noauth, or personal
@@ -353,6 +360,24 @@ input APIKeyWhereInput {
   keyHasSuffix: String
   keyEqualFold: String
   keyContainsFold: String
+  """
+  key_prefix field predicates
+  """
+  keyPrefix: String
+  keyPrefixNEQ: String
+  keyPrefixIn: [String!]
+  keyPrefixNotIn: [String!]
+  keyPrefixGT: String
+  keyPrefixGTE: String
+  keyPrefixLT: String
+  keyPrefixLTE: String
+  keyPrefixContains: String
+  keyPrefixHasPrefix: String
+  keyPrefixHasSuffix: String
+  keyPrefixIsNil: Boolean
+  keyPrefixNotNil: Boolean
+  keyPrefixEqualFold: String
+  keyPrefixContainsFold: String
   """
   name field predicates
   """

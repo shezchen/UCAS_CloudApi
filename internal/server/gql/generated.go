@@ -107,6 +107,7 @@ type ComplexityRoot struct {
 		CreatedAt func(childComplexity int) int
 		ID        func(childComplexity int) int
 		Key       func(childComplexity int) int
+		KeyPrefix func(childComplexity int) int
 		Name      func(childComplexity int) int
 		Profiles  func(childComplexity int) int
 		Project   func(childComplexity int) int
@@ -2487,6 +2488,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.APIKey.Key(childComplexity), true
+	case "APIKey.keyPrefix":
+		if e.complexity.APIKey.KeyPrefix == nil {
+			break
+		}
+
+		return e.complexity.APIKey.KeyPrefix(childComplexity), true
 	case "APIKey.name":
 		if e.complexity.APIKey.Name == nil {
 			break
@@ -15067,6 +15074,35 @@ func (ec *executionContext) fieldContext_APIKey_key(_ context.Context, field gra
 	return fc, nil
 }
 
+func (ec *executionContext) _APIKey_keyPrefix(ctx context.Context, field graphql.CollectedField, obj *ent.APIKey) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_APIKey_keyPrefix,
+		func(ctx context.Context) (any, error) {
+			return obj.KeyPrefix, nil
+		},
+		nil,
+		ec.marshalOString2string,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_APIKey_keyPrefix(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "APIKey",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _APIKey_name(ctx context.Context, field graphql.CollectedField, obj *ent.APIKey) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -15542,6 +15578,8 @@ func (ec *executionContext) fieldContext_APIKeyEdge_node(_ context.Context, fiel
 				return ec.fieldContext_APIKey_projectID(ctx, field)
 			case "key":
 				return ec.fieldContext_APIKey_key(ctx, field)
+			case "keyPrefix":
+				return ec.fieldContext_APIKey_keyPrefix(ctx, field)
 			case "name":
 				return ec.fieldContext_APIKey_name(ctx, field)
 			case "type":
@@ -31827,6 +31865,8 @@ func (ec *executionContext) fieldContext_Mutation_createAPIKey(ctx context.Conte
 				return ec.fieldContext_APIKey_projectID(ctx, field)
 			case "key":
 				return ec.fieldContext_APIKey_key(ctx, field)
+			case "keyPrefix":
+				return ec.fieldContext_APIKey_keyPrefix(ctx, field)
 			case "name":
 				return ec.fieldContext_APIKey_name(ctx, field)
 			case "type":
@@ -31898,6 +31938,8 @@ func (ec *executionContext) fieldContext_Mutation_updateAPIKey(ctx context.Conte
 				return ec.fieldContext_APIKey_projectID(ctx, field)
 			case "key":
 				return ec.fieldContext_APIKey_key(ctx, field)
+			case "keyPrefix":
+				return ec.fieldContext_APIKey_keyPrefix(ctx, field)
 			case "name":
 				return ec.fieldContext_APIKey_name(ctx, field)
 			case "type":
@@ -31969,6 +32011,8 @@ func (ec *executionContext) fieldContext_Mutation_updateAPIKeyStatus(ctx context
 				return ec.fieldContext_APIKey_projectID(ctx, field)
 			case "key":
 				return ec.fieldContext_APIKey_key(ctx, field)
+			case "keyPrefix":
+				return ec.fieldContext_APIKey_keyPrefix(ctx, field)
 			case "name":
 				return ec.fieldContext_APIKey_name(ctx, field)
 			case "type":
@@ -32040,6 +32084,8 @@ func (ec *executionContext) fieldContext_Mutation_updateAPIKeyProfiles(ctx conte
 				return ec.fieldContext_APIKey_projectID(ctx, field)
 			case "key":
 				return ec.fieldContext_APIKey_key(ctx, field)
+			case "keyPrefix":
+				return ec.fieldContext_APIKey_keyPrefix(ctx, field)
 			case "name":
 				return ec.fieldContext_APIKey_name(ctx, field)
 			case "type":
@@ -32111,6 +32157,8 @@ func (ec *executionContext) fieldContext_Mutation_rotateAPIKey(ctx context.Conte
 				return ec.fieldContext_APIKey_projectID(ctx, field)
 			case "key":
 				return ec.fieldContext_APIKey_key(ctx, field)
+			case "keyPrefix":
+				return ec.fieldContext_APIKey_keyPrefix(ctx, field)
 			case "name":
 				return ec.fieldContext_APIKey_name(ctx, field)
 			case "type":
@@ -33938,6 +33986,8 @@ func (ec *executionContext) fieldContext_Mutation_loadApiKeyProfileTemplate(ctx 
 				return ec.fieldContext_APIKey_projectID(ctx, field)
 			case "key":
 				return ec.fieldContext_APIKey_key(ctx, field)
+			case "keyPrefix":
+				return ec.fieldContext_APIKey_keyPrefix(ctx, field)
 			case "name":
 				return ec.fieldContext_APIKey_name(ctx, field)
 			case "type":
@@ -46083,6 +46133,8 @@ func (ec *executionContext) fieldContext_Request_apiKey(_ context.Context, field
 				return ec.fieldContext_APIKey_projectID(ctx, field)
 			case "key":
 				return ec.fieldContext_APIKey_key(ctx, field)
+			case "keyPrefix":
+				return ec.fieldContext_APIKey_keyPrefix(ctx, field)
 			case "name":
 				return ec.fieldContext_APIKey_name(ctx, field)
 			case "type":
@@ -62457,7 +62509,7 @@ func (ec *executionContext) unmarshalInputAPIKeyWhereInput(ctx context.Context, 
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"not", "and", "or", "id", "idNEQ", "idIn", "idNotIn", "idGT", "idGTE", "idLT", "idLTE", "createdAt", "createdAtNEQ", "createdAtIn", "createdAtNotIn", "createdAtGT", "createdAtGTE", "createdAtLT", "createdAtLTE", "updatedAt", "updatedAtNEQ", "updatedAtIn", "updatedAtNotIn", "updatedAtGT", "updatedAtGTE", "updatedAtLT", "updatedAtLTE", "userID", "userIDNEQ", "userIDIn", "userIDNotIn", "userIDIsNil", "userIDNotNil", "projectID", "projectIDNEQ", "projectIDIn", "projectIDNotIn", "key", "keyNEQ", "keyIn", "keyNotIn", "keyGT", "keyGTE", "keyLT", "keyLTE", "keyContains", "keyHasPrefix", "keyHasSuffix", "keyEqualFold", "keyContainsFold", "name", "nameNEQ", "nameIn", "nameNotIn", "nameGT", "nameGTE", "nameLT", "nameLTE", "nameContains", "nameHasPrefix", "nameHasSuffix", "nameEqualFold", "nameContainsFold", "type", "typeNEQ", "typeIn", "typeNotIn", "status", "statusNEQ", "statusIn", "statusNotIn", "hasUser", "hasUserWith", "hasProject", "hasProjectWith", "hasRequests", "hasRequestsWith"}
+	fieldsInOrder := [...]string{"not", "and", "or", "id", "idNEQ", "idIn", "idNotIn", "idGT", "idGTE", "idLT", "idLTE", "createdAt", "createdAtNEQ", "createdAtIn", "createdAtNotIn", "createdAtGT", "createdAtGTE", "createdAtLT", "createdAtLTE", "updatedAt", "updatedAtNEQ", "updatedAtIn", "updatedAtNotIn", "updatedAtGT", "updatedAtGTE", "updatedAtLT", "updatedAtLTE", "userID", "userIDNEQ", "userIDIn", "userIDNotIn", "userIDIsNil", "userIDNotNil", "projectID", "projectIDNEQ", "projectIDIn", "projectIDNotIn", "key", "keyNEQ", "keyIn", "keyNotIn", "keyGT", "keyGTE", "keyLT", "keyLTE", "keyContains", "keyHasPrefix", "keyHasSuffix", "keyEqualFold", "keyContainsFold", "keyPrefix", "keyPrefixNEQ", "keyPrefixIn", "keyPrefixNotIn", "keyPrefixGT", "keyPrefixGTE", "keyPrefixLT", "keyPrefixLTE", "keyPrefixContains", "keyPrefixHasPrefix", "keyPrefixHasSuffix", "keyPrefixIsNil", "keyPrefixNotNil", "keyPrefixEqualFold", "keyPrefixContainsFold", "name", "nameNEQ", "nameIn", "nameNotIn", "nameGT", "nameGTE", "nameLT", "nameLTE", "nameContains", "nameHasPrefix", "nameHasSuffix", "nameEqualFold", "nameContainsFold", "type", "typeNEQ", "typeIn", "typeNotIn", "status", "statusNEQ", "statusIn", "statusNotIn", "hasUser", "hasUserWith", "hasProject", "hasProjectWith", "hasRequests", "hasRequestsWith"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -62878,6 +62930,111 @@ func (ec *executionContext) unmarshalInputAPIKeyWhereInput(ctx context.Context, 
 				return it, err
 			}
 			it.KeyContainsFold = data
+		case "keyPrefix":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("keyPrefix"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.KeyPrefix = data
+		case "keyPrefixNEQ":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("keyPrefixNEQ"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.KeyPrefixNEQ = data
+		case "keyPrefixIn":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("keyPrefixIn"))
+			data, err := ec.unmarshalOString2ᚕstringᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.KeyPrefixIn = data
+		case "keyPrefixNotIn":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("keyPrefixNotIn"))
+			data, err := ec.unmarshalOString2ᚕstringᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.KeyPrefixNotIn = data
+		case "keyPrefixGT":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("keyPrefixGT"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.KeyPrefixGT = data
+		case "keyPrefixGTE":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("keyPrefixGTE"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.KeyPrefixGTE = data
+		case "keyPrefixLT":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("keyPrefixLT"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.KeyPrefixLT = data
+		case "keyPrefixLTE":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("keyPrefixLTE"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.KeyPrefixLTE = data
+		case "keyPrefixContains":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("keyPrefixContains"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.KeyPrefixContains = data
+		case "keyPrefixHasPrefix":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("keyPrefixHasPrefix"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.KeyPrefixHasPrefix = data
+		case "keyPrefixHasSuffix":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("keyPrefixHasSuffix"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.KeyPrefixHasSuffix = data
+		case "keyPrefixIsNil":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("keyPrefixIsNil"))
+			data, err := ec.unmarshalOBoolean2bool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.KeyPrefixIsNil = data
+		case "keyPrefixNotNil":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("keyPrefixNotNil"))
+			data, err := ec.unmarshalOBoolean2bool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.KeyPrefixNotNil = data
+		case "keyPrefixEqualFold":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("keyPrefixEqualFold"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.KeyPrefixEqualFold = data
+		case "keyPrefixContainsFold":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("keyPrefixContainsFold"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.KeyPrefixContainsFold = data
 		case "name":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("name"))
 			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
@@ -89456,6 +89613,8 @@ func (ec *executionContext) _APIKey(ctx context.Context, sel ast.SelectionSet, o
 			if out.Values[i] == graphql.Null {
 				atomic.AddUint32(&out.Invalids, 1)
 			}
+		case "keyPrefix":
+			out.Values[i] = ec._APIKey_keyPrefix(ctx, field, obj)
 		case "name":
 			out.Values[i] = ec._APIKey_name(ctx, field, obj)
 			if out.Values[i] == graphql.Null {

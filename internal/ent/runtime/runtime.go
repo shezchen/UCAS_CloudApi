@@ -54,8 +54,11 @@ func init() {
 		})
 	}
 	apikeyMixinHooks1 := apikeyMixin[1].Hooks()
+	apikeyHooks := schema.APIKey{}.Hooks()
 
 	apikey.Hooks[1] = apikeyMixinHooks1[0]
+
+	apikey.Hooks[2] = apikeyHooks[0]
 	apikeyMixinInters1 := apikeyMixin[1].Interceptors()
 	apikey.Interceptors[0] = apikeyMixinInters1[0]
 	apikeyMixinFields0 := apikeyMixin[0].Fields()
@@ -82,12 +85,16 @@ func init() {
 	apikeyDescProjectID := apikeyFields[1].Descriptor()
 	// apikey.DefaultProjectID holds the default value on creation for the project_id field.
 	apikey.DefaultProjectID = apikeyDescProjectID.Default.(int)
+	// apikeyDescKeyPrefix is the schema descriptor for key_prefix field.
+	apikeyDescKeyPrefix := apikeyFields[4].Descriptor()
+	// apikey.DefaultKeyPrefix holds the default value on creation for the key_prefix field.
+	apikey.DefaultKeyPrefix = apikeyDescKeyPrefix.Default.(string)
 	// apikeyDescScopes is the schema descriptor for scopes field.
-	apikeyDescScopes := apikeyFields[6].Descriptor()
+	apikeyDescScopes := apikeyFields[8].Descriptor()
 	// apikey.DefaultScopes holds the default value on creation for the scopes field.
 	apikey.DefaultScopes = apikeyDescScopes.Default.([]string)
 	// apikeyDescProfiles is the schema descriptor for profiles field.
-	apikeyDescProfiles := apikeyFields[7].Descriptor()
+	apikeyDescProfiles := apikeyFields[9].Descriptor()
 	// apikey.DefaultProfiles holds the default value on creation for the profiles field.
 	apikey.DefaultProfiles = apikeyDescProfiles.Default.(*objects.APIKeyProfiles)
 	apikeyprofiletemplateMixin := schema.APIKeyProfileTemplate{}.Mixin()

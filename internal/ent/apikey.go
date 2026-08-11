@@ -31,8 +31,12 @@ type APIKey struct {
 	UserID int `json:"user_id,omitempty"`
 	// Project ID, default to 1 for backward compatibility
 	ProjectID int `json:"project_id,omitempty"`
-	// Key holds the value of the "key" field.
+	// Redacted display form of the key (prefix...suffix). The raw key is returned exactly once at creation/rotation time and is never persisted; verification uses key_hash.
 	Key string `json:"key,omitempty"`
+	// SHA-256 hex digest of the raw key; the unique lookup handle for authentication. Optional only to tolerate legacy rows before the startup backfill runs.
+	KeyHash string `json:"-"`
+	// Leading characters of the raw key for display/identification.
+	KeyPrefix string `json:"key_prefix,omitempty"`
 	// Name holds the value of the "name" field.
 	Name string `json:"name,omitempty"`
 	// API Key type: user, service_account, noauth, or personal
@@ -106,7 +110,7 @@ func (*APIKey) scanValues(columns []string) ([]any, error) {
 			values[i] = new([]byte)
 		case apikey.FieldID, apikey.FieldDeletedAt, apikey.FieldUserID, apikey.FieldProjectID:
 			values[i] = new(sql.NullInt64)
-		case apikey.FieldKey, apikey.FieldName, apikey.FieldType, apikey.FieldStatus:
+		case apikey.FieldKey, apikey.FieldKeyHash, apikey.FieldKeyPrefix, apikey.FieldName, apikey.FieldType, apikey.FieldStatus:
 			values[i] = new(sql.NullString)
 		case apikey.FieldCreatedAt, apikey.FieldUpdatedAt:
 			values[i] = new(sql.NullTime)
@@ -166,6 +170,18 @@ func (_m *APIKey) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field key", values[i])
 			} else if value.Valid {
 				_m.Key = value.String
+			}
+		case apikey.FieldKeyHash:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field key_hash", values[i])
+			} else if value.Valid {
+				_m.KeyHash = value.String
+			}
+		case apikey.FieldKeyPrefix:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field key_prefix", values[i])
+			} else if value.Valid {
+				_m.KeyPrefix = value.String
 			}
 		case apikey.FieldName:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -269,6 +285,11 @@ func (_m *APIKey) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("key=")
 	builder.WriteString(_m.Key)
+	builder.WriteString(", ")
+	builder.WriteString("key_hash=<sensitive>")
+	builder.WriteString(", ")
+	builder.WriteString("key_prefix=")
+	builder.WriteString(_m.KeyPrefix)
 	builder.WriteString(", ")
 	builder.WriteString("name=")
 	builder.WriteString(_m.Name)

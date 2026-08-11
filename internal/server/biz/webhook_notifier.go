@@ -62,12 +62,19 @@ type WebhookRenderContext struct {
 type WebhookNotifier struct {
 	SystemService *SystemService
 	httpClient    *httpclient.HttpClient
+
+	// restrictPublicNetwork forces webhook deliveries onto the public-network
+	// pinned dialer. Webhook targets are runtime-editable settings, so without
+	// this a webhook target could be pointed at loopback/private/cloud-metadata
+	// addresses (SSRF). Tests that deliver to a local httptest server disable it.
+	restrictPublicNetwork bool
 }
 
 func NewWebhookNotifier(systemService *SystemService, httpClient *httpclient.HttpClient) *WebhookNotifier {
 	return &WebhookNotifier{
-		SystemService: systemService,
-		httpClient:    httpClient,
+		SystemService:         systemService,
+		httpClient:            httpClient,
+		restrictPublicNetwork: true,
 	}
 }
 
@@ -183,6 +190,14 @@ func (n *WebhookNotifier) send(ctx context.Context, target WebhookTarget, body s
 	}
 
 	client := n.httpClient
+	if n.restrictPublicNetwork {
+		// Validates the target URL at request time and dials only the
+		// validated public IPs, so a webhook target cannot reach private or
+		// metadata addresses even via DNS rebinding or redirects. The
+		// deployment-managed environment proxy remains usable.
+		client = client.WithPublicNetworkOnlyAndTrustedEnvironmentProxy()
+	}
+
 	if target.Proxy != nil {
 		client = client.WithProxy(target.Proxy)
 	}

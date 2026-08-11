@@ -307,6 +307,11 @@ func NewOIDCService(params OIDCServiceParams) (*OIDCService, error) {
 // - data: URIs are returned unchanged.
 // - Anything else is treated as a local file path and converted to a base64 data URL.
 // An empty string is returned unchanged.
+//
+// Local paths must be relative and stay inside the working directory: the
+// resolved bytes are served to the login page, so absolute paths and `..`
+// traversal are rejected to keep a misconfigured (or attacker-influenced)
+// icon_url from disclosing arbitrary files on the host.
 func resolveIconURL(raw string) (string, error) {
 	if raw == "" {
 		return "", nil
@@ -316,7 +321,16 @@ func resolveIconURL(raw string) (string, error) {
 		return raw, nil
 	}
 	// Treat as local file path.
-	data, err := os.ReadFile(raw)
+	cleaned := filepath.Clean(filepath.FromSlash(raw))
+	if filepath.IsAbs(cleaned) || filepath.VolumeName(cleaned) != "" {
+		return "", fmt.Errorf("icon file path %q must be relative to the working directory", raw)
+	}
+
+	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("icon file path %q must not escape the working directory", raw)
+	}
+
+	data, err := os.ReadFile(cleaned)
 	if err != nil {
 		return "", fmt.Errorf("reading icon file %q: %w", raw, err)
 	}
@@ -613,9 +627,12 @@ func (s *OIDCService) GetLinkAuthorizeURL(ctx context.Context, providerIdentifie
 }
 
 func (s *OIDCService) Callback(ctx context.Context, providerIdentifier, code, state, baseURL string) (string, string, error) {
-	// Elevate privileges for database operations as this is an unauthenticated flow
-	ctx = contexts.WithUser(ctx, &ent.User{IsOwner: true})
-
+	// This is an unauthenticated flow. The database steps below run under a
+	// scoped system bypass (see RunWithSystemBypass call sites) instead of
+	// injecting a fake owner user: contexts.WithUser mutates the container
+	// shared with the whole request, so a synthetic ID=0 owner would leak into
+	// middleware/logging and grant blanket privileges beyond the two queries
+	// that actually need elevation.
 	p, _, ok := s.getProviderByIdentifier(providerIdentifier)
 	if !ok {
 		return "", "", fmt.Errorf("OIDC provider not found: %s", providerIdentifier)
@@ -743,7 +760,9 @@ func (s *OIDCService) Callback(ctx context.Context, providerIdentifier, code, st
 			return "", "", fmt.Errorf("invalid cached link user ID: %w", err)
 		}
 
-		err = s.createIdentity(ctx, userID, p.config.issuer(), subject, claims.Email, p.config.providerDisplayName())
+		err = authz.RunWithSystemBypassVoid(ctx, "oidc-link-identity", func(ctx context.Context) error {
+			return s.createIdentity(ctx, userID, p.config.issuer(), subject, claims.Email, p.config.providerDisplayName())
+		})
 		if err != nil {
 			return "", "", fmt.Errorf("failed to link identity: %w", err)
 		}
@@ -751,7 +770,9 @@ func (s *OIDCService) Callback(ctx context.Context, providerIdentifier, code, st
 		return "", "link", nil
 	}
 
-	userEntity, err := s.resolveUser(ctx, p, subject, claims.Email, claims.EmailVerified, claims.Name, claims.GivenName, claims.FamilyName, claims.Picture, claims.Groups)
+	userEntity, err := authz.RunWithSystemBypass(ctx, "oidc-callback", func(ctx context.Context) (*ent.User, error) {
+		return s.resolveUser(ctx, p, subject, claims.Email, claims.EmailVerified, claims.Name, claims.GivenName, claims.FamilyName, claims.Picture, claims.Groups)
+	})
 	if err != nil {
 		return "", "", err
 	}
@@ -1256,9 +1277,6 @@ func (s *OIDCService) createIdentity(ctx context.Context, userID int, issuer, su
 }
 
 func (s *OIDCService) ExchangeCode(ctx context.Context, code string) (*ent.User, error) {
-	// Elevate privileges for user query as this is an unauthenticated flow
-	ctx = contexts.WithUser(ctx, &ent.User{IsOwner: true})
-
 	cacheKey := "oidc_exchange:" + code
 
 	// Acquire a per-code lock to prevent concurrent redemption of the same exchange code.
@@ -1294,7 +1312,12 @@ func (s *OIDCService) ExchangeCode(ctx context.Context, code string) (*ent.User,
 		return nil, fmt.Errorf("invalid user ID format in cache: %w", err)
 	}
 
-	user, err := s.entFromContext(ctx).User.Get(ctx, userID)
+	// Unauthenticated flow: there is no viewer in context yet, so load the
+	// user under a scoped system bypass instead of installing a fake owner
+	// in the shared request container.
+	user, err := authz.RunWithSystemBypass(ctx, "oidc-exchange-code", func(ctx context.Context) (*ent.User, error) {
+		return s.entFromContext(ctx).User.Get(ctx, userID)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("user not found: %w", err)
 	}

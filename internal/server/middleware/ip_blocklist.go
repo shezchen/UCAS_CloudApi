@@ -34,6 +34,21 @@ func WithIPBlocklist(systemService *biz.SystemService) gin.HandlerFunc {
 	}
 }
 
+// clientIPCandidates collects the addresses evaluated against the blocklist.
+//
+// c.ClientIP() already honors the engine's trusted-proxy configuration
+// (server.go calls SetTrustedProxies): behind a configured proxy it returns the
+// proxy-supplied client address, otherwise the direct peer. The raw
+// X-Forwarded-For / X-Real-IP values are additionally included as
+// defense-in-depth candidates.
+//
+// SECURITY NOTE: X-Forwarded-For and X-Real-IP are client-controlled when the
+// deployment is not behind a trusted proxy, so they must never be used for
+// allow decisions. They are safe here only because this is a blocklist that
+// blocks when ANY candidate matches: extra spoofable candidates can cause a
+// caller to match a blocked entry (blocking itself) but can never be used to
+// bypass a block. Deployments terminating TLS behind a proxy should configure
+// server.trusted_proxies so c.ClientIP() resolves the real client address.
 func clientIPCandidates(c *gin.Context) []string {
 	candidates := make([]string, 0, 3)
 	seen := make(map[string]struct{}, 3)

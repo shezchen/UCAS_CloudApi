@@ -76,6 +76,9 @@ func TestWebhookNotifier_NotifyChannelAutoDisabled(t *testing.T) {
 
 	systemService := newTestSystemServiceWithWebhookConfig(t, client, cfg)
 	notifier := NewWebhookNotifier(systemService, httpclient.NewHttpClient())
+	// The httptest server listens on loopback, which the production
+	// public-network restriction rejects by design.
+	notifier.restrictPublicNetwork = false
 
 	notifier.NotifyChannelAutoDisabled(context.Background(), ChannelAutoDisabledEvent{
 		ChannelID:       1,

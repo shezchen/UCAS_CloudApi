@@ -338,7 +338,12 @@ func (svc *CampusCatalogService) GetResources(ctx context.Context) (*CampusResou
 			}
 			callableKeyCount++
 
-			keyCtx := contexts.WithAPIKey(bypassCtx, key)
+			// WithAPIKey/WithProjectID write into the container shared with the
+			// caller's request context. Clone it first so impersonating each key
+			// stays local to this iteration and never leaks into bypassCtx (used
+			// below) or the surviving request identity.
+			keyCtx := contexts.WithIsolatedContainer(bypassCtx)
+			keyCtx = contexts.WithAPIKey(keyCtx, key)
 			keyCtx = contexts.WithProjectID(keyCtx, activeProject.ID)
 			models, err := svc.listEnabledModels(keyCtx)
 			if err != nil {

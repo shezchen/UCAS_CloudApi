@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/looplj/axonhub/internal/contexts"
 	"github.com/looplj/axonhub/internal/ent"
 	"github.com/looplj/axonhub/internal/ent/channel"
 	"github.com/looplj/axonhub/internal/ent/request"
@@ -56,17 +57,36 @@ func (s *VideoService) GetTask(ctx context.Context, requestID int) (*llm.Respons
 	return video, nil
 }
 
-// GetTaskByExternalID looks up a video task by the provider's task ID (external_id).
-// NOTE: assumes provider task IDs are globally unique across channels.
-func (s *VideoService) GetTaskByExternalID(ctx context.Context, externalID string) (*llm.Response, error) {
+// findTaskByExternalID resolves a video task by the provider's task ID
+// (external_id), scoped to the caller's project.
+//
+// The Request privacy policy grants API-key principals with write_requests
+// scope table-wide access, so project ownership must be enforced here: these
+// lookups back the API-key-authenticated GET/DELETE /v1/videos/:id and doubao
+// task endpoints, and without the project filter any API key could read or
+// cancel another project's tasks by guessing provider task IDs.
+func (s *VideoService) findTaskByExternalID(ctx context.Context, externalID string) (*ent.Request, error) {
 	client := ent.FromContext(ctx)
 	if client == nil {
 		return nil, fmt.Errorf("%w: ent client not found in context", ErrInternal)
 	}
 
-	task, err := client.Request.Query().
-		Where(request.ExternalID(externalID)).
-		Only(ctx)
+	query := client.Request.Query().
+		Where(request.ExternalID(externalID))
+
+	// API-key auth always installs the key's project; cross-project lookups
+	// must behave exactly like a missing task.
+	if projectID, ok := contexts.GetProjectID(ctx); ok {
+		query = query.Where(request.ProjectID(projectID))
+	}
+
+	return query.Only(ctx)
+}
+
+// GetTaskByExternalID looks up a video task by the provider's task ID (external_id).
+// NOTE: assumes provider task IDs are globally unique across channels.
+func (s *VideoService) GetTaskByExternalID(ctx context.Context, externalID string) (*llm.Response, error) {
+	task, err := s.findTaskByExternalID(ctx, externalID)
 	if err != nil {
 		return nil, err
 	}
@@ -77,14 +97,7 @@ func (s *VideoService) GetTaskByExternalID(ctx context.Context, externalID strin
 // DeleteTaskByExternalID deletes a video task by the provider's task ID (external_id).
 // NOTE: assumes provider task IDs are globally unique across channels.
 func (s *VideoService) DeleteTaskByExternalID(ctx context.Context, externalID string) error {
-	client := ent.FromContext(ctx)
-	if client == nil {
-		return fmt.Errorf("%w: ent client not found in context", ErrInternal)
-	}
-
-	task, err := client.Request.Query().
-		Where(request.ExternalID(externalID)).
-		Only(ctx)
+	task, err := s.findTaskByExternalID(ctx, externalID)
 	if err != nil {
 		return err
 	}
@@ -120,7 +133,17 @@ func (s *VideoService) loadTask(ctx context.Context, requestID int) (*ent.Reques
 		return nil, nil, nil, fmt.Errorf("%w: ent client not found in context", ErrInternal)
 	}
 
-	task, err := client.Request.Get(ctx, requestID)
+	query := client.Request.Query().
+		Where(request.ID(requestID))
+
+	// Same project enforcement as findTaskByExternalID. Background flows
+	// (e.g. the video storage worker) run without a project in context and
+	// keep full access.
+	if projectID, ok := contexts.GetProjectID(ctx); ok {
+		query = query.Where(request.ProjectID(projectID))
+	}
+
+	task, err := query.Only(ctx)
 	if err != nil {
 		return nil, nil, nil, err
 	}

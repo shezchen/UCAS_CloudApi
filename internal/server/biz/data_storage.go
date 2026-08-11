@@ -527,8 +527,30 @@ func (s *DataStorageService) GetFileSystem(ctx context.Context, ds *ent.DataStor
 	return fs, nil
 }
 
+// validateStorageKey rejects storage keys that contain a `..` path segment.
+//
+// All callers currently build keys from fixed templates with a filepath.Base'd
+// filename, so this is defense in depth: it guarantees that even a future
+// caller (or a bug in key generation) cannot traverse outside the intended
+// per-request directory on file-based backends (fs/webdav) or forge parent
+// prefixes on object stores.
+func validateStorageKey(key string) error {
+	normalized := strings.ReplaceAll(key, "\\", "/")
+	for _, segment := range strings.Split(normalized, "/") {
+		if segment == ".." {
+			return fmt.Errorf("invalid storage key %q: path traversal is not allowed", key)
+		}
+	}
+
+	return nil
+}
+
 // SaveData saves data to the specified data storage.
 func (s *DataStorageService) SaveData(ctx context.Context, ds *ent.DataStorage, key string, data []byte) error {
+	if err := validateStorageKey(key); err != nil {
+		return err
+	}
+
 	switch ds.Type {
 	case datastorage.TypeDatabase:
 		return nil
@@ -587,6 +609,10 @@ func (s *DataStorageService) SaveData(ctx context.Context, ds *ent.DataStorage, 
 // It returns the storage key and the number of bytes written.
 // Database storage is not supported because it requires the full data as a string.
 func (s *DataStorageService) SaveDataFromReader(ctx context.Context, ds *ent.DataStorage, key string, r io.Reader) (string, int64, error) {
+	if err := validateStorageKey(key); err != nil {
+		return "", 0, err
+	}
+
 	switch ds.Type {
 	case datastorage.TypeDatabase:
 		return "", 0, fmt.Errorf("database storage does not support streaming writes")

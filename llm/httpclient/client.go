@@ -213,6 +213,36 @@ func ValidatePublicProxyURL(ctx context.Context, rawURL string) error {
 	return validatePublicNetworkURLWithResolver(ctx, rawURL, net.DefaultResolver, publicProxySchemes, true)
 }
 
+// ValidateEndpointURLSyntax verifies that an endpoint URL is an absolute
+// HTTP(S)/WS(S) URL with a host and without userinfo, without resolving DNS
+// and without restricting the destination network.
+//
+// It is the create/update-time gate for owner-managed channels: owners may
+// legitimately target private or loopback providers (e.g. a local Ollama
+// instance), so the public-address restriction of ValidatePublicURL does not
+// apply, but non-network schemes (file:, gopher:, ...), opaque URLs, and
+// credential-bearing URLs are still rejected.
+func ValidateEndpointURLSyntax(rawURL string) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+
+	if parsed.Opaque != "" || parsed.Host == "" {
+		return fmt.Errorf("URL must be absolute and include a host")
+	}
+
+	if _, ok := publicEndpointSchemes[strings.ToLower(parsed.Scheme)]; !ok {
+		return fmt.Errorf("URL scheme %q is not supported", parsed.Scheme)
+	}
+
+	if parsed.User != nil {
+		return fmt.Errorf("URL userinfo is not allowed")
+	}
+
+	return nil
+}
+
 func publicNetworkDialContext(resolver publicNetworkResolver, dialer contextDialer) func(context.Context, string, string) (net.Conn, error) {
 	return func(ctx context.Context, network, address string) (net.Conn, error) {
 		host, port, err := net.SplitHostPort(address)

@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useState } from 'react';
 import { useRouter } from '@tanstack/react-router';
+import { useTranslation } from 'react-i18next';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useSystemStatus } from '@/features/auth/data/initialization';
 
@@ -9,6 +10,7 @@ interface InitializationGuardProps {
 }
 
 export function InitializationGuard({ children }: InitializationGuardProps) {
+  const { t } = useTranslation();
   const router = useRouter();
   const { data: systemStatus, isLoading, error } = useSystemStatus();
   const [isNavigating, setIsNavigating] = useState(false);
@@ -45,8 +47,8 @@ export function InitializationGuard({ children }: InitializationGuardProps) {
     return (
       <div className='flex h-screen items-center justify-center'>
         <div className='text-center'>
-          <h1 className='text-2xl font-bold text-red-600'>System Error</h1>
-          <p className='text-muted-foreground'>Failed to check system status</p>
+          <h1 className='text-2xl font-bold text-red-600'>{t('common.systemError.title')}</h1>
+          <p className='text-muted-foreground'>{t('common.systemError.description')}</p>
         </div>
       </div>
     );

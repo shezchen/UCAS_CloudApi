@@ -34,6 +34,10 @@ export function useErrorHandler() {
       
       const { context, onDuplicate, onErrorCode, showToast = true } = opts;
 
+      // Prefix the user-facing message with the operation context (e.g. "Create API Key")
+      // when provided, so the toast tells the user which action failed.
+      const withContext = (message: string) => (context ? `${context}: ${message}` : message);
+
       // Handle Zod validation errors
       if (error instanceof ZodError) {
         const fieldErrors =
@@ -47,7 +51,7 @@ export function useErrorHandler() {
         const message = t('common.errors.validationFailed', { details: fieldErrors });
 
         if (showToast) {
-          toast.error(t('common.errors.validationError'), {
+          toast.error(withContext(t('common.errors.validationError')), {
             description: message,
             duration: 5000,
           });
@@ -100,7 +104,7 @@ export function useErrorHandler() {
 
         if (showToast) {
           // 直接展示具体错误消息
-          toast.error(message, { duration: 5000 });
+          toast.error(withContext(message), { duration: 5000 });
         }
 
         return { 
@@ -116,7 +120,7 @@ export function useErrorHandler() {
 
       if (showToast) {
         // 直接展示具体错误消息
-        toast.error(errorMessage, { duration: 5000 });
+        toast.error(withContext(errorMessage), { duration: 5000 });
       }
 
       return { type: 'unknown', message: errorMessage };

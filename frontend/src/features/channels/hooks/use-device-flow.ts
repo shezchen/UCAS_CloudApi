@@ -69,7 +69,7 @@ export function useDeviceFlow(
   const [verificationUri, setVerificationUri] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [expiresAt, setExpiresAt] = useState<number | null>(null);
-  const [interval, setInterval] = useState(5);
+  const [pollInterval, setPollInterval] = useState(5);
   const [isPolling, setIsPolling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isComplete, setIsComplete] = useState(false);
@@ -89,33 +89,6 @@ export function useDeviceFlow(
   useEffect(() => {
     onSuccessRef.current = onSuccess;
   }, [onSuccess]);
-
-  const start = useCallback(async () => {
-    if (pollingTimeoutRef.current) {
-      clearTimeout(pollingTimeoutRef.current);
-      pollingTimeoutRef.current = null;
-    }
-
-    setIsPolling(true);
-    setError(null);
-
-    try {
-      const result: DeviceFlowStartResult = await copilotOAuthStart();
-
-      setUserCode(result.user_code);
-      setVerificationUri(result.verification_uri);
-      setSessionId(result.session_id);
-      setExpiresAt(Date.now() + result.expires_in * 1000);
-      setInterval(result.interval);
-      currentIntervalRef.current = result.interval;
-
-      poll(result.session_id, Date.now() + result.expires_in * 1000);
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      setError(errorMessage);
-      setIsPolling(false);
-    }
-  }, [t]);
 
   const poll = useCallback(
     async (sessionId: string, expiry: number) => {
@@ -147,7 +120,7 @@ export function useDeviceFlow(
           } else if (result.status === 'slow_down') {
             const newInterval = currentIntervalRef.current * 2;
             currentIntervalRef.current = newInterval;
-            setInterval(newInterval);
+            setPollInterval(newInterval);
 
             pollingTimeoutRef.current = window.setTimeout(() => {
               poll(sessionId, expiry);
@@ -163,8 +136,35 @@ export function useDeviceFlow(
         setError(errorMessage);
       }
     },
-    [t, onSuccessRef]
+    [t]
   );
+
+  const start = useCallback(async () => {
+    if (pollingTimeoutRef.current) {
+      clearTimeout(pollingTimeoutRef.current);
+      pollingTimeoutRef.current = null;
+    }
+
+    setIsPolling(true);
+    setError(null);
+
+    try {
+      const result: DeviceFlowStartResult = await copilotOAuthStart();
+
+      setUserCode(result.user_code);
+      setVerificationUri(result.verification_uri);
+      setSessionId(result.session_id);
+      setExpiresAt(Date.now() + result.expires_in * 1000);
+      setPollInterval(result.interval);
+      currentIntervalRef.current = result.interval;
+
+      poll(result.session_id, Date.now() + result.expires_in * 1000);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      setError(errorMessage);
+      setIsPolling(false);
+    }
+  }, [poll]);
 
   const reset = useCallback(() => {
     if (pollingTimeoutRef.current) {
@@ -175,7 +175,7 @@ export function useDeviceFlow(
     setVerificationUri(null);
     setSessionId(null);
     setExpiresAt(null);
-    setInterval(5);
+    setPollInterval(5);
     currentIntervalRef.current = 5;
     setIsPolling(false);
     setError(null);
@@ -187,7 +187,7 @@ export function useDeviceFlow(
     verificationUri,
     sessionId,
     expiresAt,
-    interval,
+    interval: pollInterval,
     isPolling,
     error,
     isComplete,

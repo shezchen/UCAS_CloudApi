@@ -41,10 +41,17 @@ func (guid *GUID) UnmarshalGQL(v any) error {
 	}
 
 	typ := before
+	if typ == "" {
+		return errors.New("guid type must not be empty")
+	}
 
 	id, err := strconv.Atoi(after)
 	if err != nil {
 		return err
+	}
+
+	if id <= 0 {
+		return errors.New("guid id must be a positive integer")
 	}
 
 	guid.Type = typ
@@ -65,7 +72,13 @@ func ParseGUID(str string) (GUID, error) {
 }
 
 // ConvertGUIDToInt converts a GUID to an int id.
-// TODO: validate the type from the context.
+//
+// NOTE: The ConvertGUID* converters are invoked from gqlgen-generated code
+// (see the converters section in internal/server/gql/gqlgen.yml), which does
+// not carry the expected entity type, so the type segment cannot be validated
+// here. Resolvers that accept a GUID for a specific entity must check
+// guid.Type against the expected ent type themselves before using the id
+// (see e.g. the APIKey validation in dashboard.resolvers.go).
 func ConvertGUIDToInt(guid GUID) (int, error) {
 	return guid.ID, nil
 }

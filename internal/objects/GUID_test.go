@@ -122,6 +122,39 @@ func TestGUID_UnmarshalGQL(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name: "empty type",
+			fields: fields{
+				Type: "",
+				ID:   0,
+			},
+			args: args{
+				v: "gid://axonhub//1",
+			},
+			wantErr: true,
+		},
+		{
+			name: "zero id",
+			fields: fields{
+				Type: "type",
+				ID:   0,
+			},
+			args: args{
+				v: "gid://axonhub/type/0",
+			},
+			wantErr: true,
+		},
+		{
+			name: "negative id",
+			fields: fields{
+				Type: "type",
+				ID:   0,
+			},
+			args: args{
+				v: "gid://axonhub/type/-1",
+			},
+			wantErr: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

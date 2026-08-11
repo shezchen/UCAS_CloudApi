@@ -145,14 +145,17 @@ func (handlers *GeminiHandlers) ListModels(c *gin.Context) {
 	if err != nil {
 		status := http.StatusInternalServerError
 		errorStatus := "internal_server_error"
+		message := "internal server error"
 		if errors.Is(err, entprivacy.Deny) {
 			status = http.StatusForbidden
 			errorStatus = "permission_error"
+			message = "insufficient permissions to access this resource"
 		}
+		// Internal details go to the access log via c.Error; do not echo them to the client.
 		_ = c.Error(err)
 		c.JSON(status, gemini.GeminiError{
 			Error: gemini.ErrorDetail{
-				Message: err.Error(),
+				Message: message,
 				Code:    status,
 				Status:  errorStatus,
 			},

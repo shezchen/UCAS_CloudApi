@@ -17,6 +17,7 @@ import (
 	"github.com/looplj/axonhub/internal/log"
 	"github.com/looplj/axonhub/internal/server/assets"
 	"github.com/looplj/axonhub/internal/server/biz"
+	"github.com/looplj/axonhub/llm/httpclient"
 )
 
 type SystemHandlersParams struct {
@@ -116,12 +117,14 @@ func (h *SystemHandlers) WebhookEcho(c *gin.Context) {
 		Body:    json.RawMessage(bodyBytes),
 	}
 
+	// Do not log raw headers or the body: inbound webhook requests may carry
+	// credentials (Authorization, X-Api-Key, Cookie, signing secrets, ...).
 	log.Info(c.Request.Context(), "received webhook debug request",
 		log.String("method", resp.Method),
 		log.String("path", resp.Path),
 		log.Any("query", resp.Query),
-		log.Any("headers", resp.Headers),
-		log.Any("body", resp.Body),
+		log.Any("headers", httpclient.MaskSensitiveHeaders(c.Request.Header)),
+		log.Int("body_size", len(bodyBytes)),
 	)
 
 	c.Header("Content-Type", "application/json")
@@ -169,10 +172,11 @@ func (h *SystemHandlers) InitializeSystem(c *gin.Context) {
 		PreferLanguage: req.PreferLanguage,
 	})
 	if err != nil {
+		// Internal details go to the access log via c.Error; do not echo them to the client.
 		_ = c.Error(err)
 		c.JSON(http.StatusInternalServerError, InitializeSystemResponse{
 			Success: false,
-			Message: fmt.Sprintf("Failed to initialize system: %v", err),
+			Message: "Failed to initialize system",
 		})
 
 		return

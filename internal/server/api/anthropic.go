@@ -87,10 +87,13 @@ func (handlers *AnthropicHandlers) ListModels(c *gin.Context) {
 		requestID, _ := contexts.GetRequestID(ctx)
 		status := http.StatusInternalServerError
 		errorType := "internal_server_error"
+		message := "internal server error"
 		if errors.Is(err, entprivacy.Deny) {
 			status = http.StatusForbidden
 			errorType = "permission_error"
+			message = "insufficient permissions to access this resource"
 		}
+		// Internal details go to the access log via c.Error; do not echo them to the client.
 		_ = c.Error(err)
 		c.JSON(status, anthropic.AnthropicError{
 			StatusCode: status,
@@ -98,7 +101,7 @@ func (handlers *AnthropicHandlers) ListModels(c *gin.Context) {
 			RequestID:  requestID,
 			Error: anthropic.ErrorDetail{
 				Type:    errorType,
-				Message: err.Error(),
+				Message: message,
 			},
 		})
 

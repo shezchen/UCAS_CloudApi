@@ -1,6 +1,6 @@
 'use client';
 
-import { type ComponentProps, createContext, type HTMLAttributes, useContext, useEffect, useRef, useState } from 'react';
+import { type ComponentProps, createContext, type HTMLAttributes, useContext, useEffect, useState } from 'react';
 import type { Element } from 'hast';
 import { CheckIcon, CopyIcon } from 'lucide-react';
 import { type BundledLanguage, codeToHtml, type ShikiTransformer } from 'shiki';
@@ -63,7 +63,6 @@ export const MaskedCodeBlock = ({ displayCode, realCode, language, showLineNumbe
   const [html, setHtml] = useState<string>(preRenderedHtml?.light || '');
   const [darkHtml, setDarkHtml] = useState<string>(preRenderedHtml?.dark || '');
   const [isLoading, setIsLoading] = useState(!preRenderedHtml);
-  const mounted = useRef(false);
 
   useEffect(() => {
     if (preRenderedHtml) {
@@ -73,18 +72,18 @@ export const MaskedCodeBlock = ({ displayCode, realCode, language, showLineNumbe
       return;
     }
 
+    let cancelled = false;
     setIsLoading(true);
     highlightMaskedCode(displayCode, language, showLineNumbers).then(([light, dark]) => {
-      if (!mounted.current) {
+      if (!cancelled) {
         setHtml(light);
         setDarkHtml(dark);
         setIsLoading(false);
-        mounted.current = true;
       }
     });
 
     return () => {
-      mounted.current = false;
+      cancelled = true;
     };
   }, [displayCode, language, showLineNumbers, preRenderedHtml]);
 

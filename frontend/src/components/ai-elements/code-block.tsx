@@ -1,6 +1,6 @@
 'use client';
 
-import { type ComponentProps, createContext, type HTMLAttributes, useContext, useEffect, useRef, useState } from 'react';
+import { type ComponentProps, createContext, type HTMLAttributes, useContext, useEffect, useState } from 'react';
 import type { Element } from 'hast';
 import { CheckIcon, CopyIcon } from 'lucide-react';
 import { type BundledLanguage, codeToHtml, type ShikiTransformer } from 'shiki';
@@ -55,19 +55,19 @@ export async function highlightCode(code: string, language: BundledLanguage, sho
 export const CodeBlock = ({ code, language, showLineNumbers = false, className, children, ...props }: CodeBlockProps) => {
   const [html, setHtml] = useState<string>('');
   const [darkHtml, setDarkHtml] = useState<string>('');
-  const mounted = useRef(false);
 
   useEffect(() => {
+    let cancelled = false;
+
     highlightCode(code, language, showLineNumbers).then(([light, dark]) => {
-      if (!mounted.current) {
+      if (!cancelled) {
         setHtml(light);
         setDarkHtml(dark);
-        mounted.current = true;
       }
     });
 
     return () => {
-      mounted.current = false;
+      cancelled = true;
     };
   }, [code, language, showLineNumbers]);
 

@@ -26,20 +26,30 @@ func WithAPIKeyAuth(auth *biz.AuthService) gin.HandlerFunc {
 // WithAPIKeyConfig 中间件用于验证 API key，支持自定义配置.
 func WithAPIKeyConfig(auth *biz.AuthService, config *APIKeyConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		key, err := ExtractAPIKeyFromRequest(c.Request, config)
-		// DO NOT ALLOW USE NO AUTH API KEY DIRECTLY.
-		if key == biz.NoAuthAPIKeyValue {
-			AbortWithError(c, http.StatusUnauthorized, errors.New("Invalid API key"))
-			return
-		}
+		key, extractErr := ExtractAPIKeyFromRequest(c.Request, config)
 
-		var apiKey *ent.APIKey
-		if err == nil {
+		var (
+			apiKey *ent.APIKey
+			err    error
+		)
+
+		if extractErr != nil {
+			// The request carried no usable credentials. Only this case may
+			// fall back to the NoAuth key, which is enabled solely when API
+			// auth is disabled by configuration.
+			apiKey, err = auth.AuthenticateNoAuth(c.Request.Context())
+		} else {
+			// DO NOT ALLOW USE NO AUTH API KEY DIRECTLY.
+			if key == biz.NoAuthAPIKeyValue {
+				AbortWithError(c, http.StatusUnauthorized, errors.New("Invalid API key"))
+				return
+			}
+
+			// Credentials were provided: a failed authentication must surface
+			// as-is and never be masked by a NoAuth fallback.
 			apiKey, err = auth.AuthenticateAPIKey(c.Request.Context(), key)
 		}
-		if err != nil {
-			apiKey, err = auth.AuthenticateNoAuth(c.Request.Context())
-		}
+
 		if err != nil {
 			if ent.IsNotFound(err) || errors.Is(err, biz.ErrInvalidAPIKey) {
 				AbortWithError(c, http.StatusUnauthorized, errors.New("Invalid API key"))

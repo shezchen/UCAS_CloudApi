@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/looplj/axonhub/internal/authz"
 	"github.com/looplj/axonhub/internal/contexts"
 	"github.com/looplj/axonhub/internal/ent"
+	"github.com/looplj/axonhub/internal/ent/apikey"
 	"github.com/looplj/axonhub/internal/ent/project"
 	"github.com/looplj/axonhub/internal/ent/role"
 	"github.com/looplj/axonhub/internal/ent/user"
@@ -119,13 +121,15 @@ func assignCampusMemberToDefaultProject(ctx context.Context, client *ent.Client,
 type UserServiceParams struct {
 	fx.In
 
-	CacheConfig xcache.Config
-	Ent         *ent.Client
+	CacheConfig   xcache.Config
+	Ent           *ent.Client
+	APIKeyService *APIKeyService
 }
 
 type UserService struct {
 	*AbstractService
 
+	APIKeyService       *APIKeyService
 	UserCache           xcache.Cache[ent.User]
 	permissionValidator *PermissionValidator
 }
@@ -135,6 +139,7 @@ func NewUserService(params UserServiceParams) *UserService {
 		AbstractService: &AbstractService{
 			db: params.Ent,
 		},
+		APIKeyService:       params.APIKeyService,
 		UserCache:           xcache.NewFromConfig[ent.User](params.CacheConfig),
 		permissionValidator: NewPermissionValidator(),
 	}
@@ -293,62 +298,82 @@ func (s *UserService) UpdateUser(ctx context.Context, id int, input ent.UpdateUs
 		}
 	}
 
-	mut := client.User.UpdateOneID(id).
-		SetNillableEmail(input.Email).
-		SetNillableNickname(input.Nickname).
-		SetNillableFirstName(input.FirstName).
-		SetNillableLastName(input.LastName).
-		SetNillableIsOwner(input.IsOwner).
-		SetNillablePreferLanguage(input.PreferLanguage)
+	var updatedUser *ent.User
 
-	if input.ClearAvatar {
-		mut.ClearAvatar()
-	} else {
-		mut.SetNillableAvatar(input.Avatar)
-	}
+	err := s.RunInTransaction(ctx, func(txCtx context.Context) error {
+		txClient := s.entFromContext(txCtx)
 
-	if input.Password != nil {
-		hashedPassword, err := HashPassword(*input.Password)
-		if err != nil {
-			return nil, err
+		mut := txClient.User.UpdateOneID(id).
+			SetNillableEmail(input.Email).
+			SetNillableNickname(input.Nickname).
+			SetNillableFirstName(input.FirstName).
+			SetNillableLastName(input.LastName).
+			SetNillableIsOwner(input.IsOwner).
+			SetNillablePreferLanguage(input.PreferLanguage)
+
+		if input.ClearAvatar {
+			mut.ClearAvatar()
+		} else {
+			mut.SetNillableAvatar(input.Avatar)
 		}
 
-		mut.SetPassword(hashedPassword)
-	}
+		if input.Password != nil {
+			hashedPassword, err := HashPassword(*input.Password)
+			if err != nil {
+				return err
+			}
 
-	if input.Scopes != nil {
-		mut.SetScopes(input.Scopes)
-	}
+			mut.SetPassword(hashedPassword)
+		}
 
-	if input.AppendScopes != nil {
-		mut.AppendScopes(input.AppendScopes)
-	}
+		if input.Scopes != nil {
+			mut.SetScopes(input.Scopes)
+		}
 
-	if input.ClearScopes {
-		mut.ClearScopes()
-	}
+		if input.AppendScopes != nil {
+			mut.AppendScopes(input.AppendScopes)
+		}
 
-	if input.AddRoleIDs != nil {
-		mut.AddRoleIDs(input.AddRoleIDs...)
-	}
+		if input.ClearScopes {
+			mut.ClearScopes()
+		}
 
-	if input.RemoveRoleIDs != nil {
-		mut.RemoveRoleIDs(input.RemoveRoleIDs...)
-	}
+		if input.AddRoleIDs != nil {
+			mut.AddRoleIDs(input.AddRoleIDs...)
+		}
 
-	if input.ClearRoles {
-		mut.ClearRoles()
-	}
+		if input.RemoveRoleIDs != nil {
+			mut.RemoveRoleIDs(input.RemoveRoleIDs...)
+		}
 
-	user, err := mut.Save(ctx)
+		if input.ClearRoles {
+			mut.ClearRoles()
+		}
+
+		updated, err := mut.Save(txCtx)
+		if err != nil {
+			return fmt.Errorf("failed to update user: %w", err)
+		}
+
+		if input.Password != nil {
+			// A password change revokes every previously issued JWT.
+			if err := setUserTokenValidAfter(txCtx, txClient, id, time.Now()); err != nil {
+				return err
+			}
+		}
+
+		updatedUser = updated
+
+		return nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to update user: %w", err)
+		return nil, err
 	}
 
 	// Invalidate cache
 	s.invalidateUserCache(ctx, id)
 
-	return user, nil
+	return updatedUser, nil
 }
 
 // UpdateOwnProfile updates fields users are allowed to change for their own account.
@@ -368,56 +393,144 @@ func (s *UserService) UpdateOwnProfile(ctx context.Context, input ent.UpdateUser
 	}
 
 	return authz.RunWithSystemBypass(ctx, "update-own-profile", func(ctx context.Context) (*ent.User, error) {
-		client := s.entFromContext(ctx)
+		var updatedUser *ent.User
 
-		mut := client.User.UpdateOneID(id).
-			SetNillableNickname(input.Nickname).
-			SetNillableFirstName(input.FirstName).
-			SetNillableLastName(input.LastName).
-			SetNillablePreferLanguage(input.PreferLanguage)
+		err := s.RunInTransaction(ctx, func(txCtx context.Context) error {
+			client := s.entFromContext(txCtx)
 
-		if input.ClearAvatar {
-			mut.ClearAvatar()
-		} else {
-			mut.SetNillableAvatar(input.Avatar)
-		}
+			mut := client.User.UpdateOneID(id).
+				SetNillableNickname(input.Nickname).
+				SetNillableFirstName(input.FirstName).
+				SetNillableLastName(input.LastName).
+				SetNillablePreferLanguage(input.PreferLanguage)
 
-		if input.Password != nil {
-			hashedPassword, err := HashPassword(*input.Password)
-			if err != nil {
-				return nil, err
+			if input.ClearAvatar {
+				mut.ClearAvatar()
+			} else {
+				mut.SetNillableAvatar(input.Avatar)
 			}
 
-			mut.SetPassword(hashedPassword)
-		}
+			if input.Password != nil {
+				hashedPassword, err := HashPassword(*input.Password)
+				if err != nil {
+					return err
+				}
 
-		user, err := mut.Save(ctx)
+				mut.SetPassword(hashedPassword)
+			}
+
+			updated, err := mut.Save(txCtx)
+			if err != nil {
+				return fmt.Errorf("failed to update user profile: %w", err)
+			}
+
+			if input.Password != nil {
+				// A password change revokes every previously issued JWT; the
+				// user signs in again with the new password.
+				if err := setUserTokenValidAfter(txCtx, client, id, time.Now()); err != nil {
+					return err
+				}
+			}
+
+			updatedUser = updated
+
+			return nil
+		})
 		if err != nil {
-			return nil, fmt.Errorf("failed to update user profile: %w", err)
+			return nil, err
 		}
 
 		// Invalidate cache
 		s.invalidateUserCache(ctx, id)
 
-		return user, nil
+		return updatedUser, nil
 	})
 }
 
-// UpdateUserStatus updates the status of a user.
+// UpdateUserStatus updates the status of a user. Deactivating a user also
+// disables the user's API keys and revokes previously issued JWTs so access
+// ends immediately instead of lasting until key or token expiry. Reactivation
+// deliberately does not re-enable keys; they must be reviewed and re-enabled
+// explicitly.
 func (s *UserService) UpdateUserStatus(ctx context.Context, id int, status user.Status) (*ent.User, error) {
-	client := s.entFromContext(ctx)
+	var (
+		updatedUser  *ent.User
+		disabledKeys []string
+	)
 
-	user, err := client.User.UpdateOneID(id).
-		SetStatus(status).
-		Save(ctx)
+	err := s.RunInTransaction(ctx, func(txCtx context.Context) error {
+		client := s.entFromContext(txCtx)
+
+		updated, err := client.User.UpdateOneID(id).
+			SetStatus(status).
+			Save(txCtx)
+		if err != nil {
+			return fmt.Errorf("failed to update user status: %w", err)
+		}
+
+		updatedUser = updated
+
+		if status == user.StatusActivated {
+			return nil
+		}
+
+		disabledKeys, err = s.disableUserAPIKeys(txCtx, id)
+		if err != nil {
+			return err
+		}
+
+		return setUserTokenValidAfter(txCtx, client, id, time.Now())
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to update user status: %w", err)
+		return nil, err
 	}
 
-	// Invalidate cache
+	// Invalidate caches only after the transaction has been committed so a
+	// concurrent request cannot re-populate them with the pre-commit state.
 	s.invalidateUserCache(ctx, id)
 
-	return user, nil
+	if len(disabledKeys) > 0 {
+		s.APIKeyService.invalidateAPIKeyCaches(ctx, disabledKeys...)
+	}
+
+	return updatedUser, nil
+}
+
+// disableUserAPIKeys disables every enabled API key owned by the user inside
+// the current transaction and returns the disabled key values so callers can
+// invalidate the API key cache after the transaction commits. It runs under a
+// system bypass: cutting off access on deactivation or deletion is a security
+// side effect that must not depend on the caller's api-key scopes. The noauth
+// key is excluded because it is a system-managed key.
+func (s *UserService) disableUserAPIKeys(ctx context.Context, userID int) ([]string, error) {
+	return authz.RunWithSystemBypass(ctx, "user-revoke-api-keys", func(bypassCtx context.Context) ([]string, error) {
+		client := s.entFromContext(bypassCtx)
+
+		apiKeys, err := client.APIKey.Query().
+			Where(
+				apikey.UserIDEQ(userID),
+				apikey.StatusEQ(apikey.StatusEnabled),
+				apikey.TypeNEQ(apikey.TypeNoauth),
+			).
+			All(bypassCtx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query user api keys: %w", err)
+		}
+
+		if len(apiKeys) == 0 {
+			return nil, nil
+		}
+
+		_, err = client.APIKey.Update().
+			Where(apikey.IDIn(lo.Map(apiKeys, func(k *ent.APIKey, _ int) int { return k.ID })...)).
+			SetStatus(apikey.StatusDisabled).
+			Save(bypassCtx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to disable user api keys: %w", err)
+		}
+
+		return lo.Map(apiKeys, func(k *ent.APIKey, _ int) string { return k.Key }), nil
+	})
 }
 
 // GetUserByID gets a user by ID with caching.
@@ -734,7 +847,9 @@ func (s *UserService) DeleteUser(ctx context.Context, id int) error {
 		return fmt.Errorf("permission denied: %w", err)
 	}
 
-	return s.RunInTransaction(ctx, func(ctx context.Context) error {
+	var disabledKeys []string
+
+	err := s.RunInTransaction(ctx, func(ctx context.Context) error {
 		client := s.entFromContext(ctx)
 
 		// Get user to check if it's an owner
@@ -748,7 +863,19 @@ func (s *UserService) DeleteUser(ctx context.Context, id int) error {
 			return fmt.Errorf("cannot delete owner user, transfer ownership first")
 		}
 
-		// 1. Delete UserProject relationships
+		// 1. Revoke access: disable the user's API keys and invalidate every
+		// previously issued JWT. Soft-deleting the user alone would leave
+		// enabled keys behind.
+		disabledKeys, err = s.disableUserAPIKeys(ctx, id)
+		if err != nil {
+			return err
+		}
+
+		if err := setUserTokenValidAfter(ctx, client, id, time.Now()); err != nil {
+			return err
+		}
+
+		// 2. Delete UserProject relationships
 		_, err = client.UserProject.Delete().
 			Where(userproject.UserIDEQ(id)).
 			Exec(ctx)
@@ -756,7 +883,7 @@ func (s *UserService) DeleteUser(ctx context.Context, id int) error {
 			return fmt.Errorf("failed to delete user projects: %w", err)
 		}
 
-		// 2. Delete UserRole relationships
+		// 3. Delete UserRole relationships
 		_, err = client.UserRole.Delete().
 			Where(userrole.UserIDEQ(id)).
 			Exec(ctx)
@@ -764,15 +891,24 @@ func (s *UserService) DeleteUser(ctx context.Context, id int) error {
 			return fmt.Errorf("failed to delete user roles: %w", err)
 		}
 
-		// 3. Soft delete the user
+		// 4. Soft delete the user
 		err = client.User.DeleteOneID(id).Exec(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to delete user: %w", err)
 		}
 
-		// 4. Invalidate user cache
+		// 5. Invalidate user cache
 		s.invalidateUserCache(ctx, id)
 
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+
+	if len(disabledKeys) > 0 {
+		s.APIKeyService.invalidateAPIKeyCaches(ctx, disabledKeys...)
+	}
+
+	return nil
 }

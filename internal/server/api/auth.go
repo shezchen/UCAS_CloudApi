@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/fx"
 
+	"github.com/looplj/axonhub/internal/contexts"
 	"github.com/looplj/axonhub/internal/objects"
 	"github.com/looplj/axonhub/internal/server/biz"
 )
@@ -134,11 +135,23 @@ func (h *AuthHandlers) SignIn(c *gin.Context) {
 		return
 	}
 
+	// Brute-force protection: reject the attempt outright while the account
+	// or the client IP is locked out after repeated failures.
+	source := c.ClientIP()
+	if err := h.AuthService.CheckSignInThrottle(req.Email, source); err != nil {
+		JSONError(c, http.StatusTooManyRequests, err)
+		return
+	}
+
 	// Authenticate user
 	user, err := h.AuthService.AuthenticateUser(ctx, req.Email, req.Password)
 	if err != nil {
 		if errors.Is(err, biz.ErrInvalidPassword) {
+			// Only failed credential checks count towards the lockout;
+			// internal errors must not lock accounts out.
+			h.AuthService.RecordSignInFailure(req.Email, source)
 			JSONError(c, http.StatusUnauthorized, errors.New("Invalid email or password"))
+
 			return
 		}
 
@@ -146,6 +159,8 @@ func (h *AuthHandlers) SignIn(c *gin.Context) {
 
 		return
 	}
+
+	h.AuthService.RecordSignInSuccess(req.Email)
 
 	// Generate JWT token
 	token, err := h.AuthService.GenerateJWTToken(ctx, user)
@@ -160,4 +175,23 @@ func (h *AuthHandlers) SignIn(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, response)
+}
+
+// SignOut revokes every JWT previously issued to the current user ("sign out
+// everywhere"). The JWT scheme is stateless, so revocation is implemented with
+// a per-user token-valid-after timestamp that is checked on every token
+// validation.
+func (h *AuthHandlers) SignOut(c *gin.Context) {
+	currentUser, ok := contexts.GetUser(c.Request.Context())
+	if !ok || currentUser == nil {
+		JSONError(c, http.StatusUnauthorized, errors.New("Authentication required"))
+		return
+	}
+
+	if err := h.AuthService.RevokeUserTokens(c.Request.Context(), currentUser.ID); err != nil {
+		JSONError(c, http.StatusInternalServerError, errors.New("Failed to sign out"))
+		return
+	}
+
+	c.Status(http.StatusNoContent)
 }

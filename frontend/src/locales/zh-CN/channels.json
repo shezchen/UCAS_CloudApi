@@ -161,7 +161,7 @@
   "channels.actions.markErrorResolved": "标记错误已解决",
   "channels.actions.viewModels": "查看模型",
   "channels.actions.testHistory": "测试历史",
-  "channels.actions.testAPIKeys": "检测密钥 ({{count}})",
+  "channels.actions.testAPIKeys": "检测密钥",
   "channels.actions.disabledAPIKeys": "已禁用密钥 ({{count}})",
   "channels.errorBanner.message": "有 {{count}} 个渠道因错误被禁用，请在渠道操作菜单中点击「标记错误已解决」来消除此提示",
   "channels.errorBanner.filterButton": "显示错误渠道",

@@ -15,7 +15,7 @@ import { ChannelsPrimaryButtons } from './components/channels-primary-buttons';
 import { ChannelsTable } from './components/channels-table';
 import { ChannelsTypeTabs } from './components/channels-type-tabs';
 import ChannelsProvider from './context/channels-context';
-import { useQueryChannels, useChannelTypes, useErrorChannelsCount, useChannelProbeData } from './data/channels';
+import { useQueryChannels, useChannelTypes, useErrorChannelsCount, useChannelProbeData, useChannelLimiterStats } from './data/channels';
 import { useProvidersData } from '@/features/models/data/providers';
 
 const ChannelsDialogs = lazy(() => import('./components/channels-dialogs').then((m) => ({ default: m.ChannelsDialogs })));
@@ -182,16 +182,22 @@ function ChannelsContent() {
 
   const { data: probeData } = useChannelProbeData(channelIDs, { enabled: isOwner && isHealthColumnVisible });
 
+  // The live limiter snapshot is polled separately (id + limiter fields only) so
+  // the heavy channel list query does not need to refetch every 5 seconds.
+  const { data: limiterStatsData } = useChannelLimiterStats(channelIDs, { enabled: isOwner && isHealthColumnVisible });
+
   const channelsWithProbeData = useMemo(() => {
     if (!data?.edges) return [];
     
     const probeMap = new Map(probeData?.map((probe) => [probe.channelID, probe.points]) || []);
+    const limiterMap = new Map(limiterStatsData?.map((node) => [node.id, node.liveLimiterStats]) || []);
     
     return data.edges.map((edge) => ({
       ...edge.node,
       probePoints: probeMap.get(edge.node.id) || [],
+      liveLimiterStats: limiterMap.get(edge.node.id) ?? null,
     }));
-  }, [data?.edges, probeData]);
+  }, [data?.edges, probeData, limiterStatsData]);
 
   const handleNextPage = useCallback(() => {
     if (data?.pageInfo?.hasNextPage && data?.pageInfo?.endCursor) {

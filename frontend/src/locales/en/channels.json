@@ -161,7 +161,7 @@
   "channels.actions.markErrorResolved": "Mark Error as Resolved",
   "channels.actions.viewModels": "View Models",
   "channels.actions.testHistory": "Test History",
-  "channels.actions.testAPIKeys": "Test API Keys ({{count}})",
+  "channels.actions.testAPIKeys": "Test API Keys",
   "channels.actions.disabledAPIKeys": "Disabled Keys ({{count}})",
   "channels.errorBanner.message": "{{count}} channel(s) disabled due to errors. Use the action menu to \"Mark Error as Resolved\" to dismiss.",
   "channels.errorBanner.filterButton": "Show Error Channels",

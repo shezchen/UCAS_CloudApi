@@ -6,7 +6,7 @@ import { MessageSquare, RefreshCcw, Copy } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { useAuthStore } from '@/stores/authStore';
-import { useSelectedProjectId } from '@/stores/projectStore';
+import { useProjectStore } from '@/stores/projectStore';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -22,7 +22,7 @@ import { PromptInput, PromptInputTextarea, PromptInputSubmit } from '@/component
 import { Reasoning, ReasoningTrigger, ReasoningContent } from '@/components/ai-elements/reasoning';
 import { Response as UIResponse } from '@/components/ai-elements/response';
 import { AutoCompleteSelect } from '@/components/auto-complete-select';
-import { useQueryChannels } from '@/features/channels/data/channels';
+import { useChannelOptions } from '@/features/channels/data/channels';
 import { useQueryModels } from '@/features/models/data/models';
 
 type PlaygroundModelSource = 'channel' | 'model_gateway';
@@ -69,11 +69,8 @@ export default function Playground() {
     modelSourceRef.current = modelSource;
   }, [modelSource]);
 
-  const { accessToken } = useAuthStore((state) => state.auth);
-  const selectedProjectId = useSelectedProjectId();
-
-  // 获取 channels 数据
-  const { data: channelsData, isLoading: channelsLoading } = useQueryChannels({
+  // 获取 channels 数据（轻量查询：只含 id/name/models，不携带凭据等管理端字段）
+  const { data: channelsData, isLoading: channelsLoading } = useChannelOptions({
     first: 100,
     orderBy: { field: 'ORDERING_WEIGHT', direction: 'DESC' },
     where: {
@@ -100,9 +97,11 @@ export default function Playground() {
       api: '/admin/playground/chat',
       credentials: 'include',
       headers: () => {
+        // Read auth/project state non-reactively at request time so long-lived
+        // chats never send a token or project id captured at render time.
         const headers: Record<string, string> = {
-          Authorization: 'Bearer ' + accessToken,
-          'X-Project-ID': selectedProjectId || '',
+          Authorization: 'Bearer ' + useAuthStore.getState().auth.accessToken,
+          'X-Project-ID': useProjectStore.getState().selectedProjectId || '',
         };
         if (modelSourceRef.current === 'channel' && selectedChannelRef.current) {
           headers['X-Channel-ID'] = selectedChannelRef.current;

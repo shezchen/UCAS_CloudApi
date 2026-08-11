@@ -92,8 +92,9 @@ const ActionCell = memo(({ row }: { row: Row<Channel> }) => {
   const isArchived = channel.status === 'archived';
   const hasError = !!channel.errorMessage;
   const hasDisabledAPIKeys = canManageChannel && (channel.disabledAPIKeys?.length ?? 0) > 0;
-  const apiKeysCount = channel.credentials?.apiKeys?.filter((key) => key.trim().length > 0).length ?? 0;
-  const hasMultipleAPIKeys = canManageChannel && apiKeysCount > 1;
+  // Credentials are no longer shipped with the list query, so the key count is
+  // unknown here; the test dialog fetches keys on demand and handles 0/1 keys.
+  const canTestAPIKeys = canManageChannel && !isArchived;
   const ownerCannotDeleteChannel = isOwner && isActiveDonationOwnedByAnotherUser(channel, user?.id);
 
   const handleDefaultTest = async () => {
@@ -224,7 +225,7 @@ const ActionCell = memo(({ row }: { row: Row<Channel> }) => {
             <IconPlugConnected size={16} className='mr-2' />
             {t('channels.endpoints.title')}
           </DropdownMenuItem>
-          {hasMultipleAPIKeys && (
+          {canTestAPIKeys && (
             <DropdownMenuItem
               onClick={() => {
                 setCurrentRow(channel);
@@ -232,7 +233,7 @@ const ActionCell = memo(({ row }: { row: Row<Channel> }) => {
               }}
             >
               <IconPlayerPlay size={16} className='mr-2' />
-              {t('channels.actions.testAPIKeys', { count: apiKeysCount })}
+              {t('channels.actions.testAPIKeys')}
             </DropdownMenuItem>
           )}
           {hasDisabledAPIKeys && (

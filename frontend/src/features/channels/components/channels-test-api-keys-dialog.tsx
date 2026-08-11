@@ -12,11 +12,14 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useChannels } from '../context/channels-context';
 import { useDeleteDisabledChannelAPIKeys, useDisableChannelAPIKey, useTestChannelAPIKey, useUpdateChannel } from '../data/channels';
-import { TestAPIKeyResult } from '../data/schema';
+import { Channel, TestAPIKeyResult } from '../data/schema';
 
 interface ChannelsTestAPIKeysDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  // Passed in with on-demand fetched credentials (the list query no longer
+  // carries them), instead of reading the bare row from context.
+  currentRow: Channel;
 }
 
 function maskAPIKey(key: string) {
@@ -26,9 +29,9 @@ function maskAPIKey(key: string) {
   return `${key.slice(0, 4)}****${key.slice(-4)}`;
 }
 
-export function ChannelsTestAPIKeysDialog({ open, onOpenChange }: ChannelsTestAPIKeysDialogProps) {
+export function ChannelsTestAPIKeysDialog({ open, onOpenChange, currentRow }: ChannelsTestAPIKeysDialogProps) {
   const { t } = useTranslation();
-  const { currentRow, setOpen } = useChannels();
+  const { setOpen } = useChannels();
   const [results, setResults] = useState<TestAPIKeyResult[]>([]);
   const [testedKeys, setTestedKeys] = useState<string[]>([]);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
@@ -89,10 +92,6 @@ export function ChannelsTestAPIKeysDialog({ open, onOpenChange }: ChannelsTestAP
   const isSomeSelected = [...selectableKeys].some((key) => selectedKeys.has(key)) && !isAllSelected;
 
   const isPending = isTesting || disableAPIKey.isPending || updateChannel.isPending || deleteDisabledAPIKeys.isPending;
-
-  if (!currentRow) {
-    return null;
-  }
 
   const handleClose = () => {
     abortRef.current = true;

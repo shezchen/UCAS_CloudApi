@@ -9,10 +9,13 @@ import { useAuthStore } from '@/stores/authStore';
 import {
   Channel,
   ChannelConnection,
+  ChannelCredentials,
   ChannelSummaryConnection,
   CreateChannelInput,
   UpdateChannelInput,
   channelConnectionSchema,
+  channelCredentialsSchema,
+  channelLimiterStatsSchema,
   channelSchema,
   channelEndpointsResponseSchema,
   BulkImportChannelsInput,
@@ -822,15 +825,6 @@ const QUERY_CHANNELS_QUERY = `
           policies {
             stream
           }
-          credentials {
-            apiKey
-            apiKeys
-            gcp {
-              region
-              projectID
-              jsonData
-            }
-          }
           supportedModels
           autoSyncSupportedModels
           autoSyncModelPattern
@@ -928,12 +922,6 @@ const QUERY_CHANNELS_QUERY = `
             disabledAt
             errorCode
             reason
-          }
-          liveLimiterStats {
-            inFlight
-            waiting
-            capacity
-            queueSize
           }
         }
         cursor
@@ -1049,10 +1037,6 @@ export function useQueryChannels(
         throw error;
       }
     },
-    // Poll so the live limiter snapshot (in-flight / queue) stays roughly fresh.
-    // 5s is light traffic; pause when the tab is hidden.
-    refetchInterval: 5000,
-    refetchIntervalInBackground: false,
   });
 }
 
@@ -1097,6 +1081,189 @@ export function useAllChannelNames(options?: { enabled?: boolean }) {
       }
     },
     staleTime: 5 * 60 * 1000, // 5 minutes
+  });
+}
+
+// Lightweight channel list for pickers (Playground etc.). Deliberately excludes
+// credentials, settings and other admin-only payloads.
+const QUERY_CHANNEL_OPTIONS_QUERY = `
+  query QueryChannelOptions($input: QueryChannelInput!) {
+    queryChannels(input: $input) {
+      edges {
+        node {
+          id
+          name
+          supportedModels
+        }
+        cursor
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+`;
+
+const channelOptionsConnectionSchema = z.object({
+  edges: z.array(
+    z.object({
+      node: z.object({
+        id: z.string(),
+        name: z.string(),
+        supportedModels: z.array(z.string()),
+      }),
+      cursor: z.string(),
+    })
+  ),
+  pageInfo: pageInfoSchema.pick({
+    hasNextPage: true,
+    endCursor: true,
+  }),
+});
+
+export type ChannelOptionsConnection = z.infer<typeof channelOptionsConnectionSchema>;
+
+export function useChannelOptions(variables?: {
+  first?: number;
+  where?: Record<string, unknown>;
+  orderBy?: {
+    field: ChannelOrderField;
+    direction: 'ASC' | 'DESC';
+  };
+}) {
+  const { handleError } = useErrorHandler();
+  const { t } = useTranslation();
+  const viewerCacheKey = useChannelViewerCacheKey();
+
+  return useQuery({
+    queryKey: [
+      'channels',
+      viewerCacheKey,
+      'options',
+      variables?.where,
+      variables?.orderBy?.field,
+      variables?.orderBy?.direction,
+      variables?.first,
+    ],
+    queryFn: async () => {
+      try {
+        const data = await graphqlRequest<{ queryChannels: unknown }>(QUERY_CHANNEL_OPTIONS_QUERY, { input: variables });
+        return channelOptionsConnectionSchema.parse(data?.queryChannels);
+      } catch (error) {
+        handleError(error, t('common.errors.internalServerError'));
+        throw error;
+      }
+    },
+  });
+}
+
+// Live limiter snapshot poll. Kept separate from the main channel query so the
+// 5s refresh only carries id + limiter fields instead of full channel objects.
+const CHANNEL_LIMITER_STATS_QUERY = `
+  query ChannelLimiterStats($input: QueryChannelInput!) {
+    queryChannels(input: $input) {
+      edges {
+        node {
+          id
+          liveLimiterStats {
+            inFlight
+            waiting
+            capacity
+            queueSize
+          }
+        }
+        cursor
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+`;
+
+const channelLimiterStatsConnectionSchema = z.object({
+  edges: z.array(
+    z.object({
+      node: z.object({
+        id: z.string(),
+        liveLimiterStats: channelLimiterStatsSchema.optional().nullable(),
+      }),
+      cursor: z.string(),
+    })
+  ),
+  pageInfo: pageInfoSchema.pick({
+    hasNextPage: true,
+    endCursor: true,
+  }),
+});
+
+export function useChannelLimiterStats(channelIDs: string[], options?: { enabled?: boolean }) {
+  const viewerCacheKey = useChannelViewerCacheKey();
+
+  return useQuery({
+    queryKey: ['channelLimiterStats', viewerCacheKey, channelIDs],
+    queryFn: async () => {
+      const data = await graphqlRequest<{ queryChannels: unknown }>(CHANNEL_LIMITER_STATS_QUERY, {
+        input: {
+          first: channelIDs.length,
+          where: { idIn: channelIDs },
+        },
+      });
+      return channelLimiterStatsConnectionSchema.parse(data?.queryChannels).edges.map((edge) => edge.node);
+    },
+    enabled: channelIDs.length > 0 && options?.enabled !== false,
+    // Polling failures stay silent on purpose: a stale snapshot is acceptable and
+    // the next tick retries anyway, so errors must not spam toasts.
+    refetchInterval: 5000,
+    refetchIntervalInBackground: false,
+    retry: false,
+  });
+}
+
+// Credentials are excluded from list queries; fetch them on demand for a single
+// channel right before editing/duplicating it or testing its keys.
+const GET_CHANNEL_CREDENTIALS_QUERY = `
+  query GetChannelCredentials($id: ID!) {
+    node(id: $id) {
+      ... on Channel {
+        id
+        credentials {
+          apiKey
+          apiKeys
+          gcp {
+            region
+            projectID
+            jsonData
+          }
+        }
+      }
+    }
+  }
+`;
+
+export function useChannelCredentials(channelId: string, options?: { enabled?: boolean }) {
+  const { handleError } = useErrorHandler();
+  const { t } = useTranslation();
+  const viewerCacheKey = useChannelViewerCacheKey();
+
+  return useQuery({
+    // Keyed under 'channels' so channel mutations' invalidations also refresh it.
+    queryKey: ['channels', viewerCacheKey, 'credentials', channelId],
+    queryFn: async () => {
+      try {
+        const data = await graphqlRequest<{ node: { id: string; credentials?: ChannelCredentials | null } | null }>(
+          GET_CHANNEL_CREDENTIALS_QUERY,
+          { id: channelId }
+        );
+        return data.node?.credentials ? channelCredentialsSchema.parse(data.node.credentials) : null;
+      } catch (error) {
+        handleError(error, t('common.errors.internalServerError'));
+        throw error;
+      }
+    },
+    enabled: !!channelId && options?.enabled !== false,
   });
 }
 

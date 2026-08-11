@@ -14,6 +14,7 @@ import (
 	"github.com/looplj/axonhub/internal/ent/model"
 	"github.com/looplj/axonhub/internal/ent/project"
 	"github.com/looplj/axonhub/internal/objects"
+	"github.com/looplj/axonhub/internal/pkg/xapikey"
 )
 
 func TestBackupService_Restore(t *testing.T) {
@@ -240,7 +241,9 @@ func TestBackupService_Restore_RemapChannelIDsInModelSettingsAndAPIKeyProfiles(t
 	require.Len(t, restoredModel.Settings.Associations[0].Regex.Exclude, 1)
 	require.Equal(t, []int{restoredChannel.ID}, restoredModel.Settings.Associations[0].Regex.Exclude[0].ChannelIds)
 
-	restoredKey, err := client.APIKey.Query().Where(apikey.Key("sk-backup-key")).First(ctx)
+	// Raw keys from the backup are hashed on write; the key column only keeps
+	// the redacted display form.
+	restoredKey, err := client.APIKey.Query().Where(apikey.KeyHashEQ(xapikey.Hash("sk-backup-key"))).First(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, restoredKey.Profiles)
 	require.Len(t, restoredKey.Profiles.Profiles, 1)

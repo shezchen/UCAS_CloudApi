@@ -21,6 +21,7 @@ import (
 	"github.com/looplj/axonhub/internal/ent/usagelog"
 	"github.com/looplj/axonhub/internal/log"
 	"github.com/looplj/axonhub/internal/objects"
+	"github.com/looplj/axonhub/internal/pkg/xapikey"
 )
 
 func (svc *BackupService) Restore(ctx context.Context, data []byte, opts RestoreOptions) error {
@@ -38,7 +39,7 @@ func (svc *BackupService) Restore(ctx context.Context, data []byte, opts Restore
 		return err
 	}
 
-	if !lo.Contains([]string{BackupVersion, BackupVersionV4, BackupVersionV3, BackupVersionV2, BackupVersionV1}, backupData.Version) {
+	if !lo.Contains([]string{BackupVersion, BackupVersionV5, BackupVersionV4, BackupVersionV3, BackupVersionV2, BackupVersionV1}, backupData.Version) {
 		log.Warn(ctx, "backup version mismatch",
 			log.String("expected", BackupVersion),
 			log.String("got", backupData.Version))
@@ -193,6 +194,7 @@ type usageRestoreResolver struct {
 	channelNames map[string]int
 	channelIDs   map[int]struct{}
 	apiKeyKeys   map[string]int
+	apiKeyHashes map[string]int
 }
 
 func newUsageRestoreResolver(ctx context.Context, db *ent.Client) (*usageRestoreResolver, error) {
@@ -211,7 +213,7 @@ func newUsageRestoreResolver(ctx context.Context, db *ent.Client) (*usageRestore
 	}
 
 	apiKeys, err := db.APIKey.Query().
-		Select(apikey.FieldID, apikey.FieldKey).
+		Select(apikey.FieldID, apikey.FieldKey, apikey.FieldKeyHash).
 		All(ctx)
 	if err != nil {
 		return nil, err
@@ -223,6 +225,7 @@ func newUsageRestoreResolver(ctx context.Context, db *ent.Client) (*usageRestore
 		channelNames: make(map[string]int, len(channels)),
 		channelIDs:   make(map[int]struct{}, len(channels)),
 		apiKeyKeys:   make(map[string]int, len(apiKeys)),
+		apiKeyHashes: make(map[string]int, len(apiKeys)),
 	}
 
 	for _, proj := range projects {
@@ -237,6 +240,10 @@ func newUsageRestoreResolver(ctx context.Context, db *ent.Client) (*usageRestore
 
 	for _, ak := range apiKeys {
 		resolver.apiKeyKeys[ak.Key] = ak.ID
+
+		if ak.KeyHash != "" {
+			resolver.apiKeyHashes[ak.KeyHash] = ak.ID
+		}
 	}
 
 	return resolver, nil
@@ -271,8 +278,19 @@ func (r *usageRestoreResolver) resolveChannelID(channelID int, channelName strin
 }
 
 func (r *usageRestoreResolver) resolveAPIKeyID(apiKeyKey string) (int, bool) {
-	if apiKeyKey != "" {
-		id, ok := r.apiKeyKeys[apiKeyKey]
+	if apiKeyKey == "" {
+		return 0, false
+	}
+
+	// New backups reference keys by their redacted display value, which is
+	// exactly what the key column stores.
+	if id, ok := r.apiKeyKeys[apiKeyKey]; ok {
+		return id, ok
+	}
+
+	// Old backups carry the raw key; resolve it through the stored hash.
+	if !xapikey.IsRedacted(apiKeyKey) {
+		id, ok := r.apiKeyHashes[xapikey.Hash(apiKeyKey)]
 		return id, ok
 	}
 
@@ -765,8 +783,22 @@ func (svc *BackupService) restoreAPIKeys(ctx context.Context, db *ent.Client, ap
 
 		remapAPIKeyProfilesChannelIDs(akData.Profiles, channelIDMap)
 
+		// Identify the key by hash when available: new backups ship the hash
+		// directly, and raw keys from old backups are hashed on the fly. The
+		// redacted display value is only a last-resort match for new-format
+		// backups that predate hash export.
+		keyHash := akData.KeyHash
+		if keyHash == "" && !xapikey.IsRedacted(akData.Key) {
+			keyHash = xapikey.Hash(akData.Key)
+		}
+
+		matchPredicate := apikey.KeyHashEQ(keyHash)
+		if keyHash == "" {
+			matchPredicate = apikey.Key(akData.Key)
+		}
+
 		existing, err := db.APIKey.Query().
-			Where(apikey.Key(akData.Key)).
+			Where(matchPredicate).
 			First(ctx)
 		if err != nil && !ent.IsNotFound(err) {
 			return err
@@ -828,6 +860,17 @@ func (svc *BackupService) restoreAPIKeys(ctx context.Context, db *ent.Client, ap
 				SetProfiles(akData.Profiles).
 				SetUserID(user.ID).
 				SetProjectID(proj.ID)
+
+			// Raw keys from old backups are hashed by the APIKey schema hook.
+			// New backups carry a redacted key, so the hash (and prefix) must
+			// be restored explicitly for the key to stay verifiable.
+			if akData.KeyHash != "" {
+				create.SetKeyHash(akData.KeyHash)
+			}
+
+			if akData.KeyPrefix != "" {
+				create.SetKeyPrefix(akData.KeyPrefix)
+			}
 
 			if _, err := create.Save(ctx); err != nil {
 				log.Error(ctx, "failed to create API key",
@@ -1135,10 +1178,21 @@ func usageRequestFingerprint(
 		reasoningEffort,
 		projectName,
 		channelName,
-		apiKeyKey,
+		normalizeAPIKeyDisplay(apiKeyKey),
 	}
 
 	return strings.Join(parts, "\x00")
+}
+
+// normalizeAPIKeyDisplay maps both raw keys (old backups) and redacted keys
+// (current database rows and new backups) onto the same redacted display
+// form, so usage fingerprints keep matching across backup format versions.
+func normalizeAPIKeyDisplay(key string) string {
+	if key == "" || xapikey.IsRedacted(key) {
+		return key
+	}
+
+	return xapikey.Redact(key)
 }
 
 func sameUsageRequest(existing *ent.Request, backup *BackupUsageRequest, projectID, channelID, apiKeyID int) bool {

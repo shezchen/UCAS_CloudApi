@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cespare/xxhash/v2"
 	"github.com/samber/lo"
 	"go.uber.org/fx"
 
@@ -22,6 +21,7 @@ import (
 	"github.com/looplj/axonhub/internal/log"
 	"github.com/looplj/axonhub/internal/objects"
 	"github.com/looplj/axonhub/internal/pkg/watcher"
+	"github.com/looplj/axonhub/internal/pkg/xapikey"
 	"github.com/looplj/axonhub/internal/pkg/xcache"
 	"github.com/looplj/axonhub/internal/pkg/xcache/live"
 	"github.com/looplj/axonhub/internal/scopes"
@@ -94,11 +94,15 @@ func NewAPIKeyService(params APIKeyServiceParams) *APIKeyService {
 		watcherMode = watcher.ModeRedis
 	}
 
+	// The cache name, watcher channel, and cache-key format carry a schema
+	// version segment (v2: hash-based identity) so instances running the old
+	// plaintext-key scheme never exchange incompatible invalidation events
+	// with upgraded instances.
 	notifier, err := watcher.NewWatcherFromConfig[live.CacheEvent[string]](watcher.Config{
 		Mode:  watcherMode,
 		Redis: params.CacheConfig.Redis,
 	}, watcher.WatcherFromConfigOptions{
-		RedisChannel: "axonhub:cache:api_keys",
+		RedisChannel: "axonhub:cache:api_keys:v2",
 		Buffer:       32,
 	})
 	if err != nil {
@@ -112,11 +116,11 @@ func NewAPIKeyService(params APIKeyServiceParams) *APIKeyService {
 
 	svc.apiKeyNotifier = notifier
 	svc.APIKeyCache = live.NewIndexedCache(live.IndexedOptions[string, *ent.APIKey]{
-		Name:            "axonhub:api_keys",
+		Name:            "axonhub:api_keys:v2",
 		TTL:             ttl,
 		RefreshInterval: 30 * time.Second,
 		DebounceDelay:   500 * time.Millisecond,
-		KeyFunc:         func(v *ent.APIKey) string { return buildAPIKeyCacheKey(v.Key) },
+		KeyFunc:         func(v *ent.APIKey) string { return apiKeyCacheKeyForHash(v.KeyHash) },
 		DeletedFunc:     func(v *ent.APIKey) bool { return v.DeletedAt != 0 },
 		Watcher:         notifier,
 		LoadOneFunc:     svc.onLoadOneKey,
@@ -141,8 +145,48 @@ func (s *APIKeyService) loadAPIKeyByKey(ctx context.Context, cacheKey string) (*
 	}
 
 	client := s.entFromContext(ctx)
+	keyHash := xapikey.Hash(originalKey)
 
-	item, err := client.APIKey.Query().Where(apikey.KeyEQ(originalKey), apikey.DeletedAtEQ(0)).First(ctx)
+	item, err := client.APIKey.Query().Where(apikey.KeyHashEQ(keyHash), apikey.DeletedAtEQ(0)).First(ctx)
+	if err != nil && !ent.IsNotFound(err) {
+		return nil, err
+	}
+
+	if item == nil {
+		// Migration fallback: rows written by pre-hash instances still hold the
+		// plaintext key and no hash. Match on the legacy column and repair the
+		// row in place so subsequent lookups use the hash path.
+		item, err = s.loadAndRepairLegacyAPIKey(ctx, originalKey, keyHash)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Verify the loaded row actually corresponds to the requested cache entry
+	// before it is stored under that key (guards against any key derivation
+	// mismatch handing out a foreign API key).
+	if item.KeyHash != keyHash || apiKeyCacheKeyForHash(item.KeyHash) != cacheKey {
+		return nil, live.ErrKeyNotFound
+	}
+
+	return item, nil
+}
+
+// loadAndRepairLegacyAPIKey matches a raw key against the legacy plaintext
+// column (only for rows that have no key_hash yet) and backfills the hashed
+// form. This keeps authentication working for rows created by not-yet-upgraded
+// instances during a rolling deploy; the startup data migration handles the
+// bulk of existing rows.
+func (s *APIKeyService) loadAndRepairLegacyAPIKey(ctx context.Context, rawKey, keyHash string) (*ent.APIKey, error) {
+	client := s.entFromContext(ctx)
+
+	item, err := client.APIKey.Query().
+		Where(
+			apikey.KeyEQ(rawKey),
+			apikey.DeletedAtEQ(0),
+			apikey.Or(apikey.KeyHashIsNil(), apikey.KeyHashEQ("")),
+		).
+		First(ctx)
 	if err != nil {
 		if ent.IsNotFound(err) {
 			return nil, live.ErrKeyNotFound
@@ -151,11 +195,22 @@ func (s *APIKeyService) loadAPIKeyByKey(ctx context.Context, cacheKey string) (*
 		return nil, err
 	}
 
-	if buildAPIKeyCacheKey(item.Key) != cacheKey {
-		return nil, live.ErrKeyNotFound
+	repaired, err := client.APIKey.UpdateOneID(item.ID).
+		SetKeyHash(keyHash).
+		SetKeyPrefix(xapikey.Prefix(rawKey)).
+		SetKey(xapikey.Redact(rawKey)).
+		Save(ctx)
+	if err != nil {
+		// The row is still authenticatable in memory; keep serving and let a
+		// later lookup (or the startup migration) retry the repair.
+		log.Warn(ctx, "failed to backfill legacy api key hash", log.Int("api_key_id", item.ID), log.Cause(err))
+
+		item.KeyHash = keyHash
+
+		return item, nil
 	}
 
-	return item, nil
+	return repaired, nil
 }
 
 func (s *APIKeyService) loadAPIKeysSince(ctx context.Context, since time.Time) ([]*ent.APIKey, time.Time, error) {
@@ -164,7 +219,10 @@ func (s *APIKeyService) loadAPIKeysSince(ctx context.Context, since time.Time) (
 
 	q := client.APIKey.Query()
 	if !since.IsZero() {
-		q = q.Where(apikey.UpdatedAtGT(since))
+		// GTE instead of GT: rows updated within the same instant as the last
+		// sync watermark must not be skipped. Re-reading boundary rows is safe
+		// because cache application is an idempotent upsert.
+		q = q.Where(apikey.UpdatedAtGTE(since))
 	}
 
 	items, err := q.All(ctx)
@@ -240,6 +298,10 @@ func (s *APIKeyService) CreateLLMAPIKey(ctx context.Context, owner *ent.APIKey, 
 		return nil, err
 	}
 
+	// Only the hash is persisted; hand the raw key back exactly once so the
+	// caller can show it to the user.
+	apiKey.Key = generatedKey
+
 	return apiKey, nil
 }
 
@@ -313,6 +375,10 @@ func (s *APIKeyService) CreateAPIKey(ctx context.Context, input ent.CreateAPIKey
 		return nil, err
 	}
 
+	// Only the hash is persisted; hand the raw key back exactly once so the
+	// caller can show it to the user.
+	apiKey.Key = generatedKey
+
 	return apiKey, nil
 }
 
@@ -371,7 +437,7 @@ func (s *APIKeyService) UpdateAPIKey(ctx context.Context, id int, input ent.Upda
 		return nil, err
 	}
 
-	s.invalidateAPIKeyCaches(ctx, result.Key)
+	s.invalidateAPIKeyCaches(ctx, result.KeyHash)
 
 	return result, nil
 }
@@ -401,7 +467,7 @@ func (s *APIKeyService) UpdateAPIKeyStatus(ctx context.Context, id int, status a
 	}
 
 	// Invalidate cache
-	s.invalidateAPIKeyCaches(ctx, apiKey.Key)
+	s.invalidateAPIKeyCaches(ctx, apiKey.KeyHash)
 
 	return apiKey, nil
 }
@@ -463,7 +529,7 @@ func (s *APIKeyService) UpdateAPIKeyProfiles(ctx context.Context, id int, profil
 	}
 
 	// Invalidate cache
-	s.invalidateAPIKeyCaches(ctx, apiKey.Key)
+	s.invalidateAPIKeyCaches(ctx, apiKey.KeyHash)
 
 	return apiKey, nil
 }
@@ -568,15 +634,21 @@ func validateProfileQuota(profiles []objects.APIKeyProfile) error {
 
 type apiKeyCtxKey struct{}
 
-func buildAPIKeyCacheKey(key string) string {
-	hash := xxhash.Sum64String(key)
-	return fmt.Sprintf("api_key:%d", hash)
+// apiKeyCacheKeyForHash builds the cache key from the stored key hash. The v2
+// segment versions the cache identity scheme (see cache-compat rules).
+func apiKeyCacheKeyForHash(keyHash string) string {
+	return "api_key:v2:" + keyHash
 }
 
-func buildAPIKeyCacheKeys(keys []string) []string {
-	cacheKeys := make([]string, 0, len(keys))
-	for _, key := range keys {
-		cacheKeys = append(cacheKeys, buildAPIKeyCacheKey(key))
+// buildAPIKeyCacheKey builds the cache key from a raw (plaintext) API key.
+func buildAPIKeyCacheKey(rawKey string) string {
+	return apiKeyCacheKeyForHash(xapikey.Hash(rawKey))
+}
+
+func apiKeyCacheKeysForHashes(hashes []string) []string {
+	cacheKeys := make([]string, 0, len(hashes))
+	for _, hash := range hashes {
+		cacheKeys = append(cacheKeys, apiKeyCacheKeyForHash(hash))
 	}
 
 	return cacheKeys
@@ -585,7 +657,8 @@ func buildAPIKeyCacheKeys(keys []string) []string {
 func (s *APIKeyService) GetAPIKey(ctx context.Context, key string) (*ent.APIKey, error) {
 	// Add API key to context for cache.
 	ctx = context.WithValue(ctx, apiKeyCtxKey{}, key)
-	cacheKey := buildAPIKeyCacheKey(key)
+	keyHash := xapikey.Hash(key)
+	cacheKey := apiKeyCacheKeyForHash(keyHash)
 
 	cached, err := s.APIKeyCache.Get(ctx, cacheKey)
 
@@ -595,6 +668,12 @@ func (s *APIKeyService) GetAPIKey(ctx context.Context, key string) (*ent.APIKey,
 		}
 
 		return nil, fmt.Errorf("failed to get api key: %w", err)
+	}
+
+	// Re-verify the cache hit against the requested key so a stale or
+	// colliding cache entry can never authenticate a different key.
+	if cached == nil || (*cached).KeyHash != keyHash {
+		return nil, fmt.Errorf("%w: cached api key does not match requested key", ErrInvalidAPIKey)
 	}
 
 	apiKey := *cached
@@ -641,7 +720,8 @@ func (s *APIKeyService) GetForRead(ctx context.Context, id *int, key *string, na
 	case id != nil:
 		q = q.Where(apikey.IDEQ(*id))
 	case key != nil:
-		q = q.Where(apikey.KeyEQ(*key))
+		// Only the hash of the raw key is stored.
+		q = q.Where(apikey.KeyHashEQ(xapikey.Hash(*key)))
 	case name != nil:
 		q = q.Where(apikey.NameEQ(*name))
 
@@ -669,12 +749,15 @@ func (s *APIKeyService) GetForRead(ctx context.Context, id *int, key *string, na
 	return apiKey, nil
 }
 
-func (s *APIKeyService) invalidateAPIKeyCaches(ctx context.Context, keys ...string) {
-	if len(keys) == 0 {
+// invalidateAPIKeyCaches invalidates cache entries by the stored key hash
+// (the raw key is generally no longer available after creation).
+func (s *APIKeyService) invalidateAPIKeyCaches(ctx context.Context, keyHashes ...string) {
+	hashes := lo.Filter(keyHashes, func(hash string, _ int) bool { return hash != "" })
+	if len(hashes) == 0 {
 		return
 	}
 
-	cacheKeys := buildAPIKeyCacheKeys(keys)
+	cacheKeys := apiKeyCacheKeysForHashes(hashes)
 	if err := s.apiKeyNotifier.Notify(ctx, live.NewInvalidateKeysEvent(cacheKeys...)); err != nil {
 		log.Warn(ctx, "api key cache watcher notify failed", log.Cause(err))
 	}
@@ -717,7 +800,7 @@ func (s *APIKeyService) bulkUpdateAPIKeyStatus(ctx context.Context, ids []int, s
 		return fmt.Errorf("failed to %s API keys: %w", action, err)
 	}
 
-	s.invalidateAPIKeyCaches(ctx, lo.Map(apiKeys, func(apiKey *ent.APIKey, _ int) string { return apiKey.Key })...)
+	s.invalidateAPIKeyCaches(ctx, lo.Map(apiKeys, func(apiKey *ent.APIKey, _ int) string { return apiKey.KeyHash })...)
 	return nil
 }
 
@@ -739,7 +822,11 @@ func (s *APIKeyService) BulkArchiveAPIKeys(ctx context.Context, ids []int) error
 // RotateAPIKey rotates an API key by generating a new key value while preserving all other properties.
 // This is useful when a key is compromised or when an employee leaves, without losing usage statistics.
 func (s *APIKeyService) RotateAPIKey(ctx context.Context, id int) (*ent.APIKey, error) {
-	existing, err := s.db.APIKey.Get(ctx, id)
+	// Use the context-bound client so the APIKey privacy policy applies,
+	// consistent with the other mutation paths.
+	client := s.entFromContext(ctx)
+
+	existing, err := client.APIKey.Get(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get API key: %w", err)
 	}
@@ -759,10 +846,10 @@ func (s *APIKeyService) RotateAPIKey(ctx context.Context, id int) (*ent.APIKey, 
 		return nil, fmt.Errorf("failed to generate new API key: %w", err)
 	}
 
-	oldKey := existing.Key
+	oldKeyHash := existing.KeyHash
 
 	// Update the key field directly using Ent
-	rotated, err := s.db.APIKey.UpdateOneID(id).
+	rotated, err := client.APIKey.UpdateOneID(id).
 		SetKey(newKey).
 		Save(ctx)
 	if err != nil {
@@ -770,7 +857,11 @@ func (s *APIKeyService) RotateAPIKey(ctx context.Context, id int) (*ent.APIKey, 
 	}
 
 	// Invalidate caches for both old and new keys
-	s.invalidateAPIKeyCaches(ctx, oldKey, newKey)
+	s.invalidateAPIKeyCaches(ctx, oldKeyHash, rotated.KeyHash)
+
+	// Only the hash is persisted; hand the raw key back exactly once so the
+	// caller can show it to the user.
+	rotated.Key = newKey
 
 	return rotated, nil
 }
@@ -808,6 +899,21 @@ func (s *APIKeyService) EnsureNoAuthAPIKey(ctx context.Context) (*ent.APIKey, er
 		SetScopes([]string{string(scopes.ScopeWriteRequests), string(scopes.ScopeReadChannels)}).
 		Save(ctx)
 	if err != nil {
+		// Concurrent callers can race past the cache miss and both attempt the
+		// create; the unique key_hash index rejects the loser. Re-read the row
+		// the winner created instead of failing the request. Drop the local
+		// negative cache entry first so the re-read hits the database.
+		if ent.IsConstraintError(err) {
+			s.APIKeyCache.Invalidate(buildAPIKeyCacheKey(NoAuthAPIKeyValue))
+
+			existing, getErr := s.GetAPIKey(ctx, NoAuthAPIKeyValue)
+			if getErr == nil {
+				return existing, nil
+			}
+
+			return nil, fmt.Errorf("failed to load noauth api key after concurrent create: %w", getErr)
+		}
+
 		return nil, fmt.Errorf("failed to create noauth api key: %w", err)
 	}
 
@@ -819,7 +925,7 @@ func (s *APIKeyService) EnsureNoAuthAPIKey(ctx context.Context) (*ent.APIKey, er
 
 	apiKey.Edges.Project = project
 
-	s.invalidateAPIKeyCaches(ctx, apiKey.Key)
+	s.invalidateAPIKeyCaches(ctx, apiKey.KeyHash)
 
 	return apiKey, nil
 }

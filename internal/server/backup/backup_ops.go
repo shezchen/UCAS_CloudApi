@@ -122,6 +122,7 @@ func (svc *BackupService) doBackup(ctx context.Context, opts BackupOptions) ([]b
 			return &BackupAPIKey{
 				APIKey:      *ak,
 				ProjectName: projectName,
+				KeyHash:     ak.KeyHash,
 			}
 		})
 	}

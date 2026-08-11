@@ -101,7 +101,10 @@ func setupE2E(t *testing.T) e2eEnv {
 		SetName(fmt.Sprintf("other-%d", now.UnixNano())).
 		SetStatus(project.StatusActive).SaveX(ctx)
 
-	mustKey := func(name string, projID int, typ apikey.Type, scopeList []string, profiles *objects.APIKeyProfiles) *ent.APIKey {
+	// mustKey returns the stored entity plus the raw key value: only the hash
+	// is persisted, so the raw value must be captured at creation time for use
+	// as a bearer token / lookup argument.
+	mustKey := func(name string, projID int, typ apikey.Type, scopeList []string, profiles *objects.APIKeyProfiles) (*ent.APIKey, string) {
 		val, err := biz.GenerateAPIKey("ah")
 		require.NoError(t, err)
 		b := client.APIKey.Create().
@@ -110,11 +113,11 @@ func setupE2E(t *testing.T) e2eEnv {
 		if profiles != nil {
 			b = b.SetProfiles(profiles)
 		}
-		return b.SaveX(ctx)
+		return b.SaveX(ctx), val
 	}
 
-	sa := mustKey("sa", proj.ID, apikey.TypeServiceAccount, []string{string(scopes.ScopeReadAPIKeys)}, nil)
-	saNoScope := mustKey("sa-noscope", proj.ID, apikey.TypeServiceAccount, []string{string(scopes.ScopeWriteAPIKeys)}, nil)
+	_, saKey := mustKey("sa", proj.ID, apikey.TypeServiceAccount, []string{string(scopes.ScopeReadAPIKeys)}, nil)
+	_, saNoScopeKey := mustKey("sa-noscope", proj.ID, apikey.TypeServiceAccount, []string{string(scopes.ScopeWriteAPIKeys)}, nil)
 
 	quotaProfile := &objects.APIKeyProfiles{
 		ActiveProfile: "Default",
@@ -127,8 +130,8 @@ func setupE2E(t *testing.T) e2eEnv {
 			},
 		}},
 	}
-	target := mustKey("target", proj.ID, apikey.TypeUser, nil, quotaProfile)
-	foreign := mustKey("foreign", otherProj.ID, apikey.TypeUser, nil, quotaProfile)
+	target, targetKeyRaw := mustKey("target", proj.ID, apikey.TypeUser, nil, quotaProfile)
+	foreign, foreignKeyRaw := mustKey("foreign", otherProj.ID, apikey.TypeUser, nil, quotaProfile)
 
 	// Two usage rows for the target key → requestCount=2, totalTokens=300, totalCost=2.
 	for i := range 2 {
@@ -179,9 +182,9 @@ func setupE2E(t *testing.T) e2eEnv {
 	t.Cleanup(srv.Close)
 
 	return e2eEnv{
-		server: srv, saKey: sa.Key, saNoScope: saNoScope.Key,
-		targetID: target.ID, targetKey: target.Key,
-		foreignID: foreign.ID, foreignKey: foreign.Key,
+		server: srv, saKey: saKey, saNoScope: saNoScopeKey,
+		targetID: target.ID, targetKey: targetKeyRaw,
+		foreignID: foreign.ID, foreignKey: foreignKeyRaw,
 	}
 }
 

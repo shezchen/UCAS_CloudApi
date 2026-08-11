@@ -1,0 +1,232 @@
+package middleware
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/gin-gonic/gin"
+)
+
+func TestIsPublicAPIPath(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{path: "/v1/chat/completions", want: true},
+		{path: "/v1/models", want: true},
+		{path: "/v1/responses", want: true},
+		{path: "/v1/messages", want: true},
+		{path: "/v1", want: true},
+		{path: "/v1beta/models", want: true},
+		{path: "/anthropic/v1/messages", want: true},
+		{path: "/jina/v1/rerank", want: true},
+		{path: "/doubao/v3/contents/generations/tasks", want: true},
+		{path: "/gemini/v1beta/models", want: true},
+		{path: "/v1x/other", want: false},
+		{path: "/admin/graphql", want: false},
+		{path: "/admin/auth/signin", want: false},
+		{path: "/openapi/v1/graphql", want: false},
+		{path: "/oauth/callback", want: false},
+		{path: "/health", want: false},
+		{path: "/", want: false},
+	}
+
+	for _, tt := range tests {
+		if got := IsPublicAPIPath(tt.path); got != tt.want {
+			t.Errorf("IsPublicAPIPath(%q) = %v, want %v", tt.path, got, tt.want)
+		}
+	}
+}
+
+// newCORSTestEngine mirrors the middleware layout of SetupRoutes: WithCORS is
+// global, followed by an auth middleware that rejects unauthenticated calls,
+// plus the catch-all OPTIONS route.
+func newCORSTestEngine(restricted gin.HandlerFunc) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+
+	engine := gin.New()
+	engine.Use(WithCORS(restricted))
+	engine.OPTIONS("*any", func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	requireAuth := func(c *gin.Context) {
+		if c.GetHeader("Authorization") == "" {
+			AbortWithError(c, http.StatusUnauthorized, ErrAPIKeyRequired)
+			return
+		}
+
+		c.Next()
+	}
+
+	api := engine.Group("/", requireAuth)
+	api.GET("/v1/models", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"object": "list"})
+	})
+	api.POST("/v1/chat/completions", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"object": "chat.completion"})
+	})
+
+	admin := engine.Group("/admin")
+	admin.GET("/system/status", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"isInitialized": true})
+	})
+
+	return engine
+}
+
+func TestWithCORSPublicPreflightSkipsAuth(t *testing.T) {
+	engine := newCORSTestEngine(nil)
+
+	req := httptest.NewRequest(http.MethodOptions, "/v1/chat/completions", nil)
+	req.Header.Set("Origin", "https://random-client.example")
+	req.Header.Set("Access-Control-Request-Method", "POST")
+	req.Header.Set("Access-Control-Request-Headers", "authorization,content-type,x-client-name")
+
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("preflight status = %d, want %d", w.Code, http.StatusNoContent)
+	}
+
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Errorf("Access-Control-Allow-Origin = %q, want *", got)
+	}
+
+	if got := w.Header().Get("Access-Control-Allow-Headers"); got != "authorization,content-type,x-client-name" {
+		t.Errorf("Access-Control-Allow-Headers = %q, want reflected request headers", got)
+	}
+
+	if got := w.Header().Get("Access-Control-Allow-Methods"); !strings.Contains(got, "POST") || !strings.Contains(got, "OPTIONS") {
+		t.Errorf("Access-Control-Allow-Methods = %q, want POST and OPTIONS included", got)
+	}
+
+	if got := w.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+		t.Errorf("Access-Control-Allow-Credentials = %q, want empty", got)
+	}
+
+	if got := w.Header().Get("Access-Control-Max-Age"); got == "" {
+		t.Error("Access-Control-Max-Age is empty")
+	}
+}
+
+func TestWithCORSPublicPreflightFallbackHeaders(t *testing.T) {
+	engine := newCORSTestEngine(nil)
+
+	req := httptest.NewRequest(http.MethodOptions, "/v1/models", nil)
+	req.Header.Set("Origin", "http://localhost:5173")
+	req.Header.Set("Access-Control-Request-Method", "GET")
+
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("preflight status = %d, want %d", w.Code, http.StatusNoContent)
+	}
+
+	allowHeaders := w.Header().Get("Access-Control-Allow-Headers")
+	for _, required := range []string{"Authorization", "Content-Type", "X-Api-Key", "X-Client-Name"} {
+		if !strings.Contains(allowHeaders, required) {
+			t.Errorf("Access-Control-Allow-Headers %q missing %q", allowHeaders, required)
+		}
+	}
+}
+
+func TestWithCORSPublicErrorResponseKeepsHeaders(t *testing.T) {
+	engine := newCORSTestEngine(nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req.Header.Set("Origin", "https://random-client.example")
+
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusUnauthorized)
+	}
+
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Errorf("Access-Control-Allow-Origin on 401 = %q, want *", got)
+	}
+
+	if got := w.Header().Get("Access-Control-Expose-Headers"); got == "" {
+		t.Error("Access-Control-Expose-Headers is empty on actual response")
+	}
+}
+
+func TestWithCORSPublicSuccessResponseKeepsHeaders(t *testing.T) {
+	engine := newCORSTestEngine(nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req.Header.Set("Origin", "https://random-client.example")
+	req.Header.Set("Authorization", "Bearer test-key")
+
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Errorf("Access-Control-Allow-Origin on 200 = %q, want *", got)
+	}
+}
+
+func TestWithCORSRestrictedDelegation(t *testing.T) {
+	restrictedCalled := false
+	restricted := func(c *gin.Context) {
+		restrictedCalled = true
+	}
+
+	engine := newCORSTestEngine(restricted)
+
+	// Admin routes delegate to the restricted policy and must not get the
+	// wildcard origin.
+	req := httptest.NewRequest(http.MethodGet, "/admin/system/status", nil)
+	req.Header.Set("Origin", "https://random-client.example")
+
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	if !restrictedCalled {
+		t.Error("restricted CORS handler was not called for admin route")
+	}
+
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got == "*" {
+		t.Error("admin route must not get wildcard Access-Control-Allow-Origin")
+	}
+
+	// Public routes bypass the restricted policy entirely.
+	restrictedCalled = false
+	req = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req.Header.Set("Origin", "https://random-client.example")
+	req.Header.Set("Authorization", "Bearer test-key")
+
+	engine.ServeHTTP(httptest.NewRecorder(), req)
+
+	if restrictedCalled {
+		t.Error("restricted CORS handler must not run for public API routes")
+	}
+}
+
+func TestWithCORSNilRestrictedAdminUntouched(t *testing.T) {
+	engine := newCORSTestEngine(nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/system/status", nil)
+	req.Header.Set("Origin", "https://random-client.example")
+
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("Access-Control-Allow-Origin = %q, want empty when CORS disabled", got)
+	}
+}

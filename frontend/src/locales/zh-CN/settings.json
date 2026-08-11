@@ -1,4 +1,20 @@
 {
   "settings.title": "设置",
-  "settings.description": "管理您的账户设置和邮件偏好。"
+  "settings.description": "管理您的账户设置和邮件偏好。",
+  "security.password.changeTitle": "修改密码",
+  "security.password.setTitle": "设置初始密码",
+  "security.password.oldPassword": "当前密码",
+  "security.password.newPassword": "新密码",
+  "security.password.confirmPassword": "确认新密码",
+  "security.password.changeButton": "修改密码",
+  "security.password.setButton": "设置密码",
+  "security.messages.passwordChangeSuccess": "密码修改成功",
+  "security.messages.passwordChangeError": "修改密码失败：",
+  "security.oidc.title": "统一 OIDC 管理",
+  "security.oidc.description": "在下方管理您的 OIDC 提供方。您可以关联或取消关联提供方以启用 SSO 登录。",
+  "security.oidc.linkError": "发起关联失败：",
+  "security.oidc.unlinkSuccess": "已成功取消关联该提供方。",
+  "security.oidc.unlinkError": "取消关联失败：",
+  "security.oidc.confirmUnlinkTitle": "取消关联提供方",
+  "security.oidc.confirmUnlink": "确定要取消关联该提供方吗？"
 }

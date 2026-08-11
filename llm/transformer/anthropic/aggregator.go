@@ -20,10 +20,11 @@ func AggregateStreamChunks(ctx context.Context, chunks []*httpclient.StreamEvent
 	}
 
 	var (
-		messageStart  *StreamEvent
-		contentBlocks []MessageContentBlock
-		usage         *Usage
-		stopReason    *string
+		messageStart   *StreamEvent
+		contentBlocks  []MessageContentBlock
+		usage          *Usage
+		stopReason     *string
+		sawMessageStop bool
 	)
 
 	for _, chunk := range chunks {
@@ -180,7 +181,7 @@ func AggregateStreamChunks(ctx context.Context, chunks []*httpclient.StreamEvent
 				}
 			}
 		case "message_stop":
-			// Final event, no additional processing needed
+			sawMessageStop = true
 		}
 	}
 
@@ -229,15 +230,19 @@ func AggregateStreamChunks(ctx context.Context, chunks []*httpclient.StreamEvent
 		return nil, llm.ResponseMeta{}, err
 	}
 
-	// Convert and return usage if available
-	if usage != nil {
-		return data, llm.ResponseMeta{
-			ID:    message.ID,
-			Usage: convertToLlmUsage(usage, platformType),
-		}, nil
+	meta := llm.ResponseMeta{
+		ID: message.ID,
+		// A message_delta stop_reason marks a successfully terminated message;
+		// message_stop alone (without a stop reason) marks a stream that ended
+		// without completing and must not be reported as completed.
+		Terminal:  sawMessageStop || stopReason != nil,
+		Completed: stopReason != nil,
 	}
 
-	return data, llm.ResponseMeta{
-		ID: message.ID,
-	}, nil
+	// Convert and return usage if available
+	if usage != nil {
+		meta.Usage = convertToLlmUsage(usage, platformType)
+	}
+
+	return data, meta, nil
 }

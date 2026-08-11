@@ -125,7 +125,7 @@ func (p *pipeline) autoAggregateStream(
 		return nil, ErrEmptyStreamChunks
 	}
 
-	body, _, err := p.Inbound.AggregateStreamChunks(ctx, chunks)
+	body, meta, err := p.Inbound.AggregateStreamChunks(ctx, chunks)
 	if err != nil {
 		_ = inboundStream.Close()
 		p.applyRawErrorResponseMiddlewares(ctx, err)
@@ -136,6 +136,21 @@ func (p *pipeline) autoAggregateStream(
 		_ = inboundStream.Close()
 		p.applyRawErrorResponseMiddlewares(ctx, ErrEmptyAggregatedBody)
 		return nil, ErrEmptyAggregatedBody
+	}
+
+	// A forced-stream aggregation must not turn a stream without a successful
+	// terminal event (e.g. truncated upstream, response.incomplete) into an
+	// HTTP 200. Fail the attempt so the existing retry/failover logic applies.
+	if outcome := ResponseMetaTerminalOutcome(meta); !outcome.Terminal || !outcome.Successful {
+		outcomeErr := outcome.Err
+		if outcomeErr == nil {
+			outcomeErr = newProtocolTerminalError("not_completed", meta.IncompleteReason)
+		}
+
+		_ = inboundStream.Close()
+		p.applyRawErrorResponseMiddlewares(ctx, outcomeErr)
+
+		return nil, WrapUpstreamError(outcomeErr)
 	}
 
 	resp := &httpclient.Response{

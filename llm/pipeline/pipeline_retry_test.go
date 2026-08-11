@@ -77,7 +77,7 @@ func (m *mockInbound) AggregateStreamChunks(ctx context.Context, chunks []*httpc
 		return m.aggregateStreamChunks(ctx, chunks)
 	}
 
-	return []byte(`{}`), llm.ResponseMeta{}, nil
+	return []byte(`{}`), llm.ResponseMeta{Terminal: true, Completed: true}, nil
 }
 
 type mockOutbound struct {
@@ -319,7 +319,7 @@ func TestPipeline_ForcedStreamAcceptanceWaitsForSuccessfulAggregation(t *testing
 			if aggregateCalls == 1 {
 				return nil, llm.ResponseMeta{}, errors.New("downstream aggregate failed")
 			}
-			return []byte(`{"ok":true}`), llm.ResponseMeta{}, nil
+			return []byte(`{"ok":true}`), llm.ResponseMeta{Terminal: true, Completed: true}, nil
 		},
 	}
 	outbound := &mockOutbound{
@@ -849,7 +849,7 @@ func TestPipeline_Process_RetryPreservesOriginalStreamIntent(t *testing.T) {
 
 	inbound := &mockInbound{
 		aggregateStreamChunks: func(ctx context.Context, chunks []*httpclient.StreamEvent) ([]byte, llm.ResponseMeta, error) {
-			return []byte(`{"ok":true}`), llm.ResponseMeta{}, nil
+			return []byte(`{"ok":true}`), llm.ResponseMeta{Terminal: true, Completed: true}, nil
 		},
 	}
 

@@ -161,6 +161,14 @@ func (p *TokenProvider) Get(ctx context.Context) (*OAuthCredentials, error) {
 		return creds, nil
 	}
 
+	// Without a refresh token there is nothing better than the stored
+	// credentials. Static long-lived tokens often come without expires_at,
+	// which IsExpired treats as expired; returning them beats failing every
+	// request on an impossible refresh.
+	if creds.RefreshToken == "" {
+		return creds, nil
+	}
+
 	// Refresh with singleflight to avoid stampede inside the same transformer.
 	v, err, _ := p.sf.Do("refresh", func() (any, error) {
 		p.mu.RLock()
@@ -170,6 +178,10 @@ func (p *TokenProvider) Get(ctx context.Context) (*OAuthCredentials, error) {
 
 		if current == nil {
 			return nil, fmt.Errorf("credentials is nil")
+		}
+
+		if current.RefreshToken == "" {
+			return current, nil
 		}
 
 		if !current.IsExpired(time.Now()) {

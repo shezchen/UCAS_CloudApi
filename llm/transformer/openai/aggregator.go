@@ -8,8 +8,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/samber/lo"
-
 	"github.com/looplj/axonhub/llm"
 	"github.com/looplj/axonhub/llm/httpclient"
 )
@@ -333,20 +331,13 @@ func AggregateStreamChunks(ctx context.Context, chunks []*httpclient.StreamEvent
 			})
 		}
 
-		// Determine finish reason
-		finishReason := choiceAgg.finishReason
-		if finishReason == nil {
-			if len(finalToolCalls) > 0 {
-				finishReason = lo.ToPtr("tool_calls")
-			} else {
-				finishReason = lo.ToPtr("stop")
-			}
-		}
-
+		// Keep the finish reason exactly as reported by the stream. Fabricating
+		// stop/tool_calls here would turn a truncated stream into a response
+		// that looks successfully terminated.
 		choices[i] = llm.Choice{
 			Index:        choiceIndex,
 			Message:      message,
-			FinishReason: finishReason,
+			FinishReason: choiceAgg.finishReason,
 		}
 	}
 

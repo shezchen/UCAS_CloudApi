@@ -53,7 +53,7 @@ func (w *emptyAggregateInboundWrapper) AggregateStreamChunks(ctx context.Context
 }
 
 func (w *emptyJSONObjectAggregateInboundWrapper) AggregateStreamChunks(ctx context.Context, chunks []*httpclient.StreamEvent) ([]byte, llm.ResponseMeta, error) {
-	return []byte(`{}`), llm.ResponseMeta{ID: "agg-empty"}, nil
+	return []byte(`{}`), llm.ResponseMeta{ID: "agg-empty", Terminal: true, Completed: true}, nil
 }
 
 // TestPipeline_Streaming_OpenAI_to_OpenAI tests streaming pipeline with OpenAI inbound and outbound transformers.

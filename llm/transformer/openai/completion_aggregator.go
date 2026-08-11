@@ -5,8 +5,6 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/samber/lo"
-
 	"github.com/looplj/axonhub/llm"
 	"github.com/looplj/axonhub/llm/httpclient"
 )
@@ -70,10 +68,8 @@ func AggregateCompletionStreamChunks(ctx context.Context, chunks []*httpclient.S
 		return data, llm.ResponseMeta{}, err
 	}
 
-	if finishReason == nil {
-		finishReason = lo.ToPtr("stop")
-	}
-
+	// Keep the finish reason exactly as reported by the stream; fabricating
+	// one would make a truncated stream look successfully terminated.
 	response := &llm.Response{
 		ID:      id,
 		Model:   model,
@@ -99,7 +95,9 @@ func AggregateCompletionStreamChunks(ctx context.Context, chunks []*httpclient.S
 	}
 
 	return data, llm.ResponseMeta{
-		ID:    id,
-		Usage: usage,
+		ID:        id,
+		Usage:     usage,
+		Terminal:  finishReason != nil,
+		Completed: finishReason != nil,
 	}, nil
 }

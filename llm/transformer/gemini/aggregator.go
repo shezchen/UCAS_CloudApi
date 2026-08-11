@@ -32,11 +32,12 @@ func AggregateStreamChunks(
 	}
 
 	var (
-		lastResp      *GenerateContentResponse
-		usage         *UsageMetadata
-		responseID    string
-		modelVersion  string
-		candidateAggs = make(map[int64]*candidateAggregator)
+		lastResp        *GenerateContentResponse
+		usage           *UsageMetadata
+		responseID      string
+		modelVersion    string
+		sawFinishReason bool
+		candidateAggs   = make(map[int64]*candidateAggregator)
 	)
 
 	for _, chunk := range chunks {
@@ -115,6 +116,7 @@ func AggregateStreamChunks(
 			// Capture finish reason
 			if candidate.FinishReason != "" {
 				agg.finishReason = candidate.FinishReason
+				sawFinishReason = true
 			}
 
 			// Capture grounding metadata (use the last one if multiple chunks have it)
@@ -137,7 +139,7 @@ func AggregateStreamChunks(
 		return data, llm.ResponseMeta{}, err
 	}
 
-	return buildGeminiResponse(candidateAggs, responseID, modelVersion, usage)
+	return buildGeminiResponse(candidateAggs, responseID, modelVersion, usage, sawFinishReason)
 }
 
 // buildGeminiResponse builds a Gemini format response from aggregated data.
@@ -145,6 +147,7 @@ func buildGeminiResponse(
 	candidateAggs map[int64]*candidateAggregator,
 	responseID, modelVersion string,
 	usage *UsageMetadata,
+	sawFinishReason bool,
 ) ([]byte, llm.ResponseMeta, error) {
 	candidates := make([]*Candidate, len(candidateAggs))
 
@@ -241,5 +244,9 @@ func buildGeminiResponse(
 	return data, llm.ResponseMeta{
 		ID:    responseID,
 		Usage: llmUsage,
+		// Only an explicit upstream finishReason marks the stream as
+		// successfully terminated; a truncated stream stays non-terminal.
+		Terminal:  sawFinishReason,
+		Completed: sawFinishReason,
 	}, nil
 }

@@ -62,48 +62,60 @@ func (d *AWSEventStreamDecoder) Err() error {
 
 // Next advances to the next event in the stream.
 func (d *AWSEventStreamDecoder) Next() bool {
-	if d.err != nil {
-		return false
-	}
+	for {
+		if d.err != nil {
+			return false
+		}
 
-	if d.closed {
-		return false
-	}
+		if d.closed {
+			return false
+		}
 
-	msg, err := d.Decoder.Decode(d.rc, nil)
-	if err != nil {
-		if errors.Is(err, io.EOF) {
+		msg, err := d.Decoder.Decode(d.rc, nil)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				_ = d.Close()
+
+				return false
+			}
+
+			d.err = err
 			_ = d.Close()
 
 			return false
 		}
 
-		d.err = err
-		_ = d.Close()
+		messageType := msg.Headers.Get(eventstreamapi.MessageTypeHeader)
+		if messageType == nil {
+			d.err = fmt.Errorf("%s event header not present", eventstreamapi.MessageTypeHeader)
+			return false
+		}
 
-		return false
-	}
+		switch messageType.String() {
+		case eventstreamapi.EventMessageType:
+			if d.handleEventMessage(msg) {
+				return true
+			}
 
-	messageType := msg.Headers.Get(eventstreamapi.MessageTypeHeader)
-	if messageType == nil {
-		d.err = fmt.Errorf("%s event header not present", eventstreamapi.MessageTypeHeader)
-		return false
-	}
-
-	switch messageType.String() {
-	case eventstreamapi.EventMessageType:
-		return d.handleEventMessage(msg)
-	case eventstreamapi.ExceptionMessageType:
-		return d.handleExceptionMessage(msg)
-	case eventstreamapi.ErrorMessageType:
-		return d.handleErrorMessage(msg)
-	default:
-		d.err = fmt.Errorf("unknown message type: %s", messageType.String())
-		return false
+			if d.err != nil {
+				return false
+			}
+			// Non-chunk events carry nothing for consumers; keep decoding so
+			// Current() never re-serves a stale event.
+		case eventstreamapi.ExceptionMessageType:
+			return d.handleExceptionMessage(msg)
+		case eventstreamapi.ErrorMessageType:
+			return d.handleErrorMessage(msg)
+		default:
+			d.err = fmt.Errorf("unknown message type: %s", messageType.String())
+			return false
+		}
 	}
 }
 
-// handleEventMessage processes event messages.
+// handleEventMessage processes event messages. It reports whether a new stream
+// event was produced; non-chunk events produce nothing (with d.err unset) and
+// are skipped by Next.
 func (d *AWSEventStreamDecoder) handleEventMessage(msg eventstream.Message) bool {
 	eventType := msg.Headers.Get(eventstreamapi.EventTypeHeader)
 	if eventType == nil {
@@ -111,25 +123,27 @@ func (d *AWSEventStreamDecoder) handleEventMessage(msg eventstream.Message) bool
 		return false
 	}
 
-	if eventType.String() == "chunk" {
-		chunk := eventstreamChunk{}
+	if eventType.String() != "chunk" {
+		return false
+	}
 
-		err := json.Unmarshal(msg.Payload, &chunk)
-		if err != nil {
-			d.err = err
-			return false
-		}
+	chunk := eventstreamChunk{}
 
-		decoded, err := base64.StdEncoding.DecodeString(chunk.Bytes)
-		if err != nil {
-			d.err = err
-			return false
-		}
+	err := json.Unmarshal(msg.Payload, &chunk)
+	if err != nil {
+		d.err = err
+		return false
+	}
 
-		d.evt = &httpclient.StreamEvent{
-			Type: gjson.GetBytes(decoded, "type").String(),
-			Data: decoded,
-		}
+	decoded, err := base64.StdEncoding.DecodeString(chunk.Bytes)
+	if err != nil {
+		d.err = err
+		return false
+	}
+
+	d.evt = &httpclient.StreamEvent{
+		Type: gjson.GetBytes(decoded, "type").String(),
+		Data: decoded,
 	}
 
 	return true

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/looplj/axonhub/internal/pkg/xcrypto"
 	"github.com/looplj/axonhub/llm"
 	"github.com/looplj/axonhub/llm/httpclient"
 	"github.com/looplj/axonhub/llm/oauth"
@@ -277,6 +278,104 @@ type ChannelCredentials struct {
 
 	// GCP is the GCP credentials for the channel.
 	GCP *GCPCredential `json:"gcp,omitempty"`
+
+	// storedEncrypted records that this value was decoded from the encrypted
+	// envelope form. It is only meaningful right after UnmarshalJSON and is
+	// used by the startup data migration to detect rows that still hold
+	// plaintext credentials.
+	storedEncrypted bool
+}
+
+// plainChannelCredentials is a method-less alias used to (de)serialize the
+// actual credential fields without recursing into the custom JSON codec.
+type plainChannelCredentials ChannelCredentials
+
+// credentialsEncryptionAlg identifies the envelope format produced by
+// MarshalJSON: AES-256-GCM via xcrypto, version 1.
+const credentialsEncryptionAlg = "aesgcm.v1"
+
+// encryptedCredentialsEnvelope is the at-rest representation of encrypted
+// credentials. It stays a valid JSON object so the database column type is
+// unchanged. The magic "__axonhub_enc" field can never collide with real
+// credential fields.
+type encryptedCredentialsEnvelope struct {
+	Alg  string `json:"__axonhub_enc"`
+	Data string `json:"data"`
+}
+
+// MarshalJSON transparently encrypts credentials when an encryption key is
+// configured (security.credential_encryption_key). Without a key it falls
+// back to the legacy plaintext form. Every JSON serialization of credentials
+// (Ent storage, backups) therefore only ever emits ciphertext once a key is
+// set.
+func (c ChannelCredentials) MarshalJSON() ([]byte, error) {
+	plain, err := json.Marshal(plainChannelCredentials(c))
+	if err != nil {
+		return nil, err
+	}
+
+	if !xcrypto.Enabled() {
+		return plain, nil
+	}
+
+	data, err := xcrypto.Encrypt(plain)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encrypt channel credentials: %w", err)
+	}
+
+	return json.Marshal(encryptedCredentialsEnvelope{
+		Alg:  credentialsEncryptionAlg,
+		Data: data,
+	})
+}
+
+// UnmarshalJSON accepts both the encrypted envelope and the legacy plaintext
+// form, so existing rows and old backups keep loading after the upgrade.
+func (c *ChannelCredentials) UnmarshalJSON(data []byte) error {
+	var probe encryptedCredentialsEnvelope
+	if err := json.Unmarshal(data, &probe); err == nil && probe.Alg != "" {
+		if probe.Alg != credentialsEncryptionAlg {
+			return fmt.Errorf("unsupported channel credentials encryption algorithm: %s", probe.Alg)
+		}
+
+		if !xcrypto.Enabled() {
+			return fmt.Errorf("channel credentials are encrypted but security.credential_encryption_key is not configured")
+		}
+
+		plainBytes, err := xcrypto.Decrypt(probe.Data)
+		if err != nil {
+			return fmt.Errorf("failed to decrypt channel credentials: %w", err)
+		}
+
+		var plain plainChannelCredentials
+		if err := json.Unmarshal(plainBytes, &plain); err != nil {
+			return fmt.Errorf("failed to decode decrypted channel credentials: %w", err)
+		}
+
+		*c = ChannelCredentials(plain)
+		c.storedEncrypted = true
+
+		return nil
+	}
+
+	var plain plainChannelCredentials
+	if err := json.Unmarshal(data, &plain); err != nil {
+		return err
+	}
+
+	*c = ChannelCredentials(plain)
+
+	return nil
+}
+
+// StoredEncrypted reports whether this value was decoded from the encrypted
+// envelope form. Only meaningful on values freshly loaded from storage.
+func (c *ChannelCredentials) StoredEncrypted() bool {
+	if c == nil {
+		return false
+	}
+
+	return c.storedEncrypted
 }
 
 // GetAllAPIKeys returns all API keys for the channel, combining APIKey and APIKeys fields.

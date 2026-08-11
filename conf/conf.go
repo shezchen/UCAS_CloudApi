@@ -18,6 +18,7 @@ import (
 	"github.com/looplj/axonhub/internal/log"
 	"github.com/looplj/axonhub/internal/metrics"
 	"github.com/looplj/axonhub/internal/pkg/xcache"
+	"github.com/looplj/axonhub/internal/pkg/xcrypto"
 	"github.com/looplj/axonhub/internal/server"
 	"github.com/looplj/axonhub/internal/server/biz"
 	"github.com/looplj/axonhub/internal/server/db"
@@ -38,9 +39,21 @@ type Config struct {
 	OIDC                    biz.OIDCConfig                    `conf:"oidc" yaml:"oidc" json:"oidc"`
 	CampusEmailVerification biz.CampusEmailVerificationConfig `conf:"campus_email_verification" yaml:"campus_email_verification" json:"campus_email_verification"`
 	SMTP                    servermail.Config                 `conf:"smtp" yaml:"smtp" json:"smtp"`
+	Security                SecurityConfig                    `conf:"security" yaml:"security" json:"security"`
 	DisableSSLVerify        bool                              `name:"disable_ssl_verify" yaml:"-" json:"-"`
 	AllowNoAuth             bool                              `name:"allow_no_auth" yaml:"-" json:"-"`
 	APIKeyPrefix            string                            `name:"api_key_prefix" yaml:"-" json:"-"`
+}
+
+// SecurityConfig groups at-rest data protection settings.
+type SecurityConfig struct {
+	// CredentialEncryptionKey is the master key used to encrypt channel
+	// provider credentials at rest (AES-256-GCM, key derived via SHA-256).
+	// Supply it via config file or AXONHUB_SECURITY_CREDENTIAL_ENCRYPTION_KEY;
+	// it must never be stored alongside the database. Empty disables
+	// encryption. The yaml/json tags intentionally hide the value from
+	// `axonhub config preview` output.
+	CredentialEncryptionKey string `conf:"credential_encryption_key" yaml:"-" json:"-"`
 }
 
 type providerQuotaConfig struct {
@@ -99,6 +112,17 @@ func Load() (Config, error) {
 	config.DisableSSLVerify = config.APIServer.DisableSSLVerify
 	config.AllowNoAuth = config.APIServer.API.Auth.AllowNoAuth
 	config.APIKeyPrefix = config.APIServer.API.Auth.KeyPrefix
+
+	// Install the credential encryption key before anything opens the
+	// database, so Ent reads/writes and the startup data migration observe a
+	// fully configured crypto state.
+	if err := xcrypto.Configure(config.Security.CredentialEncryptionKey); err != nil {
+		return Config{}, fmt.Errorf("invalid security.credential_encryption_key: %w", err)
+	}
+
+	if config.Security.CredentialEncryptionKey == "" {
+		log.Warn(context.Background(), "security.credential_encryption_key is not configured; channel credentials will be stored in plaintext")
+	}
 
 	if config.Cache.Redis.Addr != "" {
 		log.Warn(context.Background(), "Config `cache.redis.addr` Deprecated: Use `cache.redis.addrs` instead.")
@@ -272,6 +296,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("smtp.sender_name", "AxonHub 校内共享")
 	v.SetDefault("smtp.tls_mode", servermail.TLSModeSTARTTLS)
 	v.SetDefault("smtp.timeout", "10s")
+
+	// Security defaults. The default must be registered so AutomaticEnv picks
+	// up AXONHUB_SECURITY_CREDENTIAL_ENCRYPTION_KEY.
+	v.SetDefault("security.credential_encryption_key", "")
 }
 
 // parseLogLevel converts a string log level to zapcore.Level.

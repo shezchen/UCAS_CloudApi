@@ -192,6 +192,16 @@ func accountQuotaWindows(now time.Time) (daily QuotaWindow, weekly QuotaWindow) 
 		QuotaWindow{Start: &weeklyStart, End: &weeklyEnd}
 }
 
+// CurrentWeeklyQuotaWindowStart returns the UTC start of the weekly account
+// quota window that contains now. GC uses it as a floor for usage-log
+// deletion: usage logs inside the active window are still the source of truth
+// for account quota accounting, so deleting them would silently reset
+// consumed quota.
+func CurrentWeeklyQuotaWindowStart(now time.Time) time.Time {
+	_, weekly := accountQuotaWindows(now)
+	return *weekly.Start
+}
+
 func authorizeAccountQuotaOverview(ctx context.Context, userID int) error {
 	principal, ok := authz.GetPrincipal(ctx)
 	if !ok {

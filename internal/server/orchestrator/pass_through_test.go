@@ -644,13 +644,13 @@ func TestCaptureRawProviderStream_PropagatesError(t *testing.T) {
 	require.NoError(t, err)
 
 	// Drain the stream until the producer goroutine closes the channel.
-	// The channel close is the happens-before barrier that makes the
-	// goroutine's write to rawStreamErr visible to Err() / RawStreamErrRef.
+	// The atomic error store makes the goroutine's write visible to
+	// Err() / RawStreamErr without relying on the channel-close barrier.
 	for result.Next() { //nolint:revive // intentional drain
 	}
 
 	assert.Equal(t, errTest, result.Err())
-	assert.Equal(t, errTest, *state.RawStreamErrRef)
+	assert.Equal(t, errTest, state.RawStreamErr.Load())
 }
 
 func TestCaptureRawProviderStream_CloseStopsBlockedUpstream(t *testing.T) {
@@ -1206,13 +1206,13 @@ func TestPassThroughStream_ErrorPropagates(t *testing.T) {
 	require.NoError(t, err)
 
 	// Drain the stream until the producer goroutine closes the channel.
-	// The channel close is the happens-before barrier for the goroutine's
-	// write to rawStreamErr.
+	// The atomic error store makes the goroutine's write visible to
+	// Err() / RawStreamErr without relying on the channel-close barrier.
 	for result.Next() { //nolint:revive // intentional drain
 	}
 
 	assert.Equal(t, errTest, result.Err())
-	assert.Equal(t, errTest, *state.RawStreamErrRef)
+	assert.Equal(t, errTest, state.RawStreamErr.Load())
 }
 
 func TestApplyPassThroughBodyPreservesMappedModel(t *testing.T) {

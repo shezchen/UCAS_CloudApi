@@ -448,13 +448,34 @@ func (w *Worker) getDataStorageCached(ctx context.Context, id int, cache map[int
 	return ds, nil
 }
 
+// usageLogCleanupCutoff computes the deletion cutoff for usage logs and
+// clamps it to the start of the active weekly quota window. Usage logs inside
+// that window are still summed for account quota enforcement, so deleting
+// them (via a small policy value or a manual RunCleanupNow override) would
+// silently reset consumed quota.
+func usageLogCleanupCutoff(ctx context.Context, cleanupDays int) time.Time {
+	now := time.Now()
+	cutoffTime := now.AddDate(0, 0, -cleanupDays)
+
+	if windowStart := biz.CurrentWeeklyQuotaWindowStart(now); cutoffTime.After(windowStart) {
+		log.Warn(ctx, "Clamping usage log cleanup cutoff to the active weekly quota window start",
+			log.Int("cleanup_days", cleanupDays),
+			log.Time("requested_cutoff", cutoffTime),
+			log.Time("clamped_cutoff", windowStart))
+
+		cutoffTime = windowStart
+	}
+
+	return cutoffTime
+}
+
 // cleanupUsageLogs deletes usage logs older than the specified number of days.
 func (w *Worker) cleanupUsageLogs(ctx context.Context, cleanupDays int, manual bool) error {
 	if cleanupDays <= 0 {
 		return nil
 	}
 
-	cutoffTime := time.Now().AddDate(0, 0, -cleanupDays)
+	cutoffTime := usageLogCleanupCutoff(ctx, cleanupDays)
 	batchSize := w.getBatchSize()
 
 	result, err := w.deleteInBatches(ctx, func() (int, error) {
@@ -681,7 +702,9 @@ func (w *Worker) PreviewCleanup(ctx context.Context, input TriggerGcCleanupInput
 	}
 
 	if input.UsageLogsCleanupDays > 0 {
-		cutoff := time.Now().AddDate(0, 0, -input.UsageLogsCleanupDays)
+		// Mirror the clamp applied by cleanupUsageLogs so the preview matches
+		// what a manual run would actually delete.
+		cutoff := usageLogCleanupCutoff(ctx, input.UsageLogsCleanupDays)
 		count, err := w.Ent.UsageLog.Query().Where(usagelog.CreatedAtLT(cutoff)).Count(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to count usage logs for preview: %w", err)

@@ -250,6 +250,16 @@ type routeRing struct {
 	hasLastChannel bool
 }
 
+const (
+	// routeStateSweepInterval bounds how often the stale-entry sweep runs.
+	routeStateSweepInterval = time.Hour
+	// routeStateStaleAfter is how long a verdict may go unrefreshed before its
+	// route entry is dropped. RouteKey embeds CredentialID and ConfigRevision,
+	// so channel edits, credential rotations, and channel deletions abandon old
+	// keys forever; without a sweep availability/generations grow monotonically.
+	routeStateStaleAfter = 24 * time.Hour
+)
+
 // UnifiedRouteState owns the two independent routing facts:
 //   - a stable per-model fair cursor used only for primary selection;
 //   - TestChannel-authored boolean availability used only for rescue.
@@ -264,6 +274,7 @@ type UnifiedRouteState struct {
 	inflight     map[RouteKey]int
 	generations  map[RouteKey]uint64
 	nextTestGen  uint64
+	lastSweep    time.Time
 	tests        singleflight.Group
 }
 
@@ -543,14 +554,40 @@ func (s *UnifiedRouteState) RecordTestVerdictGeneration(key RouteKey, generation
 		return false
 	}
 	s.generations[key] = generation
+	now := time.Now()
 	s.availability[key] = RouteAvailability{
 		Known:         true,
 		Available:     verdict.Pass,
-		LastTestAt:    time.Now(),
+		LastTestAt:    now,
 		LastTestError: verdict.Error,
 	}
+	s.sweepStaleLocked(now)
 	s.mu.Unlock()
 	return true
+}
+
+// sweepStaleLocked drops availability/generation entries whose verdict has not
+// been refreshed within routeStateStaleAfter. Hooking the sweep into the only
+// write path that grows those maps keeps them bounded without a background
+// goroutine: no new verdicts means no growth to clean up. Entries with an
+// in-flight test are kept because their verdict is about to be refreshed.
+// Callers must hold s.mu for writing.
+func (s *UnifiedRouteState) sweepStaleLocked(now time.Time) {
+	if now.Sub(s.lastSweep) < routeStateSweepInterval {
+		return
+	}
+	s.lastSweep = now
+
+	for key, availability := range s.availability {
+		if now.Sub(availability.LastTestAt) < routeStateStaleAfter {
+			continue
+		}
+		if s.inflight[key] > 0 {
+			continue
+		}
+		delete(s.availability, key)
+		delete(s.generations, key)
+	}
 }
 
 // TriggerTest starts (or joins) one asynchronous TestChannel run per exact

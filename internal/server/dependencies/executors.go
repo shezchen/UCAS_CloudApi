@@ -2,7 +2,7 @@ package dependencies
 
 import (
 	"context"
-	"reflect"
+	"fmt"
 
 	"github.com/zhenzou/executors"
 
@@ -12,14 +12,22 @@ import (
 type ErrorHandler struct{}
 
 func (h *ErrorHandler) CatchError(runnable executors.Runnable, err error) {
-	log.Error(context.Background(), "run runnable error", log.Cause(err))
+	log.Error(context.Background(), "run runnable error",
+		log.String("runnable_type", fmt.Sprintf("%T", runnable)),
+		log.Cause(err))
 }
 
 type RejectionHandler struct{}
 
+// RejectExecution logs the dropped task's identity and propagates the
+// rejection. Returning nil here would make Execute report success for a task
+// that never ran; returning ErrRejectedExecution lets callers (and the
+// scheduler's ErrorHandler path) observe the drop.
 func (h *RejectionHandler) RejectExecution(runnable executors.Runnable, e executors.Executor) error {
-	log.Error(context.Background(), "runnable rejection by executor", log.String("runnable", reflect.ValueOf(runnable).String()))
-	return nil
+	log.Error(context.Background(), "task rejected by executor, queue is full",
+		log.String("runnable_type", fmt.Sprintf("%T", runnable)))
+
+	return executors.ErrRejectedExecution
 }
 
 func NewExecutors(logger *log.Logger) executors.ScheduledExecutor {

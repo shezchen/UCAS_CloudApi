@@ -190,14 +190,28 @@ func (w *Worker) processOne(ctx context.Context, ds *ent.DataStorage, req *ent.R
 	}
 	defer resp.Close()
 
-	const maxBytes = 512 * 1024 * 1024
-	reader := io.LimitReader(resp, maxBytes)
+	// Read one byte past the limit so an oversized download is detected instead
+	// of silently truncated and then marked as a successful archive.
+	const maxBytes int64 = 512 * 1024 * 1024
+	reader := io.LimitReader(resp, maxBytes+1)
 
 	storageKey := GenerateVideoKey(req.ProjectID, req.ID, filename)
 
 	_, n, err := w.dataStorageService.SaveDataFromReader(ctx, ds, storageKey, reader)
 	if err != nil {
 		return fmt.Errorf("failed to save video to storage: %w", err)
+	}
+
+	if n > maxBytes {
+		if delErr := w.dataStorageService.DeleteData(ctx, ds, storageKey); delErr != nil {
+			log.Warn(ctx, "Failed to delete truncated oversized video from storage",
+				log.Cause(delErr),
+				log.Int("request_id", req.ID),
+				log.String("key", storageKey),
+			)
+		}
+
+		return fmt.Errorf("video exceeds max archive size of %d bytes, skipping archive for request %d", maxBytes, req.ID)
 	}
 
 	now := xtime.UTCNow()

@@ -652,6 +652,10 @@ type SystemService struct {
 
 	mu           sync.RWMutex
 	timeLocation *time.Location
+
+	// initMu serializes Initialize so concurrent first-boot requests cannot
+	// both pass the IsInitialized pre-check and race to create owner users.
+	initMu sync.Mutex
 }
 
 func (s *SystemService) IsInitialized(ctx context.Context) (bool, error) {
@@ -680,7 +684,18 @@ type InitializeSystemParams struct {
 }
 
 // Initialize initializes the system with a secret key and sets the initialized flag.
+//
+// The unauthenticated first-boot endpoint makes this path race- and
+// abuse-sensitive: initMu serializes concurrent calls in-process, and the flag
+// is re-checked inside the transaction so a second writer (including another
+// process on the same database) cannot initialize twice. Binding the endpoint
+// to a one-time bootstrap token or a trusted IP would further shrink the
+// first-boot takeover window, but that needs a deployment-level contract and
+// is intentionally not decided here.
 func (s *SystemService) Initialize(ctx context.Context, params *InitializeSystemParams) (err error) {
+	s.initMu.Lock()
+	defer s.initMu.Unlock()
+
 	ctx = authz.WithSystemBypass(ctx, "system-initialize")
 	// Check if system is already initialized
 	isInitialized, err := s.IsInitialized(ctx)
@@ -712,6 +727,18 @@ func (s *SystemService) Initialize(ctx context.Context, params *InitializeSystem
 	}()
 
 	ctx = ent.NewContext(ctx, tx.Client())
+
+	// Re-check within the transaction: a concurrent initializer may have
+	// committed between the pre-check and BeginTx.
+	isInitialized, err = s.IsInitialized(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to re-check initialization status: %w", err)
+	}
+
+	if isInitialized {
+		_ = tx.Rollback()
+		return nil
+	}
 
 	hashedPassword, err := HashPassword(params.OwnerPassword)
 	if err != nil {
@@ -984,11 +1011,24 @@ func (s *SystemService) StoragePolicyOrDefault(ctx context.Context) *StoragePoli
 	return policy
 }
 
+// MinUsageLogsRetentionDays is the smallest allowed usage-log retention.
+// The account weekly quota window (see accountQuotaWindows) looks back up to
+// 7 days in Asia/Shanghai; one extra day absorbs the timezone offset so GC can
+// never delete usage logs that still back the active quota window.
+const MinUsageLogsRetentionDays = 8
+
 // SetStoragePolicy sets the storage policy configuration.
 func (s *SystemService) SetStoragePolicy(ctx context.Context, policy *StoragePolicy) error {
 	for _, opt := range policy.CleanupOptions {
 		if opt.CleanupDays <= 0 {
 			return fmt.Errorf("cleanup_days for %q must be positive; set enabled=false to keep data forever", opt.ResourceType)
+		}
+
+		if opt.ResourceType == "usage_logs" && opt.CleanupDays < MinUsageLogsRetentionDays {
+			return fmt.Errorf(
+				"cleanup_days for usage_logs must be at least %d: newer logs still back the active weekly quota window",
+				MinUsageLogsRetentionDays,
+			)
 		}
 	}
 

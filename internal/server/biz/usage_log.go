@@ -302,13 +302,16 @@ func isRetryableTokenWalletSettlementError(err error) bool {
 }
 
 // CreateUsageLogFromRequest creates a usage log from request and response data.
+// requestExec may be nil when the response arrived before an execution record
+// was persisted (or its creation failed); there is no channel/model to
+// attribute the usage to in that case, so nothing is logged.
 func (s *UsageLogService) CreateUsageLogFromRequest(
 	ctx context.Context,
 	request *ent.Request,
 	requestExec *ent.RequestExecution,
 	usage *llm.Usage,
 ) (*ent.UsageLog, error) {
-	if request == nil || usage == nil {
+	if request == nil || requestExec == nil || usage == nil {
 		return nil, nil
 	}
 

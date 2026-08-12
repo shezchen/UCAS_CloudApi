@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/tidwall/sjson"
 
@@ -316,6 +317,36 @@ func applyPassThroughResponse(outbound *PersistentOutboundTransformer, systemSer
 	})
 }
 
+// rawStreamErrStore is the synchronized terminal-error slot for one pass-through
+// attempt. It is written by the fan-out producer goroutine and the pipeline drain
+// goroutine, and read by passThroughChannelStream.Err(), which can run concurrently
+// with the producer's deferred write when Next() bails out through ctx.Done().
+// The first stored value wins so a specific failure (drain panic, producer panic)
+// is not overwritten by the producer's later, less specific exit error.
+type rawStreamErrStore struct {
+	err atomic.Pointer[error]
+}
+
+// Store records err unless a previous error already claimed the slot. A nil
+// error is dropped rather than stored: the producer's deferred
+// Store(stream.Err()) is unconditional, so a nil would otherwise win the slot
+// and permanently mask a real error stored afterwards by the drain goroutine.
+func (s *rawStreamErrStore) Store(err error) {
+	if err == nil {
+		return
+	}
+
+	s.err.CompareAndSwap(nil, &err)
+}
+
+func (s *rawStreamErrStore) Load() error {
+	if errPtr := s.err.Load(); errPtr != nil {
+		return *errPtr
+	}
+
+	return nil
+}
+
 // captureRawProviderStream fans out raw provider stream events to both the pipeline
 // (for transforms and LLM middlewares like connection tracking, performance recording)
 // and a pass-through channel. The pipeline receives events via pipelineCh, while
@@ -332,12 +363,12 @@ func captureRawProviderStream(outbound *PersistentOutboundTransformer, systemSer
 		rawStreamCh := make(chan *httpclient.StreamEvent, 64)
 		outbound.state.RawStreamCh = rawStreamCh
 
-		// Per-attempt local error storage: each attempt writes to its own variable so
+		// Per-attempt error storage: each attempt writes to its own store so
 		// concurrent defers from an abandoned goroutine and the new attempt's goroutine
 		// never touch the same memory location, eliminating the data race on retries.
-		var rawStreamErr error
+		streamErrs := &rawStreamErrStore{}
 
-		outbound.state.RawStreamErrRef = &rawStreamErr
+		outbound.state.RawStreamErr = streamErrs
 
 		// Per-attempt cancelable context: PrepareForRetry / NextChannel call this cancel
 		// to unblock the goroutine's channel sends and release the upstream HTTP connection
@@ -359,9 +390,9 @@ func captureRawProviderStream(outbound *PersistentOutboundTransformer, systemSer
 						log.Any("panic", r),
 						log.String("channel", channel.Name),
 					)
-					rawStreamErr = fmt.Errorf("passthrough stream panic: %v", r)
+					streamErrs.Store(fmt.Errorf("passthrough stream panic: %v", r))
 				} else {
-					rawStreamErr = stream.Err()
+					streamErrs.Store(stream.Err())
 				}
 
 				close(pipelineCh)
@@ -410,7 +441,7 @@ func captureRawProviderStream(outbound *PersistentOutboundTransformer, systemSer
 			}
 		}()
 
-		return &passThroughChannelStream{ctx: ctx, ch: pipelineCh, errRef: &rawStreamErr, cancel: closeStream}, nil
+		return &passThroughChannelStream{ctx: ctx, ch: pipelineCh, errs: streamErrs, cancel: closeStream}, nil
 	})
 }
 
@@ -428,9 +459,9 @@ func applyPassThroughStream(outbound *PersistentOutboundTransformer, systemServi
 			return stream, nil
 		}
 
-		// Snapshot the current attempt's error reference. If a future retry replaces
-		// state.RawStreamErrRef, this stream still reads from the correct variable.
-		errRef := outbound.state.RawStreamErrRef
+		// Snapshot the current attempt's error store. If a future retry replaces
+		// state.RawStreamErr, this stream still reads from the correct store.
+		streamErrs := outbound.state.RawStreamErr
 		cancel := outbound.state.RawStreamCancel
 
 		channel := outbound.GetCurrentChannel()
@@ -446,6 +477,20 @@ func applyPassThroughStream(outbound *PersistentOutboundTransformer, systemServi
 						log.Any("panic", r),
 						log.String("channel", channel.Name),
 					)
+					// Without a drain consumer the fan-out producer eventually blocks
+					// on pipelineCh and rawStreamCh starves, freezing the client stream
+					// until the request times out. Record a terminal error first so the
+					// client observes an explicit failure, then cancel the attempt so
+					// the producer exits and closes both channels.
+					if streamErrs != nil {
+						streamErrs.Store(fmt.Errorf("pass-through pipeline drain panic: %v", r))
+					}
+
+					if cancel != nil {
+						cancel()
+					}
+
+					closeDrainedStream(ctx, stream, channel.Name)
 				}
 			}()
 
@@ -456,8 +501,31 @@ func applyPassThroughStream(outbound *PersistentOutboundTransformer, systemServi
 			stream.Close()
 		}()
 
-		return &passThroughChannelStream{ctx: ctx, ch: rawCh, errRef: errRef, cancel: cancel}, nil
+		return &passThroughChannelStream{ctx: ctx, ch: rawCh, errs: streamErrs, cancel: cancel}, nil
 	})
+}
+
+// closeDrainedStream finalizes the drained pipeline stream after the drain
+// goroutine panicked. OutboundPersistentStream.Close is the only place an
+// attempt is settled, so skipping it leaves request_execution pending forever
+// with no chunks and no usage. A second panic here must not take the process
+// down with it, since the client has already been unblocked at this point.
+func closeDrainedStream(ctx context.Context, stream streams.Stream[*httpclient.StreamEvent], channelName string) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Warn(ctx, "pass-through stream finalization panicked after a drain panic",
+				log.Any("panic", r),
+				log.String("channel", channelName),
+			)
+		}
+	}()
+
+	if err := stream.Close(); err != nil {
+		log.Warn(ctx, "Failed to finalize pass-through stream after a drain panic",
+			log.Cause(err),
+			log.String("channel", channelName),
+		)
+	}
 }
 
 // passThroughChannelStream wraps a channel as a Stream.
@@ -467,7 +535,7 @@ type passThroughChannelStream struct {
 	ctx     context.Context
 	ch      <-chan *httpclient.StreamEvent
 	current *httpclient.StreamEvent
-	errRef  *error
+	errs    *rawStreamErrStore
 	cancel  context.CancelFunc
 	once    sync.Once
 }
@@ -503,8 +571,8 @@ func (s *passThroughChannelStream) Next() bool {
 func (s *passThroughChannelStream) Current() *httpclient.StreamEvent { return s.current }
 
 func (s *passThroughChannelStream) Err() error {
-	if s.errRef != nil {
-		return *s.errRef
+	if s.errs != nil {
+		return s.errs.Load()
 	}
 
 	return nil

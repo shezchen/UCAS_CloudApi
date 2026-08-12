@@ -300,15 +300,31 @@ func (ts *OutboundPersistentStream) persistAggregatedFailure(ctx context.Context
 		return
 	}
 
-	// A partial stream that was already accepted and delivered consumed real
-	// upstream resources and must be metered. A pre-commit failure remains
-	// eligible for failover, so it must not claim the logical request's one usage
-	// record or steal attribution from a later successful attempt.
-	if ts.state.AttemptAccepted && ts.state.AttemptSemanticOutput {
-		if usage := meta.Usage; usage != nil {
+	// An accepted attempt was committed to the client and can no longer be
+	// transparently replaced by another route, so any usage billed upstream must
+	// be metered — including usage-only failure terminals with no semantic
+	// output (the upstream still charged for the prompt). A pre-commit failure
+	// remains eligible for failover, so it must not claim the logical request's
+	// one usage record or steal attribution from a later successful attempt.
+	if usage := meta.Usage; usage != nil {
+		if ts.state.AttemptAccepted {
 			if _, err := ts.UsageLogService.CreateUsageLogFromRequest(ctx, ts.request, ts.requestExec, usage); err != nil {
-				log.Warn(ctx, "Failed to create usage log from accepted partial request", log.Cause(err))
+				log.Warn(ctx, "Failed to create usage log from accepted failed request", log.Cause(err))
 			}
+		} else {
+			// Surface the unmetered upstream cost for reconciliation. The raw
+			// chunks saved below preserve the full billing evidence on the
+			// per-attempt execution record.
+			log.Warn(ctx, "Upstream billed usage on a pre-commit failed attempt is not metered",
+				log.Int("request_id", ts.requestExec.RequestID),
+				log.Int("request_execution_id", ts.requestExec.ID),
+				log.Int("channel_id", ts.requestExec.ChannelID),
+				log.String("model_id", ts.requestExec.ModelID),
+				log.Int64("prompt_tokens", usage.PromptTokens),
+				log.Int64("completion_tokens", usage.CompletionTokens),
+				log.Int64("total_tokens", usage.TotalTokens),
+				log.Cause(terminalErr),
+			)
 		}
 	}
 	if err := ts.RequestService.UpdateRequestExecutionStatusFromError(ctx, ts.requestExec.ID, terminalErr); err != nil {
@@ -883,8 +899,8 @@ func (p *PersistentOutboundTransformer) selectRouteOption(options []rescueRouteO
 
 // resetPassThroughStreamState cancels the current attempt's fan-out goroutine (if any)
 // and clears pass-through stream state so the next attempt starts with a clean slate.
-// Must be called before every retry to prevent goroutine leaks and data races on
-// state.RawStreamErrRef.
+// Must be called before every retry to prevent goroutine leaks and stale reads of
+// state.RawStreamErr.
 func (p *PersistentOutboundTransformer) resetPassThroughStreamState() {
 	if p.state.RawStreamCancel != nil {
 		p.state.RawStreamCancel()
@@ -892,7 +908,7 @@ func (p *PersistentOutboundTransformer) resetPassThroughStreamState() {
 	}
 
 	p.state.RawStreamCh = nil
-	p.state.RawStreamErrRef = nil
+	p.state.RawStreamErr = nil
 }
 
 // NextChannel moves to the next available candidate for retry.

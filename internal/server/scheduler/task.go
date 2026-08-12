@@ -19,6 +19,19 @@ type task struct {
 	fn         func(ctx context.Context)
 }
 
+// NamedRunnable carries the task name into the executor. Everything submitted
+// as a bare closure arrives as an anonymous executors.RunnableFunc, so the
+// shared error and rejection handlers cannot say which task failed or was
+// dropped.
+type NamedRunnable struct {
+	name string
+	fn   func(ctx context.Context)
+}
+
+func (r NamedRunnable) Run(ctx context.Context) { r.fn(ctx) }
+
+func (r NamedRunnable) Name() string { return r.name }
+
 // TaskSpec defines the static configuration of a scheduled task.
 // Either CronExpr or FixRate must be set. If both are set, FixRate takes
 // precedence.

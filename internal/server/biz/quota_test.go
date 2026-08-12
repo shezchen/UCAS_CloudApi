@@ -2,6 +2,7 @@ package biz
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -656,6 +657,165 @@ func TestQuotaService_UserDailyTokenQuotaUsesGlobalLimitForEveryAccount(t *testi
 	result, err = svc.CheckUserDailyTokenQuota(ctx, member.ID)
 	require.NoError(t, err)
 	require.True(t, result.Allowed)
+}
+
+func TestUsageLogRetentionFloor(t *testing.T) {
+	newFloorService := func(t *testing.T) (*QuotaService, *SystemService, *ent.Client, context.Context) {
+		t.Helper()
+
+		client := enttest.NewEntClient(t, "sqlite3", "file:ent?mode=memory&_fk=0")
+		t.Cleanup(func() { client.Close() })
+
+		ctx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+		systemService := NewSystemService(SystemServiceParams{Ent: client})
+
+		return NewQuotaService(client, systemService), systemService, client, ctx
+	}
+
+	createKeyWithQuota := func(t *testing.T, ctx context.Context, client *ent.Client, name string, period *objects.APIKeyQuotaPeriod) *ent.APIKey {
+		t.Helper()
+
+		projectRow, err := client.Project.Create().SetName(name).SetStatus(project.StatusActive).Save(ctx)
+		require.NoError(t, err)
+
+		profiles := &objects.APIKeyProfiles{ActiveProfile: "default"}
+		if period != nil {
+			profiles.Profiles = []objects.APIKeyProfile{{
+				Name:  "default",
+				Quota: &objects.APIKeyQuota{Requests: lo.ToPtr(int64(10)), Period: *period},
+			}}
+		}
+
+		key, err := client.APIKey.Create().
+			SetName(name).
+			SetKey("sk-" + name).
+			SetProjectID(projectRow.ID).
+			SetProfiles(profiles).
+			Save(ctx)
+		require.NoError(t, err)
+
+		return key
+	}
+
+	now := time.Date(2026, time.January, 20, 1, 2, 3, 0, time.UTC)
+
+	t.Run("without API key quotas the account weekly window is the floor", func(t *testing.T) {
+		svc, _, client, ctx := newFloorService(t)
+		createKeyWithQuota(t, ctx, client, "no-quota", nil)
+
+		floor, err := svc.UsageLogRetentionFloor(ctx, now)
+		require.NoError(t, err)
+		require.False(t, floor.Unbounded)
+		require.Equal(t, CurrentWeeklyQuotaWindowStart(now), floor.Start)
+	})
+
+	t.Run("a calendar month quota pushes the floor past the weekly window", func(t *testing.T) {
+		svc, systemService, client, ctx := newFloorService(t)
+		createKeyWithQuota(t, ctx, client, "monthly", &objects.APIKeyQuotaPeriod{
+			Type: objects.APIKeyQuotaPeriodTypeCalendarDuration,
+			CalendarDuration: &objects.APIKeyQuotaCalendarDuration{
+				Unit: objects.APIKeyQuotaCalendarDurationUnitMonth,
+			},
+		})
+
+		monthWindow, err := quotaWindow(now, objects.APIKeyQuotaPeriod{
+			Type: objects.APIKeyQuotaPeriodTypeCalendarDuration,
+			CalendarDuration: &objects.APIKeyQuotaCalendarDuration{
+				Unit: objects.APIKeyQuotaCalendarDurationUnitMonth,
+			},
+		}, systemService.TimeLocation(ctx))
+		require.NoError(t, err)
+
+		floor, err := svc.UsageLogRetentionFloor(ctx, now)
+		require.NoError(t, err)
+		require.False(t, floor.Unbounded)
+		require.Equal(t, *monthWindow.Start, floor.Start)
+		require.True(t, floor.Start.Before(CurrentWeeklyQuotaWindowStart(now)))
+	})
+
+	t.Run("a long past-duration quota pushes the floor back", func(t *testing.T) {
+		svc, _, client, ctx := newFloorService(t)
+		createKeyWithQuota(t, ctx, client, "past-90d", &objects.APIKeyQuotaPeriod{
+			Type: objects.APIKeyQuotaPeriodTypePastDuration,
+			PastDuration: &objects.APIKeyQuotaPastDuration{
+				Value: 90,
+				Unit:  objects.APIKeyQuotaPastDurationUnitDay,
+			},
+		})
+
+		floor, err := svc.UsageLogRetentionFloor(ctx, now)
+		require.NoError(t, err)
+		require.False(t, floor.Unbounded)
+		require.Equal(t, now.Add(-90*24*time.Hour), floor.Start)
+	})
+
+	t.Run("an all-time quota makes the floor unbounded", func(t *testing.T) {
+		svc, _, client, ctx := newFloorService(t)
+		createKeyWithQuota(t, ctx, client, "short", &objects.APIKeyQuotaPeriod{
+			Type: objects.APIKeyQuotaPeriodTypePastDuration,
+			PastDuration: &objects.APIKeyQuotaPastDuration{
+				Value: 1,
+				Unit:  objects.APIKeyQuotaPastDurationUnitHour,
+			},
+		})
+		allTimeKey := createKeyWithQuota(t, ctx, client, "all-time", &objects.APIKeyQuotaPeriod{
+			Type: objects.APIKeyQuotaPeriodTypeAllTime,
+		})
+
+		floor, err := svc.UsageLogRetentionFloor(ctx, now)
+		require.NoError(t, err)
+		require.True(t, floor.Unbounded)
+		require.Equal(t, allTimeKey.ID, floor.UnboundedAPIKeyID)
+	})
+
+	t.Run("a soft deleted key no longer holds the floor back", func(t *testing.T) {
+		svc, _, client, ctx := newFloorService(t)
+		key := createKeyWithQuota(t, ctx, client, "deleted", &objects.APIKeyQuotaPeriod{
+			Type: objects.APIKeyQuotaPeriodTypeAllTime,
+		})
+		require.NoError(t, client.APIKey.DeleteOneID(key.ID).Exec(ctx))
+
+		floor, err := svc.UsageLogRetentionFloor(ctx, now)
+		require.NoError(t, err)
+		require.False(t, floor.Unbounded)
+		require.Equal(t, CurrentWeeklyQuotaWindowStart(now), floor.Start)
+	})
+
+	t.Run("an unparsable period is ignored instead of blocking cleanup", func(t *testing.T) {
+		svc, _, client, ctx := newFloorService(t)
+		createKeyWithQuota(t, ctx, client, "broken", &objects.APIKeyQuotaPeriod{
+			Type: objects.APIKeyQuotaPeriodType("nonsense"),
+		})
+
+		floor, err := svc.UsageLogRetentionFloor(ctx, now)
+		require.NoError(t, err)
+		require.False(t, floor.Unbounded)
+		require.Equal(t, CurrentWeeklyQuotaWindowStart(now), floor.Start)
+	})
+
+	t.Run("the scan pages past the batch size", func(t *testing.T) {
+		svc, _, client, ctx := newFloorService(t)
+		for i := range usageLogRetentionFloorPageSize + 1 {
+			period := &objects.APIKeyQuotaPeriod{
+				Type: objects.APIKeyQuotaPeriodTypePastDuration,
+				PastDuration: &objects.APIKeyQuotaPastDuration{
+					Value: 1,
+					Unit:  objects.APIKeyQuotaPastDurationUnitHour,
+				},
+			}
+			// Only the very last key carries the widest window, so it is found
+			// only if the scan does not stop after the first page.
+			if i == usageLogRetentionFloorPageSize {
+				period = &objects.APIKeyQuotaPeriod{Type: objects.APIKeyQuotaPeriodTypeAllTime}
+			}
+
+			createKeyWithQuota(t, ctx, client, fmt.Sprintf("paged-%d", i), period)
+		}
+
+		floor, err := svc.UsageLogRetentionFloor(ctx, now)
+		require.NoError(t, err)
+		require.True(t, floor.Unbounded)
+	})
 }
 
 func TestAccountQuotaWindowsUseBeijingCalendarBoundaries(t *testing.T) {

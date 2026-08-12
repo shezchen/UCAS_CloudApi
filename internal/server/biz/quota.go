@@ -14,6 +14,7 @@ import (
 	"github.com/looplj/axonhub/internal/ent/apikey"
 	"github.com/looplj/axonhub/internal/ent/schema/schematype"
 	"github.com/looplj/axonhub/internal/ent/usagelog"
+	"github.com/looplj/axonhub/internal/log"
 	"github.com/looplj/axonhub/internal/objects"
 	"github.com/looplj/axonhub/internal/pkg/xtime"
 )
@@ -190,6 +191,125 @@ func accountQuotaWindows(now time.Time) (daily QuotaWindow, weekly QuotaWindow) 
 
 	return QuotaWindow{Start: &dailyStart, End: &dailyEnd},
 		QuotaWindow{Start: &weeklyStart, End: &weeklyEnd}
+}
+
+// CurrentWeeklyQuotaWindowStart returns the UTC start of the weekly account
+// quota window that contains now. GC uses it as a floor for usage-log
+// deletion: usage logs inside the active window are still the source of truth
+// for account quota accounting, so deleting them would silently reset
+// consumed quota.
+func CurrentWeeklyQuotaWindowStart(now time.Time) time.Time {
+	_, weekly := accountQuotaWindows(now)
+	return *weekly.Start
+}
+
+// UsageLogRetentionFloor describes how far back usage logs still back live
+// quota enforcement.
+type UsageLogRetentionFloor struct {
+	// Start is the earliest active quota window start. Deleting a usage log
+	// created at or after it hands the owning account or API key free quota.
+	Start time.Time
+
+	// Unbounded is set when at least one live quota aggregates over all time,
+	// which no finite cutoff can satisfy.
+	Unbounded bool
+
+	// UnboundedAPIKeyID names one API key owning such a quota so the operator
+	// can find and change it.
+	UnboundedAPIKeyID int
+}
+
+// usageLogRetentionFloorPageSize bounds how many API keys are loaded at once
+// while scanning profile quotas.
+const usageLogRetentionFloorPageSize = 500
+
+// UsageLogRetentionFloor reports the oldest usage log that quota enforcement
+// still reads. It spans the account daily/weekly windows and every API key
+// profile quota window, because CheckAPIKeyQuota re-aggregates usage_logs on
+// every request instead of maintaining a counter: a deleted row inside any
+// live window is indistinguishable from usage that never happened.
+func (s *QuotaService) UsageLogRetentionFloor(ctx context.Context, now time.Time) (UsageLogRetentionFloor, error) {
+	// The daily window always starts after the weekly one, so the weekly start
+	// covers both account-level windows.
+	floor := UsageLogRetentionFloor{Start: CurrentWeeklyQuotaWindowStart(now)}
+
+	loc := s.system.TimeLocation(ctx)
+
+	lastID := 0
+
+	for {
+		keys, err := authz.RunWithSystemBypass(ctx, "usage-log-retention-floor", func(bypassCtx context.Context) ([]*ent.APIKey, error) {
+			return s.ent.APIKey.Query().
+				Where(apikey.IDGT(lastID)).
+				Order(ent.Asc(apikey.FieldID)).
+				Limit(usageLogRetentionFloorPageSize).
+				Select(apikey.FieldID, apikey.FieldProfiles).
+				All(bypassCtx)
+		})
+		if err != nil {
+			return UsageLogRetentionFloor{}, fmt.Errorf("list API key quotas for usage log retention floor: %w", err)
+		}
+
+		if len(keys) == 0 {
+			break
+		}
+
+		for _, key := range keys {
+			s.applyAPIKeyRetentionFloor(ctx, key, now, loc, &floor)
+		}
+
+		lastID = keys[len(keys)-1].ID
+
+		if len(keys) < usageLogRetentionFloorPageSize {
+			break
+		}
+	}
+
+	return floor, nil
+}
+
+func (s *QuotaService) applyAPIKeyRetentionFloor(
+	ctx context.Context,
+	key *ent.APIKey,
+	now time.Time,
+	loc *time.Location,
+	floor *UsageLogRetentionFloor,
+) {
+	if key == nil || key.Profiles == nil {
+		return
+	}
+
+	for _, profile := range key.Profiles.Profiles {
+		if profile.Quota == nil {
+			continue
+		}
+
+		window, err := quotaWindow(now, profile.Quota.Period, loc)
+		if err != nil {
+			// A malformed period already fails closed in CheckAPIKeyQuota, so it
+			// cannot be spending quota and must not block cleanup forever.
+			log.Warn(ctx, "Ignoring unparsable API key quota period while computing the usage log retention floor",
+				log.Int("api_key_id", key.ID),
+				log.String("profile", profile.Name),
+				log.Cause(err),
+			)
+
+			continue
+		}
+
+		if window.Start == nil {
+			floor.Unbounded = true
+			if floor.UnboundedAPIKeyID == 0 {
+				floor.UnboundedAPIKeyID = key.ID
+			}
+
+			continue
+		}
+
+		if window.Start.Before(floor.Start) {
+			floor.Start = *window.Start
+		}
+	}
 }
 
 func authorizeAccountQuotaOverview(ctx context.Context, userID int) error {

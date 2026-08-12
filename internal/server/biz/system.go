@@ -652,6 +652,10 @@ type SystemService struct {
 
 	mu           sync.RWMutex
 	timeLocation *time.Location
+
+	// initMu serializes Initialize so concurrent first-boot requests cannot
+	// both pass the IsInitialized pre-check and race to create owner users.
+	initMu sync.Mutex
 }
 
 func (s *SystemService) IsInitialized(ctx context.Context) (bool, error) {
@@ -680,7 +684,19 @@ type InitializeSystemParams struct {
 }
 
 // Initialize initializes the system with a secret key and sets the initialized flag.
+//
+// The unauthenticated first-boot endpoint makes this path race- and
+// abuse-sensitive: initMu serializes concurrent calls in-process, and the
+// initialized flag is claimed by an unconditional INSERT at the top of the
+// transaction, so the unique index on system.key — not a racy SELECT — decides
+// which writer gets to create the owner user, including across processes.
+// Binding the endpoint to a one-time bootstrap token or a trusted IP would
+// further shrink the first-boot takeover window, but that needs a
+// deployment-level contract and is intentionally not decided here.
 func (s *SystemService) Initialize(ctx context.Context, params *InitializeSystemParams) (err error) {
+	s.initMu.Lock()
+	defer s.initMu.Unlock()
+
 	ctx = authz.WithSystemBypass(ctx, "system-initialize")
 	// Check if system is already initialized
 	isInitialized, err := s.IsInitialized(ctx)
@@ -712,6 +728,18 @@ func (s *SystemService) Initialize(ctx context.Context, params *InitializeSystem
 	}()
 
 	ctx = ent.NewContext(ctx, tx.Client())
+
+	var claimed bool
+
+	claimed, err = s.claimInitialization(ctx, tx)
+	if err != nil {
+		return err
+	}
+
+	if !claimed {
+		_ = tx.Rollback()
+		return nil
+	}
 
 	hashedPassword, err := HashPassword(params.OwnerPassword)
 	if err != nil {
@@ -787,12 +815,6 @@ func (s *SystemService) Initialize(ctx context.Context, params *InitializeSystem
 
 	log.Info(ctx, "created primary data storage", zap.Int("data_storage_id", primaryDataStorage.ID))
 
-	// Set initialized flag to true.
-	err = s.setSystemValue(ctx, SystemKeyInitialized, "true")
-	if err != nil {
-		return fmt.Errorf("failed to set initialized flag: %w", err)
-	}
-
 	// Record current build version for initialized system.
 	err = s.SetVersion(ctx, build.Version)
 	if err != nil {
@@ -804,6 +826,35 @@ func (s *SystemService) Initialize(ctx context.Context, params *InitializeSystem
 	}
 
 	return nil
+}
+
+// claimInitialization writes the initialized flag as a plain INSERT and
+// reports whether this transaction won the right to initialize the system.
+//
+// A SELECT would not do: it takes no lock under read-committed, so two
+// processes can both observe an uninitialized system and each create an owner
+// user. An UPSERT would not do either, since the loser would overwrite the
+// flag and carry on. The unique index on system.key is the only arbiter that
+// works on all three supported drivers — the loser either blocks until the
+// winner commits and then hits the constraint, or hits it immediately.
+func (s *SystemService) claimInitialization(ctx context.Context, tx *ent.Tx) (bool, error) {
+	err := tx.System.Create().
+		SetKey(SystemKeyInitialized).
+		SetValue("true").
+		Exec(ctx)
+	if err != nil {
+		if ent.IsConstraintError(err) {
+			return false, nil
+		}
+
+		return false, fmt.Errorf("failed to claim system initialization: %w", err)
+	}
+
+	if err := s.Cache.Delete(ctx, "system:"+SystemKeyInitialized); err != nil {
+		log.Warn(ctx, "failed to invalidate cache", log.String("key", SystemKeyInitialized), log.Cause(err))
+	}
+
+	return true, nil
 }
 
 // SecretKey retrieves the JWT secret key from system settings.
@@ -984,11 +1035,30 @@ func (s *SystemService) StoragePolicyOrDefault(ctx context.Context) *StoragePoli
 	return policy
 }
 
+// MinUsageLogsRetentionDays is the smallest usage-log retention a policy may
+// be saved with. The account weekly quota window (see accountQuotaWindows)
+// looks back up to 7 days in Asia/Shanghai and one extra day absorbs the
+// timezone offset, so anything below this is guaranteed to be clamped by GC.
+// It is a configuration guardrail, not the safety mechanism: API key quota
+// windows are user-configurable and can reach much further back, so the
+// binding limit is the runtime clamp in usageLogCleanupCutoff.
+const MinUsageLogsRetentionDays = 8
+
 // SetStoragePolicy sets the storage policy configuration.
 func (s *SystemService) SetStoragePolicy(ctx context.Context, policy *StoragePolicy) error {
 	for _, opt := range policy.CleanupOptions {
 		if opt.CleanupDays <= 0 {
 			return fmt.Errorf("cleanup_days for %q must be positive; set enabled=false to keep data forever", opt.ResourceType)
+		}
+
+		// A disabled option deletes nothing, so rejecting its value would only
+		// make an unrelated policy edit unsavable for anyone who already stored
+		// a shorter retention.
+		if opt.Enabled && opt.ResourceType == "usage_logs" && opt.CleanupDays < MinUsageLogsRetentionDays {
+			return fmt.Errorf(
+				"cleanup_days for usage_logs must be at least %d: newer logs still back the active weekly quota window",
+				MinUsageLogsRetentionDays,
+			)
 		}
 	}
 

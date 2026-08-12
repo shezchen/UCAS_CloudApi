@@ -23,7 +23,7 @@ func newRoutingTestEngine(t *testing.T) *gin.Engine {
 	require.NoError(t, err)
 
 	srv.NoRoute(static.Handler())
-	srv.Use(middleware.WithCORS(nil))
+	srv.Use(middleware.WithCORS(nil, srv.Config.AllowPrivateNetworkCORS()))
 	srv.OPTIONS("*any", func(c *gin.Context) {
 		c.Status(http.StatusNoContent)
 	})

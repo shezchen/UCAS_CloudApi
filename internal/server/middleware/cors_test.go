@@ -61,10 +61,14 @@ func TestIsPublicAPIPath(t *testing.T) {
 // global, followed by an auth middleware that rejects unauthenticated calls,
 // plus the catch-all OPTIONS route.
 func newCORSTestEngine(restricted gin.HandlerFunc) *gin.Engine {
+	return newCORSTestEngineWithPrivateNetwork(restricted, false)
+}
+
+func newCORSTestEngineWithPrivateNetwork(restricted gin.HandlerFunc, allowPrivateNetwork bool) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 
 	engine := gin.New()
-	engine.Use(WithCORS(restricted))
+	engine.Use(WithCORS(restricted, allowPrivateNetwork))
 	engine.OPTIONS("*any", func(c *gin.Context) {
 		c.Status(http.StatusNoContent)
 	})
@@ -103,7 +107,7 @@ func newCORSTestEngineWithGlobalAuth(authCalled *bool) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 
 	engine := gin.New()
-	engine.Use(WithCORS(nil))
+	engine.Use(WithCORS(nil, false))
 	engine.Use(func(c *gin.Context) {
 		*authCalled = true
 
@@ -239,6 +243,61 @@ func TestWithCORSPublicSuccessResponseKeepsHeaders(t *testing.T) {
 
 	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "*" {
 		t.Errorf("Access-Control-Allow-Origin on 200 = %q, want *", got)
+	}
+}
+
+func TestWithCORSPrivateNetworkPreflight(t *testing.T) {
+	tests := []struct {
+		name                string
+		allowPrivateNetwork bool
+		want                string
+	}{
+		{name: "disabled by default", allowPrivateNetwork: false, want: ""},
+		{name: "granted when enabled", allowPrivateNetwork: true, want: "true"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			engine := newCORSTestEngineWithPrivateNetwork(nil, tt.allowPrivateNetwork)
+
+			req := httptest.NewRequest(http.MethodOptions, "/v1/chat/completions", nil)
+			req.Header.Set("Origin", "https://random-client.example")
+			req.Header.Set("Access-Control-Request-Method", "POST")
+			req.Header.Set("Access-Control-Request-Private-Network", "true")
+
+			w := httptest.NewRecorder()
+			engine.ServeHTTP(w, req)
+
+			if w.Code != http.StatusNoContent {
+				t.Fatalf("preflight status = %d, want %d", w.Code, http.StatusNoContent)
+			}
+
+			if got := w.Header().Get("Access-Control-Allow-Private-Network"); got != tt.want {
+				t.Errorf("Access-Control-Allow-Private-Network = %q, want %q", got, tt.want)
+			}
+
+			// The rest of the public policy is unaffected either way.
+			if got := w.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+				t.Errorf("Access-Control-Allow-Origin = %q, want *", got)
+			}
+		})
+	}
+}
+
+// A page that is not doing Private Network Access must never be handed the
+// grant, even with the flag on.
+func TestWithCORSPrivateNetworkNotGrantedWithoutRequest(t *testing.T) {
+	engine := newCORSTestEngineWithPrivateNetwork(nil, true)
+
+	req := httptest.NewRequest(http.MethodOptions, "/v1/chat/completions", nil)
+	req.Header.Set("Origin", "https://random-client.example")
+	req.Header.Set("Access-Control-Request-Method", "POST")
+
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	if got := w.Header().Get("Access-Control-Allow-Private-Network"); got != "" {
+		t.Errorf("Access-Control-Allow-Private-Network = %q, want empty", got)
 	}
 }
 

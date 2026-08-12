@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/gin-contrib/cors"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/looplj/axonhub/internal/ent"
 	"github.com/looplj/axonhub/internal/ent/request"
+	"github.com/looplj/axonhub/internal/log"
 	"github.com/looplj/axonhub/internal/server/api"
 	"github.com/looplj/axonhub/internal/server/biz"
 	"github.com/looplj/axonhub/internal/server/gql"
@@ -83,7 +85,13 @@ func SetupRoutes(server *Server, handlers Handlers, client *ent.Client, services
 		restrictedCORS = cors.New(corsConfig)
 	}
 
-	server.Use(middleware.WithCORS(restrictedCORS))
+	if server.Config.CORS.AllowPrivateNetwork && !server.Config.AllowPrivateNetworkCORS() {
+		log.Warn(context.Background(),
+			"ignoring server.cors.allow_private_network because server.api.auth.allow_no_auth is enabled: "+
+				"granting Private Network Access to an API that needs no key would let any site read from this instance")
+	}
+
+	server.Use(middleware.WithCORS(restrictedCORS, server.Config.AllowPrivateNetworkCORS()))
 
 	// Public API preflights are short-circuited with 204 by WithCORS before
 	// this handler runs. The catch-all keeps every other OPTIONS request

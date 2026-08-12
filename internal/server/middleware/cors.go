@@ -74,10 +74,14 @@ func IsPublicAPIPath(requestPath string) bool {
 // braces: every API route is registered for a concrete method, so gin matches
 // OPTIONS against the catch-all route in its own method tree and the API key
 // middleware is not in that chain either way.
-func WithCORS(restricted gin.HandlerFunc) gin.HandlerFunc {
+//
+// allowPrivateNetwork controls whether Private Network Access preflights are
+// granted; callers are expected to keep it false unless the operator asked for
+// it and the API still requires authentication.
+func WithCORS(restricted gin.HandlerFunc, allowPrivateNetwork bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if IsPublicAPIPath(c.Request.URL.Path) {
-			applyPublicCORS(c)
+			applyPublicCORS(c, allowPrivateNetwork)
 			return
 		}
 
@@ -87,7 +91,7 @@ func WithCORS(restricted gin.HandlerFunc) gin.HandlerFunc {
 	}
 }
 
-func applyPublicCORS(c *gin.Context) {
+func applyPublicCORS(c *gin.Context, allowPrivateNetwork bool) {
 	header := c.Writer.Header()
 	header.Set("Access-Control-Allow-Origin", "*")
 	// A wildcard origin must never be combined with credentials; browsers
@@ -111,12 +115,14 @@ func applyPublicCORS(c *gin.Context) {
 	header.Set("Access-Control-Max-Age", publicCORSMaxAge)
 	header.Add("Vary", "Access-Control-Request-Headers")
 
-	// Chromium sends Private Network Access preflights when a public site
-	// calls a locally hosted instance (e.g. SillyTavern on HTTPS talking to
-	// a self-hosted gateway on localhost). Granting it keeps that setup
-	// working; authentication is still enforced by API keys.
-	if c.Request.Header.Get("Access-Control-Request-Private-Network") == "true" {
+	// Chromium sends a Private Network Access preflight when a public site
+	// calls a locally hosted instance (e.g. SillyTavern on HTTPS talking to a
+	// self-hosted gateway on localhost). Granting it is what makes that setup
+	// work, and it is also what would let any other site the operator visits
+	// reach the same instance, so it stays behind an explicit opt-in.
+	if allowPrivateNetwork && c.Request.Header.Get("Access-Control-Request-Private-Network") == "true" {
 		header.Set("Access-Control-Allow-Private-Network", "true")
+		header.Add("Vary", "Access-Control-Request-Private-Network")
 	}
 
 	c.AbortWithStatus(http.StatusNoContent)

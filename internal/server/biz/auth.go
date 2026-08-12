@@ -590,8 +590,8 @@ func (s *AuthService) AuthenticateAPIKey(ctx context.Context, key string) (*ent.
 	// An API key is only as valid as its owning user: keys of deactivated or
 	// deleted users must stop working immediately, mirroring the user status
 	// check on the JWT path.
-	owner, err := authz.RunWithSystemBypass(ctx, "auth-lookup", func(bypassCtx context.Context) (*ent.User, error) {
-		return s.UserService.GetUserByID(bypassCtx, apiKey.UserID)
+	ownerStatus, err := authz.RunWithSystemBypass(ctx, "auth-lookup", func(bypassCtx context.Context) (user.Status, error) {
+		return s.UserService.GetUserStatus(bypassCtx, apiKey.UserID)
 	})
 	if err != nil {
 		if ent.IsNotFound(err) {
@@ -601,7 +601,7 @@ func (s *AuthService) AuthenticateAPIKey(ctx context.Context, key string) (*ent.
 		return nil, fmt.Errorf("failed to get api key owner: %w", err)
 	}
 
-	if owner.Status != user.StatusActivated {
+	if ownerStatus != user.StatusActivated {
 		return nil, fmt.Errorf("api key owner is not activated: %w", ErrInvalidAPIKey)
 	}
 

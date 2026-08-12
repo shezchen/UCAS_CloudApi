@@ -131,6 +131,7 @@ type UserService struct {
 
 	APIKeyService       *APIKeyService
 	UserCache           xcache.Cache[ent.User]
+	userStatusCache     *userStatusCache
 	permissionValidator *PermissionValidator
 }
 
@@ -141,6 +142,7 @@ func NewUserService(params UserServiceParams) *UserService {
 		},
 		APIKeyService:       params.APIKeyService,
 		UserCache:           xcache.NewFromConfig[ent.User](params.CacheConfig),
+		userStatusCache:     newUserStatusCache(time.Now),
 		permissionValidator: NewPermissionValidator(),
 	}
 }
@@ -576,11 +578,13 @@ func buildUserCacheKey(id int) string {
 func (s *UserService) invalidateUserCache(ctx context.Context, id int) {
 	cacheKey := buildUserCacheKey(id)
 	_ = s.UserCache.Delete(ctx, cacheKey)
+	s.userStatusCache.invalidate(id)
 }
 
 // clearUserCache clears all user cache.
 func (s *UserService) clearUserCache(ctx context.Context) {
 	_ = s.UserCache.Clear(ctx)
+	s.userStatusCache.clear()
 }
 
 // ConvertUserToUserInfo converts ent.User to objects.UserInfo.

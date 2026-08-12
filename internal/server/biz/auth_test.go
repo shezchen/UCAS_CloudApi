@@ -835,6 +835,50 @@ func TestAuthService_AuthenticateAPIKey(t *testing.T) {
 	require.Contains(t, err.Error(), "api key project not valid")
 }
 
+func TestAuthService_AuthenticateAPIKey_OwnerMustBeActivated(t *testing.T) {
+	authService, client, cleanup := setupTestAuthService(t, xcache.Config{})
+	defer cleanup()
+	defer client.Close()
+
+	ctx := ent.NewContext(authz.WithTestBypass(context.Background()), client)
+
+	owner, err := client.User.Create().
+		SetEmail(fmt.Sprintf("deactivated-%d@example.com", time.Now().UnixNano())).
+		SetPassword("hashed").
+		SetStatus(user.StatusDeactivated).
+		Save(ctx)
+	require.NoError(t, err)
+
+	testProject, err := client.Project.Create().
+		SetName(uuid.NewString()).
+		SetStatus(project.StatusActive).
+		Save(ctx)
+	require.NoError(t, err)
+
+	apiKeyString, err := GenerateAPIKey("ah")
+	require.NoError(t, err)
+	_, err = client.APIKey.Create().
+		SetKey(apiKeyString).
+		SetName("Deactivated Owner Key").
+		SetUserID(owner.ID).
+		SetProjectID(testProject.ID).
+		SetStatus(apikey.StatusEnabled).
+		Save(ctx)
+	require.NoError(t, err)
+
+	_, err = authService.AuthenticateAPIKey(ctx, apiKeyString)
+	require.ErrorIs(t, err, ErrInvalidAPIKey)
+	require.Contains(t, err.Error(), "api key owner is not activated")
+
+	_, err = client.User.UpdateOneID(owner.ID).SetStatus(user.StatusActivated).Save(ctx)
+	require.NoError(t, err)
+	authService.UserService.userStatusCache.invalidate(owner.ID)
+
+	authenticated, err := authService.AuthenticateAPIKey(ctx, apiKeyString)
+	require.NoError(t, err)
+	require.Equal(t, apiKeyString, authenticated.Key)
+}
+
 func TestAuthService_AuthenticateNoAuth(t *testing.T) {
 	cacheConfig := xcache.Config{}
 

@@ -1,6 +1,7 @@
 package xapikey_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -34,4 +35,41 @@ func TestIsRedacted(t *testing.T) {
 	require.True(t, xapikey.IsRedacted(xapikey.Redact("short")))
 	require.False(t, xapikey.IsRedacted("ah-1a2b3c4d5e6f7a8b9f0e"))
 	require.False(t, xapikey.IsRedacted(""))
+}
+
+// TestIsRedacted_RecognisesEveryRedaction is the invariant the authentication
+// path depends on: it refuses redacted input so the display value — which is
+// readable by anyone who can list API keys — cannot be used as a bearer
+// token. A key whose redaction IsRedacted did not recognise would slip
+// straight through that guard.
+func TestIsRedacted_RecognisesEveryRedaction(t *testing.T) {
+	raws := []string{
+		"",
+		"a",
+		"ah-",
+		"ah-1a2b3c4d5",
+		"ah-1a2b3c4d5e",
+		"ah-1a2b3c4d5e6f7a8b9f0e",
+		"ah-" + strings.Repeat("f", 64),
+		strings.Repeat("x", 1024),
+		"key.with.dots",
+		"key with spaces",
+		"密钥-1a2b3c4d5e6f",
+	}
+
+	for _, raw := range raws {
+		require.True(t, xapikey.IsRedacted(xapikey.Redact(raw)),
+			"Redact(%q) = %q must be recognised as redacted", raw, xapikey.Redact(raw))
+	}
+}
+
+// TestRedact_IsNotUnique documents why the redacted value must never be used
+// as a lookup handle: two distinct keys can share one.
+func TestRedact_IsNotUnique(t *testing.T) {
+	first := "ah-collision-aaaaaaaaaaaaaaaa-same"
+	second := "ah-collision-bbbbbbbbbbbbbbbb-same"
+
+	require.NotEqual(t, first, second)
+	require.Equal(t, xapikey.Redact(first), xapikey.Redact(second))
+	require.NotEqual(t, xapikey.Hash(first), xapikey.Hash(second))
 }

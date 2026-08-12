@@ -12,12 +12,12 @@ import (
 // than defaultValue are clamped down to it.
 func EnsureMaxTokens(defaultValue int64) pipeline.Middleware {
 	return pipeline.OnLlmRequest("max-tokens", func(ctx context.Context, request *llm.Request) (*llm.Request, error) {
-		if request.MaxTokens == nil {
-			request.MaxTokens = &defaultValue
-		}
-
-		if *request.MaxTokens > defaultValue {
-			request.MaxTokens = &defaultValue
+		if request.MaxTokens == nil || *request.MaxTokens > defaultValue {
+			// Each request needs its own pointer: sharing the captured one
+			// would let a write through request.MaxTokens move the ceiling for
+			// every request in the process.
+			clamped := defaultValue
+			request.MaxTokens = &clamped
 		}
 
 		return request, nil

@@ -1,6 +1,7 @@
 {
   "settings.title": "Settings",
   "settings.description": "Manage your account settings and set e-mail preferences.",
+  "security.title": "Security",
   "security.password.changeTitle": "Change Password",
   "security.password.setTitle": "Set Initial Password",
   "security.password.oldPassword": "Current Password",
@@ -12,6 +13,7 @@
   "security.messages.passwordChangeError": "Failed to change password: ",
   "security.oidc.title": "Unified OIDC Management",
   "security.oidc.description": "Manage your OIDC providers below. You can link or unlink providers to enable SSO login.",
+  "security.oidc.linkSuccess": "Successfully linked provider.",
   "security.oidc.linkError": "Failed to initiate linking: ",
   "security.oidc.unlinkSuccess": "Successfully unlinked provider.",
   "security.oidc.unlinkError": "Failed to unlink provider: ",

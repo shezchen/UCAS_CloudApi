@@ -1,6 +1,7 @@
 {
   "settings.title": "设置",
   "settings.description": "管理您的账户设置和邮件偏好。",
+  "security.title": "安全",
   "security.password.changeTitle": "修改密码",
   "security.password.setTitle": "设置初始密码",
   "security.password.oldPassword": "当前密码",
@@ -12,6 +13,7 @@
   "security.messages.passwordChangeError": "修改密码失败：",
   "security.oidc.title": "统一 OIDC 管理",
   "security.oidc.description": "在下方管理您的 OIDC 提供方。您可以关联或取消关联提供方以启用 SSO 登录。",
+  "security.oidc.linkSuccess": "已成功关联该提供方。",
   "security.oidc.linkError": "发起关联失败：",
   "security.oidc.unlinkSuccess": "已成功取消关联该提供方。",
   "security.oidc.unlinkError": "取消关联失败：",

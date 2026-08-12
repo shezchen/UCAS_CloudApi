@@ -18,7 +18,7 @@ export default function SettingsProfile() {
 
   useEffect(() => {
     if ((search as any).oidc_link === 'success') {
-      toast.success(t('security.oidc.linkSuccess', 'Successfully linked provider!'));
+      toast.success(t('security.oidc.linkSuccess'));
       queryClient.invalidateQueries({ queryKey: ['oidc-providers'] });
       queryClient.invalidateQueries({ queryKey: ['me'] });
     }
@@ -29,7 +29,7 @@ export default function SettingsProfile() {
       <Tabs defaultValue="profile" className="w-full">
         <TabsList className="mb-4">
           <TabsTrigger value="profile">{t('profile.title')}</TabsTrigger>
-          <TabsTrigger value="security">{t('security.title', 'Security')}</TabsTrigger>
+          <TabsTrigger value="security">{t('security.title')}</TabsTrigger>
           {providers.length > 0 && <TabsTrigger value="oidc">OIDC</TabsTrigger>}
         </TabsList>
         <TabsContent value="profile">

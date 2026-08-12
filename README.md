@@ -399,10 +399,17 @@ Deploy AxonHub on Kubernetes using the official Helm chart:
 # Quick installation
 git clone https://github.com/looplj/axonhub.git
 cd axonhub
-helm install axonhub ./deploy/helm
+
+# The chart has no default database password; supply one in both places.
+DB_PASSWORD="$(openssl rand -base64 24 | tr -d '/+=')"
+helm install axonhub ./deploy/helm \
+  --set postgresql.auth.password="$DB_PASSWORD" \
+  --set axonhub.env.AXONHUB_DB_DSN="postgres://axonhub:${DB_PASSWORD}@axonhub-postgresql:5432/axonhub?sslmode=disable"
 
 # Production deployment
-helm install axonhub ./deploy/helm -f ./deploy/helm/values-production.yaml
+helm install axonhub ./deploy/helm -f ./deploy/helm/values-production.yaml \
+  --set postgresql.auth.password="$DB_PASSWORD" \
+  --set axonhub.env.AXONHUB_DB_DSN="postgres://axonhub:${DB_PASSWORD}@axonhub-postgresql:5432/axonhub?sslmode=disable"
 
 # Access AxonHub
 kubectl port-forward svc/axonhub 8090:8090
@@ -414,7 +421,8 @@ kubectl port-forward svc/axonhub 8090:8090
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `axonhub.replicaCount` | Replicas | `1` |
-| `axonhub.dbPassword` | DB password | `axonhub_password` |
+| `axonhub.env.AXONHUB_DB_DSN` | DB connection string (required) | `""` |
+| `postgresql.auth.password` | DB password (required) | `""` |
 | `postgresql.enabled` | Embedded PostgreSQL | `true` |
 | `ingress.enabled` | Enable ingress | `false` |
 | `persistence.enabled` | Data persistence | `false` |

@@ -10,11 +10,22 @@ This Helm chart deploys AxonHub on Kubernetes with PostgreSQL database.
 
 ## Installing the Chart
 
+The chart ships no database password. Both the password used to initialise the
+bundled PostgreSQL and the connection string the application uses have to be
+supplied, and rendering fails with a message naming the missing one otherwise.
+
 To install the chart with the release name `axonhub`:
 
 ```bash
-helm install axonhub ./deploy/helm
+DB_PASSWORD="$(openssl rand -base64 24 | tr -d '/+=')"
+
+helm install axonhub ./deploy/helm \
+  --set postgresql.auth.password="$DB_PASSWORD" \
+  --set axonhub.env.AXONHUB_DB_DSN="postgres://axonhub:${DB_PASSWORD}@axonhub-postgresql:5432/axonhub?sslmode=disable"
 ```
+
+The password appears in both flags on purpose: one initialises the database,
+the other tells AxonHub how to connect to it. They have to match.
 
 ## Configuration
 
@@ -34,7 +45,7 @@ The following table lists the configurable parameters of the AxonHub chart and t
 | `axonhub.image.repository` | AxonHub image repository | `looplj/axonhub` |
 | `axonhub.image.tag` | AxonHub image tag override. Defaults to chart `appVersion` when empty | `""` |
 | `axonhub.image.pullPolicy` | Image pull policy | `IfNotPresent` |
-| `axonhub.dbPassword` | Database password | `axonhub_password` |
+| `axonhub.env.AXONHUB_DB_DSN` | Database connection string. Required when `postgresql.enabled` is `true` | `""` |
 | `axonhub.service.type` | Kubernetes service type | `ClusterIP` |
 | `axonhub.service.port` | Service port | `8090` |
 | `axonhub.resources` | CPU/Memory resource requests/limits | `{}` |
@@ -49,9 +60,8 @@ The following table lists the configurable parameters of the AxonHub chart and t
 | `postgresql.replicaCount` | Number of PostgreSQL replicas | `1` |
 | `postgresql.image.repository` | PostgreSQL image repository | `postgres` |
 | `postgresql.image.tag` | PostgreSQL image tag | `16-alpine` |
-| `postgresql.auth.postgresPassword` | PostgreSQL admin password | `axonhub_password` |
-| `postgresql.auth.username` | PostgreSQL user name | `axonhub` |
-| `postgresql.auth.password` | PostgreSQL user password | `axonhub_password` |
+| `postgresql.auth.username` | PostgreSQL user name, created as the superuser on first start | `axonhub` |
+| `postgresql.auth.password` | PostgreSQL user password. Required, and only applied during initdb | `""` |
 | `postgresql.auth.database` | PostgreSQL database name | `axonhub` |
 | `postgresql.service.type` | Kubernetes service type | `ClusterIP` |
 | `postgresql.service.port` | PostgreSQL service port | `5432` |
@@ -99,15 +109,13 @@ axonhub:
 
 For production deployments, you should:
 
-1. Change default passwords:
-```yaml
-axonhub:
-  dbPassword: "your-secure-password"
-
-postgresql:
-  auth:
-    postgresPassword: "your-secure-postgres-password"
-    password: "your-secure-password"
+1. Keep the database password out of the values file and pass it from your
+   secret store, using the same value in both places:
+```bash
+helm upgrade --install axonhub ./deploy/helm \
+  -f ./deploy/helm/values-production.yaml \
+  --set postgresql.auth.password="$DB_PASSWORD" \
+  --set axonhub.env.AXONHUB_DB_DSN="postgres://axonhub:${DB_PASSWORD}@axonhub-postgresql:5432/axonhub?sslmode=disable"
 ```
 
 2. Enable persistence:

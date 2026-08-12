@@ -1805,6 +1805,32 @@ func TestAPIKeyService_RedactedKeyCannotAuthenticate(t *testing.T) {
 	require.Error(t, err, "a second attempt must not succeed either")
 }
 
+// TestAPIKeyService_InvalidateCachesForKeysUsesTheHashEntry pins the boundary
+// other services revoke access through. They hold entities, not secrets, and
+// the `key` column no longer carries anything the cache is keyed by, so a
+// caller deriving the entry itself would notify a key that never existed.
+func TestAPIKeyService_InvalidateCachesForKeysUsesTheHashEntry(t *testing.T) {
+	rawKey, err := GenerateAPIKey("ah")
+	require.NoError(t, err)
+
+	stored := &ent.APIKey{Key: xapikey.Redact(rawKey), KeyHash: xapikey.Hash(rawKey)}
+
+	require.Equal(t, buildAPIKeyCacheKey(rawKey), apiKeyCacheKeyForHash(stored.KeyHash))
+	require.NotEqual(t, buildAPIKeyCacheKey(stored.Key), apiKeyCacheKeyForHash(stored.KeyHash))
+
+	apiKeyService, client := setupTestAPIKeyService(t, xcache.Config{Mode: xcache.ModeMemory})
+	defer apiKeyService.Stop()
+	defer client.Close()
+
+	ctx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+
+	apiKeyService.invalidateAPIKeyCachesForKeys(ctx, stored)
+
+	var absent *APIKeyService
+
+	absent.invalidateAPIKeyCachesForKeys(ctx, stored)
+}
+
 // TestAPIKeyHook_RejectsRedactedKeyWithoutHash keeps the write path from
 // creating the row the fallback above has to defend against.
 func TestAPIKeyHook_RejectsRedactedKeyWithoutHash(t *testing.T) {

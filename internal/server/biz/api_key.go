@@ -767,6 +767,21 @@ func (s *APIKeyService) GetForRead(ctx context.Context, id *int, key *string, na
 
 // invalidateAPIKeyCaches invalidates cache entries by the stored key hash
 // (the raw key is generally no longer available after creation).
+// invalidateAPIKeyCachesForKeys invalidates the cache entries of the given API
+// keys. Callers outside this file must use this form rather than passing key
+// material themselves: keys are cached under the hash of their secret, which
+// the `key` column no longer holds, so a caller that derives the entry itself
+// fails silently.
+func (s *APIKeyService) invalidateAPIKeyCachesForKeys(ctx context.Context, keys ...*ent.APIKey) {
+	// A UserService assembled by hand, as several tests do, has no API key
+	// service; revoking access must not panic because of it.
+	if s == nil || len(keys) == 0 {
+		return
+	}
+
+	s.invalidateAPIKeyCaches(ctx, lo.Map(keys, func(k *ent.APIKey, _ int) string { return k.KeyHash })...)
+}
+
 func (s *APIKeyService) invalidateAPIKeyCaches(ctx context.Context, keyHashes ...string) {
 	hashes := lo.Filter(keyHashes, func(hash string, _ int) bool { return hash != "" })
 	if len(hashes) == 0 {

@@ -64,6 +64,9 @@ func TestUserService_DeletionDisablesAPIKeys(t *testing.T) {
 	_, err := fixture.auth.AuthenticateAPIKey(fixture.ctx, apiKey.Key)
 	require.NoError(t, err)
 
+	_, err = fixture.users.GetUserByID(fixture.ctx, owner.ID)
+	require.NoError(t, err)
+
 	require.NoError(t, fixture.users.DeleteUser(fixture.asSystemOwner(t), owner.ID))
 
 	_, err = fixture.auth.AuthenticateAPIKey(fixture.ctx, apiKey.Key)
@@ -72,6 +75,12 @@ func TestUserService_DeletionDisablesAPIKeys(t *testing.T) {
 	stored, err := fixture.client.APIKey.Get(fixture.ctx, apiKey.ID)
 	require.NoError(t, err)
 	require.Equal(t, apikey.StatusDisabled, stored.Status)
+
+	_, err = fixture.users.UserCache.Get(fixture.ctx, buildUserCacheKey(owner.ID))
+	require.Error(t, err, "the user cache must be invalidated after the transaction commits")
+
+	_, cached := fixture.users.userStatusCache.get(owner.ID)
+	require.False(t, cached)
 }
 
 // A UserService without an API key service still has to revoke access.

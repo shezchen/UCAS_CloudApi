@@ -841,7 +841,7 @@ func (s *UserService) UpdateProjectUser(ctx context.Context, userID, projectID i
 // 3. Removes user from all projects (UserProject)
 // 4. Removes all user roles (UserRole)
 // 5. Soft deletes the user
-// 6. Invalidates user cache.
+// 6. Invalidates the caches once the transaction has committed.
 func (s *UserService) DeleteUser(ctx context.Context, id int) error {
 	// Validate permissions before deleting
 	if err := s.permissionValidator.CanDeleteUser(ctx, id); err != nil {
@@ -898,15 +898,15 @@ func (s *UserService) DeleteUser(ctx context.Context, id int) error {
 			return fmt.Errorf("failed to delete user: %w", err)
 		}
 
-		// 5. Invalidate user cache
-		s.invalidateUserCache(ctx, id)
-
 		return nil
 	})
 	if err != nil {
 		return err
 	}
 
+	// 5. Invalidate caches only after the transaction has been committed so a
+	// concurrent request cannot re-populate them with the pre-commit state.
+	s.invalidateUserCache(ctx, id)
 	s.APIKeyService.invalidateAPIKeyCachesForKeys(ctx, disabledKeys...)
 
 	return nil

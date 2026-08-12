@@ -327,7 +327,15 @@ type rawStreamErrStore struct {
 	err atomic.Pointer[error]
 }
 
+// Store records err unless a previous error already claimed the slot. A nil
+// error is dropped rather than stored: the producer's deferred
+// Store(stream.Err()) is unconditional, so a nil would otherwise win the slot
+// and permanently mask a real error stored afterwards by the drain goroutine.
 func (s *rawStreamErrStore) Store(err error) {
+	if err == nil {
+		return
+	}
+
 	s.err.CompareAndSwap(nil, &err)
 }
 

@@ -1073,6 +1073,22 @@ func TestApplyPassThroughStream_DrainPanicSurvivesAPanickingClose(t *testing.T) 
 	require.Eventually(t, transformed.closed.Load, time.Second, 10*time.Millisecond)
 }
 
+func TestRawStreamErrStore_NilDoesNotClaimTheSlot(t *testing.T) {
+	store := &rawStreamErrStore{}
+
+	// The producer's deferred Store(stream.Err()) runs unconditionally, so it
+	// must not be able to win the slot with a nil and mask the real failure.
+	store.Store(nil)
+	require.NoError(t, store.Load())
+
+	errReal := errors.New("real failure")
+	store.Store(errReal)
+	require.Equal(t, errReal, store.Load())
+
+	store.Store(errors.New("later, less specific failure"))
+	require.Equal(t, errReal, store.Load())
+}
+
 type doneStream struct {
 	stream streams.Stream[*httpclient.StreamEvent]
 	done   chan struct{}

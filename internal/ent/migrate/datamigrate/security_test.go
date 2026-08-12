@@ -3,6 +3,7 @@ package datamigrate_test
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 
 	entsql "entgo.io/ent/dialect/sql"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/looplj/axonhub/internal/authz"
 	"github.com/looplj/axonhub/internal/ent"
+	"github.com/looplj/axonhub/internal/ent/apikey"
 	"github.com/looplj/axonhub/internal/ent/channel"
 	"github.com/looplj/axonhub/internal/ent/enttest"
 	"github.com/looplj/axonhub/internal/ent/migrate"
@@ -155,6 +157,68 @@ func TestRunSecurityBackfill_ChannelCredentials(t *testing.T) {
 	// re-encryption with a fresh nonce).
 	require.NoError(t, datamigrate.RunSecurityBackfill(ctx, client))
 	require.Equal(t, encryptedColumn, readCredentialsColumn())
+}
+
+// TestRunSecurityBackfill_BatchedScanTerminates covers the batching cursor
+// over more rows than fit in one batch, including rows the backfill cannot
+// migrate. Those stay selected by the predicate, so a scan that did not
+// advance by id would re-read them forever.
+func TestRunSecurityBackfill_BatchedScanTerminates(t *testing.T) {
+	t.Cleanup(func() { _ = xcrypto.Configure("") })
+	require.NoError(t, xcrypto.Configure(""))
+
+	client, sqlDB := newSecurityTestClient(t)
+
+	ctx := context.Background()
+	seedCtx := authz.WithTestBypass(schematype.SkipSoftDelete(ent.NewContext(ctx, client)))
+
+	proj, err := client.Project.Create().SetName("default").Save(seedCtx)
+	require.NoError(t, err)
+
+	const total = 1200
+
+	rawKeys := make(map[int]string, total)
+
+	for i := range total {
+		created, err := client.APIKey.Create().
+			SetName(fmt.Sprintf("legacy-key-%d", i)).
+			SetKey(fmt.Sprintf("ah-temporary-value-%d", i)).
+			SetProjectID(proj.ID).
+			Save(seedCtx)
+		require.NoError(t, err)
+
+		// Every seventh row is unmigratable: no key material at all.
+		if i%7 == 0 {
+			_, err = sqlDB.Exec(`UPDATE api_keys SET "key" = '', key_hash = NULL, key_prefix = '' WHERE id = ?`, created.ID)
+			require.NoError(t, err)
+
+			continue
+		}
+
+		raw := fmt.Sprintf("ah-legacy-plaintext-key-%016d", i)
+		rawKeys[created.ID] = raw
+
+		_, err = sqlDB.Exec(`UPDATE api_keys SET "key" = ?, key_hash = NULL, key_prefix = '' WHERE id = ?`, raw, created.ID)
+		require.NoError(t, err)
+	}
+
+	require.NoError(t, datamigrate.RunSecurityBackfill(ctx, client))
+
+	for id, raw := range rawKeys {
+		migrated, err := client.APIKey.Get(seedCtx, id)
+		require.NoError(t, err)
+		require.Equal(t, xapikey.Hash(raw), migrated.KeyHash)
+	}
+
+	remaining, err := client.APIKey.Query().
+		Where(apikey.Or(apikey.KeyHashIsNil(), apikey.KeyHashEQ(""))).
+		Count(seedCtx)
+	require.NoError(t, err)
+	require.Equal(t, total-len(rawKeys), remaining,
+		"only the rows with no key material may be left behind")
+
+	// A second run must still terminate rather than loop on those rows.
+	require.NoError(t, datamigrate.RunSecurityBackfill(ctx, client))
 }
 
 // TestRunSecurityBackfill_RefusesToStartWithoutKey pins the fail-fast

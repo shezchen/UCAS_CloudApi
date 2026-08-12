@@ -8,6 +8,7 @@ import (
 	"github.com/looplj/axonhub/internal/authz"
 	"github.com/looplj/axonhub/internal/ent"
 	"github.com/looplj/axonhub/internal/ent/apikey"
+	"github.com/looplj/axonhub/internal/ent/channel"
 	"github.com/looplj/axonhub/internal/ent/schema/schematype"
 	"github.com/looplj/axonhub/internal/log"
 	"github.com/looplj/axonhub/internal/objects"
@@ -42,98 +43,162 @@ func RunSecurityBackfill(ctx context.Context, client *ent.Client) error {
 	return encryptChannelCredentials(ctx, client)
 }
 
+// backfillBatchSize bounds how many rows the backfill holds at once. It runs
+// before the HTTP listener starts, so an installation with a large api_keys
+// table would otherwise load the whole thing into memory and report nothing
+// until it finished.
+const backfillBatchSize = 500
+
 func backfillAPIKeyHashes(ctx context.Context, client *ent.Client) error {
-	legacyKeys, err := client.APIKey.Query().
-		Where(apikey.Or(apikey.KeyHashIsNil(), apikey.KeyHashEQ(""))).
-		All(ctx)
-	if err != nil {
-		return err
-	}
+	var (
+		// Rows that cannot be migrated stay selected by the predicate, so the
+		// scan advances by id rather than re-reading the same batch forever.
+		cursor   int
+		migrated int
+		skipped  int
+	)
 
-	migrated := 0
-
-	for _, key := range legacyKeys {
-		raw := key.Key
-		if raw == "" || xapikey.IsRedacted(raw) {
-			// Nothing usable to hash; leave the row alone rather than guess.
-			log.Warn(ctx, "api key row has no plaintext key to backfill, skipping",
-				log.Int("api_key_id", key.ID))
-
-			continue
-		}
-
-		// Changing the storage format of a key is not a change the key's
-		// owner made, so keep updated_at where it was. Ent's update default
-		// would otherwise stamp every row with the migration's start time,
-		// which is visible in the UI and cannot be recovered afterwards.
-		_, err := client.APIKey.UpdateOneID(key.ID).
-			SetKeyHash(xapikey.Hash(raw)).
-			SetKeyPrefix(xapikey.Prefix(raw)).
-			SetKey(xapikey.Redact(raw)).
-			SetUpdatedAt(key.UpdatedAt).
-			Save(ctx)
+	for {
+		batch, err := client.APIKey.Query().
+			Where(
+				apikey.Or(apikey.KeyHashIsNil(), apikey.KeyHashEQ("")),
+				apikey.IDGT(cursor),
+			).
+			Order(ent.Asc(apikey.FieldID)).
+			Limit(backfillBatchSize).
+			All(ctx)
 		if err != nil {
 			return err
 		}
 
-		migrated++
+		if len(batch) == 0 {
+			break
+		}
+
+		cursor = batch[len(batch)-1].ID
+
+		for _, key := range batch {
+			raw := key.Key
+			if raw == "" || xapikey.IsRedacted(raw) {
+				// Nothing usable to hash; leave the row alone rather than guess.
+				skipped++
+
+				continue
+			}
+
+			// Changing the storage format of a key is not a change the key's
+			// owner made, so keep updated_at where it was. Ent's update
+			// default would otherwise stamp every row with the migration's
+			// start time, which is visible in the UI and cannot be recovered
+			// afterwards.
+			_, err := client.APIKey.UpdateOneID(key.ID).
+				SetKeyHash(xapikey.Hash(raw)).
+				SetKeyPrefix(xapikey.Prefix(raw)).
+				SetKey(xapikey.Redact(raw)).
+				SetUpdatedAt(key.UpdatedAt).
+				Save(ctx)
+			if err != nil {
+				return err
+			}
+
+			migrated++
+		}
+
+		if migrated > 0 {
+			log.Info(ctx, "backfilling api key hashes",
+				log.Int("migrated", migrated), log.Int("last_id", cursor))
+		}
 	}
 
 	if migrated > 0 {
 		log.Info(ctx, "backfilled api key hashes", log.Int("count", migrated))
 	}
 
+	if skipped > 0 {
+		// Every startup re-reads these rows, so report them once as a total
+		// rather than one line each.
+		log.Warn(ctx, "api key rows have no plaintext key to backfill, left unchanged",
+			log.Int("count", skipped))
+	}
+
 	return nil
 }
 
 func encryptChannelCredentials(ctx context.Context, client *ent.Client) error {
-	// Reading the channels also validates that every stored credential can be
-	// decoded with the configured keys. Doing it here, before the server
-	// starts listening, is what turns a missing or superseded key into a
-	// startup failure instead of a healthy-looking instance that fails every
-	// channel read once traffic arrives.
-	channels, err := client.Channel.Query().All(ctx)
-	if err != nil {
-		if errors.Is(err, objects.ErrCredentialsEncryptedNoKey) {
-			return fmt.Errorf(
-				"refusing to start: stored channel credentials are encrypted but "+
-					"security.credential_encryption_key (env AXONHUB_SECURITY_CREDENTIAL_ENCRYPTION_KEY) is not set; "+
-					"restore the key those rows were written with, otherwise every channel read will fail: %w", err)
+	primaryKeyID := xcrypto.PrimaryKeyID()
+
+	var (
+		cursor   int
+		migrated int
+	)
+
+	for {
+		// Reading the channels also validates that every stored credential
+		// can be decoded with the configured keys. Doing it here, before the
+		// HTTP listener starts, is what turns a missing or superseded key
+		// into a startup failure instead of a healthy-looking instance that
+		// fails every channel read once traffic arrives.
+		batch, err := client.Channel.Query().
+			Where(channel.IDGT(cursor)).
+			Order(ent.Asc(channel.FieldID)).
+			Limit(backfillBatchSize).
+			All(ctx)
+		if err != nil {
+			if errors.Is(err, objects.ErrCredentialsEncryptedNoKey) {
+				return fmt.Errorf(
+					"refusing to start: stored channel credentials are encrypted but "+
+						"security.credential_encryption_key (env AXONHUB_SECURITY_CREDENTIAL_ENCRYPTION_KEY) is not set; "+
+						"restore the key those rows were written with, otherwise every channel read will fail: %w", err)
+			}
+
+			return err
 		}
 
-		return err
+		if len(batch) == 0 {
+			break
+		}
+
+		cursor = batch[len(batch)-1].ID
+
+		if !xcrypto.Enabled() {
+			// Nothing to rewrite, but the remaining batches still have to be
+			// read so the check above covers every row.
+			continue
+		}
+
+		for _, ch := range batch {
+			// Covers plaintext rows and rows still sealed with a superseded
+			// key, so promoting a replacement key to primary and keeping the
+			// previous one in security.credential_decryption_keys rewrites
+			// every row on the next start.
+			if ch.Credentials.StoredEncrypted() && ch.Credentials.StoredKeyID() == primaryKeyID {
+				continue
+			}
+
+			// Saving the decoded value re-serializes it through the
+			// transparent encryption codec, which now produces the encrypted
+			// envelope. updated_at is carried over for the same reason as in
+			// the API key pass.
+			_, err := client.Channel.UpdateOneID(ch.ID).
+				SetCredentials(ch.Credentials).
+				SetUpdatedAt(ch.UpdatedAt).
+				Save(ctx)
+			if err != nil {
+				return err
+			}
+
+			migrated++
+		}
+
+		if migrated > 0 {
+			log.Info(ctx, "encrypting stored channel credentials",
+				log.Int("migrated", migrated), log.Int("last_id", cursor))
+		}
 	}
 
 	if !xcrypto.Enabled() {
 		log.Debug(ctx, "credential encryption key not configured, skipping channel credentials encryption backfill")
 		return nil
-	}
-
-	primaryKeyID := xcrypto.PrimaryKeyID()
-
-	migrated := 0
-
-	for _, ch := range channels {
-		// Covers plaintext rows and rows still sealed with a superseded key,
-		// so promoting a replacement key to primary and keeping the previous
-		// one in security.credential_decryption_keys rewrites every row on
-		// the next start.
-		if ch.Credentials.StoredEncrypted() && ch.Credentials.StoredKeyID() == primaryKeyID {
-			continue
-		}
-
-		// Saving the decoded value re-serializes it through the transparent
-		// encryption codec, which now produces the encrypted envelope.
-		// updated_at is carried over for the same reason as above.
-		_, err := client.Channel.UpdateOneID(ch.ID).
-			SetCredentials(ch.Credentials).
-			SetUpdatedAt(ch.UpdatedAt).
-			Save(ctx)
-		if err != nil {
-			return err
-		}
-
-		migrated++
 	}
 
 	if migrated > 0 {

@@ -309,9 +309,10 @@ func NewOIDCService(params OIDCServiceParams) (*OIDCService, error) {
 // An empty string is returned unchanged.
 //
 // Local paths must be relative and stay inside the working directory: the
-// resolved bytes are served to the login page, so absolute paths and `..`
-// traversal are rejected to keep a misconfigured (or attacker-influenced)
-// icon_url from disclosing arbitrary files on the host.
+// resolved bytes are served to the login page, so a path that leaves the
+// working directory would disclose an arbitrary file on the host. icon_url is
+// read from configuration only, so this guards against a misconfiguration
+// rather than an attacker-supplied value.
 func resolveIconURL(raw string) (string, error) {
 	if raw == "" {
 		return "", nil
@@ -330,6 +331,10 @@ func resolveIconURL(raw string) (string, error) {
 		return "", fmt.Errorf("icon file path %q must not escape the working directory", raw)
 	}
 
+	if err := verifyPathInsideWorkingDir(cleaned); err != nil {
+		return "", fmt.Errorf("icon file path %q: %w", raw, err)
+	}
+
 	data, err := os.ReadFile(cleaned)
 	if err != nil {
 		return "", fmt.Errorf("reading icon file %q: %w", raw, err)
@@ -346,6 +351,45 @@ func resolveIconURL(raw string) (string, error) {
 	dataURL := "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(data)
 
 	return dataURL, nil
+}
+
+// verifyPathInsideWorkingDir reports whether path still resolves inside the
+// working directory once symlinks are followed. Rejecting ".." segments is not
+// enough on its own: a relative path with no ".." at all can leave the
+// directory through a symlink.
+func verifyPathInsideWorkingDir(path string) error {
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("resolving working directory: %w", err)
+	}
+
+	// The working directory can itself sit behind a symlink, so resolve both
+	// sides before comparing them.
+	root, err := filepath.EvalSymlinks(workingDir)
+	if err != nil {
+		return fmt.Errorf("resolving working directory: %w", err)
+	}
+
+	resolved, err := filepath.EvalSymlinks(filepath.Join(root, path))
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Nothing to disclose; the read reports the missing file.
+			return nil
+		}
+
+		return fmt.Errorf("resolving path: %w", err)
+	}
+
+	relative, err := filepath.Rel(root, resolved)
+	if err != nil {
+		return fmt.Errorf("resolving path: %w", err)
+	}
+
+	if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("must not escape the working directory")
+	}
+
+	return nil
 }
 
 func (s *OIDCService) CountProviders() int {

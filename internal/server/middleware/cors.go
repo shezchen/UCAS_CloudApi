@@ -2,27 +2,11 @@ package middleware
 
 import (
 	"net/http"
-	"strings"
 
 	"github.com/gin-gonic/gin"
-)
 
-// publicAPIPrefixes lists the route prefixes of the public model APIs
-// (OpenAI / Anthropic / Gemini / Jina / Doubao compatible endpoints).
-// These routes authenticate with API keys carried in request headers instead
-// of cookies or browser sessions, so they are safe to expose to browser-based
-// clients from any origin.
-//
-// Management surfaces (/admin, /openapi, /oauth, static frontend) are
-// intentionally excluded and keep the configurable strict CORS policy.
-var publicAPIPrefixes = []string{
-	"/v1",
-	"/v1beta",
-	"/anthropic",
-	"/jina",
-	"/doubao",
-	"/gemini",
-}
+	"github.com/looplj/axonhub/internal/server/apipath"
+)
 
 const (
 	publicCORSAllowMethods = "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS"
@@ -50,16 +34,13 @@ const (
 	publicCORSMaxAge = "86400"
 )
 
-// IsPublicAPIPath reports whether the request path belongs to the public
-// model APIs that use the browser-friendly wildcard CORS policy.
+// IsPublicAPIPath reports whether the request path belongs to the public model
+// APIs that use the browser-friendly wildcard CORS policy. Those routes
+// authenticate with API keys carried in request headers instead of cookies or
+// browser sessions, so they are safe to expose to any origin; management
+// surfaces (/admin, /openapi, /oauth, static frontend) are not.
 func IsPublicAPIPath(path string) bool {
-	for _, prefix := range publicAPIPrefixes {
-		if path == prefix || strings.HasPrefix(path, prefix+"/") {
-			return true
-		}
-	}
-
-	return false
+	return apipath.IsPublicModelAPI(path)
 }
 
 // WithCORS dispatches CORS handling by route class.

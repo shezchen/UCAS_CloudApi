@@ -10,23 +10,13 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/looplj/axonhub/internal/objects"
+	"github.com/looplj/axonhub/internal/server/apipath"
 )
 
 //go:embed all:dist/*
 var dist embed.FS
 
 var staticFS static.ServeFileSystem
-
-var apiPrefixes = []string{
-	"/admin",
-	"/anthropic",
-	"/doubao",
-	"/gemini",
-	"/jina",
-	"/openapi",
-	"/v1",
-	"/v1beta",
-}
 
 func init() {
 	var err error
@@ -41,7 +31,7 @@ func Handler() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
 
-		if isAPIPath(path) {
+		if apipath.IsAPI(path) {
 			serveAPINotFound(c, path)
 			return
 		}
@@ -74,16 +64,6 @@ func serveSPAIndex(c *gin.Context) {
 	c.FileFromFS("/", staticFS)
 }
 
-func isAPIPath(path string) bool {
-	for _, prefix := range apiPrefixes {
-		if hasPathPrefix(path, prefix) {
-			return true
-		}
-	}
-
-	return false
-}
-
 // isStaticAssetPath determines if a path should be served as a static asset.
 func isStaticAssetPath(path string) bool {
 	if strings.HasPrefix(path, "/assets/") ||
@@ -101,8 +81,4 @@ func isStaticAssetPath(path string) bool {
 	}
 
 	return false
-}
-
-func hasPathPrefix(path, prefix string) bool {
-	return path == prefix || strings.HasPrefix(path, prefix+"/")
 }

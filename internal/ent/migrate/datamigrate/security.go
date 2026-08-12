@@ -2,12 +2,15 @@ package datamigrate
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"github.com/looplj/axonhub/internal/authz"
 	"github.com/looplj/axonhub/internal/ent"
 	"github.com/looplj/axonhub/internal/ent/apikey"
 	"github.com/looplj/axonhub/internal/ent/schema/schematype"
 	"github.com/looplj/axonhub/internal/log"
+	"github.com/looplj/axonhub/internal/objects"
 	"github.com/looplj/axonhub/internal/pkg/xapikey"
 	"github.com/looplj/axonhub/internal/pkg/xcrypto"
 )
@@ -78,14 +81,26 @@ func backfillAPIKeyHashes(ctx context.Context, client *ent.Client) error {
 }
 
 func encryptChannelCredentials(ctx context.Context, client *ent.Client) error {
+	// Reading the channels also validates that every stored credential can be
+	// decoded with the configured keys. Doing it here, before the server
+	// starts listening, is what turns a missing or superseded key into a
+	// startup failure instead of a healthy-looking instance that fails every
+	// channel read once traffic arrives.
+	channels, err := client.Channel.Query().All(ctx)
+	if err != nil {
+		if errors.Is(err, objects.ErrCredentialsEncryptedNoKey) {
+			return fmt.Errorf(
+				"refusing to start: stored channel credentials are encrypted but "+
+					"security.credential_encryption_key (env AXONHUB_SECURITY_CREDENTIAL_ENCRYPTION_KEY) is not set; "+
+					"restore the key those rows were written with, otherwise every channel read will fail: %w", err)
+		}
+
+		return err
+	}
+
 	if !xcrypto.Enabled() {
 		log.Debug(ctx, "credential encryption key not configured, skipping channel credentials encryption backfill")
 		return nil
-	}
-
-	channels, err := client.Channel.Query().All(ctx)
-	if err != nil {
-		return err
 	}
 
 	migrated := 0

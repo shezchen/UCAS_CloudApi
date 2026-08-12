@@ -2,6 +2,7 @@ package objects
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -299,11 +300,12 @@ type plainChannelCredentials ChannelCredentials
 // MarshalJSON: AES-256-GCM via xcrypto, version 1.
 const credentialsEncryptionAlg = "aesgcm.v1"
 
-// CredentialsEncryptionMarker is the JSON field name that identifies an
-// encrypted credentials envelope. It is exported so callers that must
-// classify a stored credentials column without being able to decrypt it
-// (notably the startup key check) can look for it.
-const CredentialsEncryptionMarker = "__axonhub_enc"
+// ErrCredentialsEncryptedNoKey reports a stored credentials value that can be
+// recognised as encrypted but cannot be opened because no key is configured.
+// The startup check matches on it to tell a missing key apart from any other
+// read failure.
+var ErrCredentialsEncryptedNoKey = errors.New(
+	"channel credentials are encrypted but security.credential_encryption_key is not configured")
 
 // credentialsEncryptionAAD binds a credentials ciphertext to the kind of
 // value it holds, so a credentials envelope cannot be replayed into some
@@ -367,7 +369,7 @@ func (c *ChannelCredentials) UnmarshalJSON(data []byte) error {
 		}
 
 		if !xcrypto.Enabled() {
-			return fmt.Errorf("channel credentials are encrypted but security.credential_encryption_key is not configured")
+			return ErrCredentialsEncryptedNoKey
 		}
 
 		plainBytes, err := xcrypto.Decrypt(probe.Data, probe.Kid, credentialsEncryptionAAD)

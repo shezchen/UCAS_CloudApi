@@ -143,3 +143,62 @@ func TestRunSecurityBackfill_ChannelCredentials(t *testing.T) {
 	require.NoError(t, datamigrate.RunSecurityBackfill(ctx, client))
 	require.Equal(t, encryptedColumn, readCredentialsColumn())
 }
+
+// TestRunSecurityBackfill_RefusesToStartWithoutKey pins the fail-fast
+// behaviour for the most damaging misconfiguration: encrypted rows present,
+// no key supplied. Starting successfully here would produce a healthy-looking
+// instance that fails every channel read.
+func TestRunSecurityBackfill_RefusesToStartWithoutKey(t *testing.T) {
+	t.Cleanup(func() { _ = xcrypto.Configure("") })
+	require.NoError(t, xcrypto.Configure("a-sufficiently-long-master-key"))
+
+	client, _ := newSecurityTestClient(t)
+
+	ctx := context.Background()
+	seedCtx := authz.WithTestBypass(ent.NewContext(ctx, client))
+
+	_, err := client.Channel.Create().
+		SetType(channel.TypeOpenai).
+		SetName("encrypted-channel").
+		SetBaseURL("https://api.example.com").
+		SetCredentials(objects.ChannelCredentials{APIKey: "sk-provider-secret"}).
+		SetSupportedModels([]string{"gpt-4"}).
+		SetDefaultTestModel("gpt-4").
+		Save(seedCtx)
+	require.NoError(t, err)
+
+	require.NoError(t, datamigrate.RunSecurityBackfill(ctx, client))
+
+	// Operator restarts without the key.
+	require.NoError(t, xcrypto.Configure(""))
+
+	err = datamigrate.RunSecurityBackfill(ctx, client)
+	require.Error(t, err, "startup must fail rather than serve an instance that cannot read channels")
+	require.Contains(t, err.Error(), "security.credential_encryption_key",
+		"the error must name the missing configuration")
+	require.ErrorIs(t, err, objects.ErrCredentialsEncryptedNoKey)
+}
+
+// TestRunSecurityBackfill_NoKeyWithoutEncryptedRows keeps the fail-fast check
+// from blocking the supported plaintext deployment.
+func TestRunSecurityBackfill_NoKeyWithoutEncryptedRows(t *testing.T) {
+	t.Cleanup(func() { _ = xcrypto.Configure("") })
+	require.NoError(t, xcrypto.Configure(""))
+
+	client, _ := newSecurityTestClient(t)
+
+	ctx := context.Background()
+	seedCtx := authz.WithTestBypass(ent.NewContext(ctx, client))
+
+	_, err := client.Channel.Create().
+		SetType(channel.TypeOpenai).
+		SetName("plaintext-channel").
+		SetBaseURL("https://api.example.com").
+		SetCredentials(objects.ChannelCredentials{APIKey: "sk-provider-secret"}).
+		SetSupportedModels([]string{"gpt-4"}).
+		SetDefaultTestModel("gpt-4").
+		Save(seedCtx)
+	require.NoError(t, err)
+
+	require.NoError(t, datamigrate.RunSecurityBackfill(ctx, client))
+}

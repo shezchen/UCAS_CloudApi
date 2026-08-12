@@ -48,6 +48,7 @@ type Config struct {
 type Worker struct {
 	SystemService      *biz.SystemService
 	DataStorageService *biz.DataStorageService
+	QuotaService       *biz.QuotaService
 	Ent                *ent.Client
 	Config             Config
 }
@@ -58,6 +59,7 @@ type Params struct {
 	Config             Config
 	SystemService      *biz.SystemService
 	DataStorageService *biz.DataStorageService
+	QuotaService       *biz.QuotaService
 	Client             *ent.Client
 }
 
@@ -65,6 +67,7 @@ func NewWorker(params Params) *Worker {
 	w := &Worker{
 		SystemService:      params.SystemService,
 		DataStorageService: params.DataStorageService,
+		QuotaService:       params.QuotaService,
 		Ent:                params.Client,
 		Config:             params.Config,
 	}
@@ -448,25 +451,57 @@ func (w *Worker) getDataStorageCached(ctx context.Context, id int, cache map[int
 	return ds, nil
 }
 
-// usageLogCleanupCutoff computes the deletion cutoff for usage logs and
-// clamps it to the start of the active weekly quota window. Usage logs inside
-// that window are still summed for account quota enforcement, so deleting
-// them (via a small policy value or a manual RunCleanupNow override) would
-// silently reset consumed quota.
-func usageLogCleanupCutoff(ctx context.Context, cleanupDays int) time.Time {
+// usageLogCutoff is the effective deletion plan for usage logs after the quota
+// retention floor has been applied.
+type usageLogCutoff struct {
+	Time time.Time
+	// RetentionDays is how many days of usage logs the cutoff actually keeps,
+	// which is not the requested value once the floor clamps it.
+	RetentionDays int
+}
+
+// usageLogCleanupCutoff computes the deletion cutoff for usage logs and clamps
+// it to the oldest quota window that still reads them — the account weekly
+// window plus every live API key profile quota window. Quota enforcement
+// re-aggregates usage_logs per request, so deleting a row inside a live window
+// (via a small policy value or a manual RunCleanupNow override) silently hands
+// out fresh quota. Reports false when no cutoff is safe.
+func (w *Worker) usageLogCleanupCutoff(ctx context.Context, cleanupDays int) (usageLogCutoff, bool) {
+	if w.QuotaService == nil {
+		log.Error(ctx, "Skipping usage log cleanup: no quota service to resolve the retention floor")
+		return usageLogCutoff{}, false
+	}
+
 	now := time.Now()
 	cutoffTime := now.AddDate(0, 0, -cleanupDays)
 
-	if windowStart := biz.CurrentWeeklyQuotaWindowStart(now); cutoffTime.After(windowStart) {
-		log.Warn(ctx, "Clamping usage log cleanup cutoff to the active weekly quota window start",
-			log.Int("cleanup_days", cleanupDays),
-			log.Time("requested_cutoff", cutoffTime),
-			log.Time("clamped_cutoff", windowStart))
-
-		cutoffTime = windowStart
+	floor, err := w.QuotaService.UsageLogRetentionFloor(ctx, now)
+	if err != nil {
+		log.Error(ctx, "Skipping usage log cleanup: failed to resolve the quota retention floor", log.Cause(err))
+		return usageLogCutoff{}, false
 	}
 
-	return cutoffTime
+	if floor.Unbounded {
+		log.Warn(ctx, "Skipping usage log cleanup: an API key quota aggregates usage over all time",
+			log.Int("cleanup_days", cleanupDays),
+			log.Int("api_key_id", floor.UnboundedAPIKeyID))
+
+		return usageLogCutoff{}, false
+	}
+
+	if !cutoffTime.After(floor.Start) {
+		return usageLogCutoff{Time: cutoffTime, RetentionDays: cleanupDays}, true
+	}
+
+	log.Warn(ctx, "Clamping usage log cleanup cutoff to the oldest active quota window",
+		log.Int("cleanup_days", cleanupDays),
+		log.Time("requested_cutoff", cutoffTime),
+		log.Time("clamped_cutoff", floor.Start))
+
+	return usageLogCutoff{
+		Time:          floor.Start,
+		RetentionDays: int(now.Sub(floor.Start) / (24 * time.Hour)),
+	}, true
 }
 
 // cleanupUsageLogs deletes usage logs older than the specified number of days.
@@ -475,7 +510,12 @@ func (w *Worker) cleanupUsageLogs(ctx context.Context, cleanupDays int, manual b
 		return nil
 	}
 
-	cutoffTime := usageLogCleanupCutoff(ctx, cleanupDays)
+	cutoff, ok := w.usageLogCleanupCutoff(ctx, cleanupDays)
+	if !ok {
+		return nil
+	}
+
+	cutoffTime := cutoff.Time
 	batchSize := w.getBatchSize()
 
 	result, err := w.deleteInBatches(ctx, func() (int, error) {
@@ -703,18 +743,20 @@ func (w *Worker) PreviewCleanup(ctx context.Context, input TriggerGcCleanupInput
 
 	if input.UsageLogsCleanupDays > 0 {
 		// Mirror the clamp applied by cleanupUsageLogs so the preview matches
-		// what a manual run would actually delete.
-		cutoff := usageLogCleanupCutoff(ctx, input.UsageLogsCleanupDays)
-		count, err := w.Ent.UsageLog.Query().Where(usagelog.CreatedAtLT(cutoff)).Count(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to count usage logs for preview: %w", err)
+		// what a manual run would actually delete, including the case where the
+		// quota retention floor makes it delete nothing at all.
+		if cutoff, ok := w.usageLogCleanupCutoff(ctx, input.UsageLogsCleanupDays); ok {
+			count, err := w.Ent.UsageLog.Query().Where(usagelog.CreatedAtLT(cutoff.Time)).Count(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("failed to count usage logs for preview: %w", err)
+			}
+			items = append(items, GcCleanupPreviewItem{
+				ResourceType:   "usage_logs",
+				EstimatedCount: count,
+				CutoffTime:     cutoff.Time,
+				RetentionDays:  cutoff.RetentionDays,
+			})
 		}
-		items = append(items, GcCleanupPreviewItem{
-			ResourceType:   "usage_logs",
-			EstimatedCount: count,
-			CutoffTime:     cutoff,
-			RetentionDays:  input.UsageLogsCleanupDays,
-		})
 	}
 
 	return items, nil

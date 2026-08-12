@@ -41,6 +41,54 @@ func TestUserTokenRevocationCutoff(t *testing.T) {
 	require.Equal(t, int64(1_772_000_001), userTokenRevocationCutoff(partial))
 }
 
+func TestSetUserTokenValidAfter_IsMonotonic(t *testing.T) {
+	client := setupTestDB(t)
+	defer client.Close()
+
+	ctx := ent.NewContext(authz.WithTestBypass(t.Context()), client)
+
+	const userID = 4242
+
+	newer := time.Now().UTC().Truncate(time.Millisecond)
+	older := newer.Add(-time.Minute)
+
+	require.NoError(t, setUserTokenValidAfter(ctx, client, userID, newer))
+	require.NoError(t, setUserTokenValidAfter(ctx, client, userID, older))
+
+	stored, err := userTokenValidAfter(ctx, client, userID)
+	require.NoError(t, err)
+	require.True(t, stored.Equal(newer), "a late writer must not move the revocation backwards")
+
+	newest := newer.Add(time.Minute)
+	require.NoError(t, setUserTokenValidAfter(ctx, client, userID, newest))
+
+	stored, err = userTokenValidAfter(ctx, client, userID)
+	require.NoError(t, err)
+	require.True(t, stored.Equal(newest))
+}
+
+func TestSetUserTokenValidAfter_RepairsUnparsableValue(t *testing.T) {
+	client := setupTestDB(t)
+	defer client.Close()
+
+	ctx := ent.NewContext(authz.WithTestBypass(t.Context()), client)
+
+	const userID = 4243
+
+	_, err := client.System.Create().
+		SetKey(userTokenValidAfterKey(userID)).
+		SetValue("garbage").
+		Save(ctx)
+	require.NoError(t, err)
+
+	ts := time.Now().UTC().Truncate(time.Millisecond)
+	require.NoError(t, setUserTokenValidAfter(ctx, client, userID, ts))
+
+	stored, err := userTokenValidAfter(ctx, client, userID)
+	require.NoError(t, err)
+	require.True(t, stored.Equal(ts))
+}
+
 type revokedTokenFixture struct {
 	auth   *AuthService
 	client *ent.Client

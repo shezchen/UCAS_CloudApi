@@ -71,8 +71,27 @@ func userTokenRevocationCutoff(validAfter time.Time) int64 {
 // settings.
 func setUserTokenValidAfter(ctx context.Context, client *ent.Client, userID int, ts time.Time) error {
 	return authz.RunWithSystemBypassVoid(ctx, "auth-token-revocation", func(bypassCtx context.Context) error {
-		err := client.System.Create().
-			SetKey(userTokenValidAfterKey(userID)).
+		key := userTokenValidAfterKey(userID)
+
+		// Revocation only moves forward. Without this a transaction that
+		// started earlier but commits later would write its older timestamp
+		// over a newer one and bring the tokens it revoked back to life.
+		existing, err := client.System.Query().
+			Where(system.KeyEQ(key)).
+			Only(bypassCtx)
+
+		switch {
+		case err == nil:
+			// A value that cannot be parsed is repaired by overwriting it.
+			if current, parseErr := parseUserTokenValidAfter(existing.Value); parseErr == nil && !ts.After(current) {
+				return nil
+			}
+		case !ent.IsNotFound(err):
+			return fmt.Errorf("failed to load token revocation timestamp: %w", err)
+		}
+
+		err = client.System.Create().
+			SetKey(key).
 			SetValue(formatUserTokenValidAfter(ts)).
 			OnConflict(sql.ConflictColumns("key")).
 			UpdateNewValues().

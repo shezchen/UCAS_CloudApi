@@ -70,6 +70,36 @@ func TestIsBlockedIP(t *testing.T) {
 			blockedIPs: []string{"198.51.100.0/24", "192.0.2.1"},
 			want:       false,
 		},
+		{
+			name:       "ipv4-mapped client does not evade exact entry",
+			clientIPs:  []string{"::ffff:203.0.113.10"},
+			blockedIPs: []string{"203.0.113.10"},
+			want:       true,
+		},
+		{
+			name:       "ipv4-mapped client does not evade cidr entry",
+			clientIPs:  []string{"::ffff:203.0.113.10"},
+			blockedIPs: []string{"203.0.113.0/24"},
+			want:       true,
+		},
+		{
+			name:       "ipv4-mapped blocked entry matches plain client",
+			clientIPs:  []string{"203.0.113.10"},
+			blockedIPs: []string{"::ffff:203.0.113.10"},
+			want:       true,
+		},
+		{
+			name:       "ipv4-mapped blocked prefix matches plain client",
+			clientIPs:  []string{"203.0.113.10"},
+			blockedIPs: []string{"::ffff:203.0.113.0/120"},
+			want:       true,
+		},
+		{
+			name:       "ipv4-mapped client still not blocked when outside range",
+			clientIPs:  []string{"::ffff:198.51.100.10"},
+			blockedIPs: []string{"203.0.113.0/24"},
+			want:       false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -100,6 +130,33 @@ func TestClientIPCandidates(t *testing.T) {
 	want := []string{"10.0.0.1", "203.0.113.10", "192.0.2.30"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("clientIPCandidates() = %#v, want %#v", got, want)
+	}
+}
+
+// Behind a trusted proxy c.ClientIP() returns the forwarded value verbatim, so
+// a caller can present its own address in IPv4-mapped IPv6 form. The blocklist
+// must still match it.
+func TestBlockedIPNotEvadedByMappedForwardedFor(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	ctx, engine := gin.CreateTestContext(recorder)
+	if err := engine.SetTrustedProxies([]string{"10.0.0.1"}); err != nil {
+		t.Fatalf("failed to set trusted proxies: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "10.0.0.1:12345"
+	req.Header.Set("X-Forwarded-For", "::ffff:203.0.113.10")
+	ctx.Request = req
+
+	candidates := clientIPCandidates(ctx)
+	if !isBlockedIP(candidates, []string{"203.0.113.10"}) {
+		t.Fatalf("mapped address %#v evaded exact blocklist entry", candidates)
+	}
+
+	if !isBlockedIP(candidates, []string{"203.0.113.0/24"}) {
+		t.Fatalf("mapped address %#v evaded CIDR blocklist entry", candidates)
 	}
 }
 

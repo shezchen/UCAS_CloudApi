@@ -58,13 +58,32 @@ func (l *logger) LogEvent(event fxevent.Event) {
 }
 
 func startServer() {
+	// Load and validate before handing the config to fx: an error returned
+	// from an fx.Invoke would only surface through the fx event logger, which
+	// runs at debug level, so the process would exit without saying why.
+	config, err := conf.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
+		os.Exit(1)
+	}
+
+	if problems := validateConfig(config); len(problems) > 0 {
+		fmt.Fprintln(os.Stderr, "Configuration validation failed:")
+
+		for _, problem := range problems {
+			fmt.Fprintf(os.Stderr, "  - %s\n", problem)
+		}
+
+		os.Exit(1)
+	}
+
 	server.Run(
 		fx.StartTimeout(60*time.Second),
 		fx.StopTimeout(30*time.Second),
 		fx.WithLogger(func() fxevent.Logger {
 			return &logger{}
 		}),
-		fx.Provide(conf.Load),
+		fx.Provide(func() (conf.Config, error) { return config, nil }),
 		fx.Provide(metrics.NewProvider),
 		fx.Invoke(func(lc fx.Lifecycle, server *server.Server, provider *sdk.MeterProvider, ent *ent.Client, requestSvc *biz.RequestService) {
 			lc.Append(fx.Hook{

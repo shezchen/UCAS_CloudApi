@@ -54,11 +54,14 @@ func WithInsecureSkipVerify(skip bool) ClientOption {
 }
 
 // WithPublicNetworkOnly restricts requests to HTTP(S)/WS(S) endpoints that
-// resolve exclusively to public IP addresses. DNS is resolved again at dial
-// time and the validated IP is dialed directly, preventing DNS-rebinding
-// between URL validation and connection establishment. Environment proxies are
-// disabled; an explicitly configured URL proxy is retained and subject to the
-// same public-address dial guard.
+// resolve exclusively to public IP addresses. On the direct path DNS is
+// resolved again at dial time and the validated IP is dialed, so the
+// destination cannot change between validation and connection: DNS rebinding
+// and redirects into private space are both blocked.
+//
+// Environment proxies are disabled. An explicitly configured URL proxy is
+// retained, and it weakens the guarantee — see the proxy caveat on
+// applyClientOptions.
 func WithPublicNetworkOnly() ClientOption {
 	return func(o *clientOptions) {
 		o.publicNetworkOnly = true
@@ -68,8 +71,11 @@ func WithPublicNetworkOnly() ClientOption {
 // WithPublicNetworkOnlyAndTrustedEnvironmentProxy keeps the process-managed
 // environment proxy for public-network-only requests. It is intended for
 // multi-tenant channels where the deployment, not the channel contributor,
-// controls HTTP_PROXY and HTTPS_PROXY. Explicit URL proxies remain subject to
-// the normal public-network dial guard.
+// controls HTTP_PROXY and HTTPS_PROXY.
+//
+// Using a proxy weakens the public-network guarantee — see the proxy caveat on
+// applyClientOptions. It is accepted here because the proxy is chosen by the
+// deployment.
 func WithPublicNetworkOnlyAndTrustedEnvironmentProxy() ClientOption {
 	return func(o *clientOptions) {
 		o.publicNetworkOnly = true
@@ -400,6 +406,23 @@ func usesEnvironmentProxy(proxyConfig *ProxyConfig) bool {
 	return proxyConfig == nil || proxyConfig.Type == "" || proxyConfig.Type == ProxyTypeEnvironment
 }
 
+// applyClientOptions installs the public-network restriction on the transport.
+//
+// PROXY CAVEAT: the restriction is enforced by resolving the destination and
+// dialing the validated IP, which only holds while the transport dials the
+// destination itself. As soon as a proxy is configured, the transport dials
+// the proxy and the proxy resolves the origin hostname, so the pin covers the
+// hop to the proxy and nothing beyond it. On that path the only check on the
+// origin is the pre-flight validation (ValidatePublicURL / ValidateRequestURL
+// and the CheckRedirect hook below), which resolves the name separately from
+// whoever connects to it and is therefore open to DNS rebinding.
+//
+// This is accepted rather than fixed: pinning through a proxy would mean
+// rewriting the CONNECT target to an IP, which breaks TLS verification and
+// authenticated proxies. Both proxy paths are deployment-controlled — the
+// environment proxy comes from the process, and a URL proxy is owner
+// configuration — so the residual exposure is to a proxy the operator chose.
+// Do not treat a proxied client as rebinding-safe.
 func applyClientOptions(client *http.Client, transport *http.Transport, options clientOptions, proxyConfig *ProxyConfig) {
 	if options.resolver == nil {
 		options.resolver = net.DefaultResolver
@@ -420,9 +443,9 @@ func applyClientOptions(client *http.Client, transport *http.Transport, options 
 				trustedEnvironmentProxyDialAddresses(),
 			)
 		} else if proxyConfig != nil && proxyConfig.Type == ProxyTypeURL {
-			// Explicit URL proxies are useful for provider connectivity and are
-			// safe here because both the request target and proxy dial are
-			// constrained to public addresses.
+			// Explicit URL proxies are useful for provider connectivity. The
+			// dial guard constrains the proxy address, not the origin the proxy
+			// then connects to; see the proxy caveat above.
 			transport.Proxy = getProxyFunc(proxyConfig)
 			transport.DialContext = publicNetworkDialContext(options.resolver, &net.Dialer{
 				Timeout:   30 * time.Second,

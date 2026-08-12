@@ -1119,8 +1119,6 @@ const channelOptionsConnectionSchema = z.object({
   }),
 });
 
-export type ChannelOptionsConnection = z.infer<typeof channelOptionsConnectionSchema>;
-
 export function useChannelOptions(variables?: {
   first?: number;
   where?: Record<string, unknown>;

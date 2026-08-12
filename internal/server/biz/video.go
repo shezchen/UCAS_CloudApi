@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/looplj/axonhub/internal/authz"
 	"github.com/looplj/axonhub/internal/contexts"
 	"github.com/looplj/axonhub/internal/ent"
 	"github.com/looplj/axonhub/internal/ent/channel"
@@ -57,27 +58,44 @@ func (s *VideoService) GetTask(ctx context.Context, requestID int) (*llm.Respons
 	return video, nil
 }
 
-// findTaskByExternalID resolves a video task by the provider's task ID
-// (external_id), scoped to the caller's project.
+// scopeTaskQueryToProject restricts a video task lookup to the caller's
+// project.
 //
 // The Request privacy policy grants API-key principals with write_requests
 // scope table-wide access, so project ownership must be enforced here: these
 // lookups back the API-key-authenticated GET/DELETE /v1/videos/:id and doubao
 // task endpoints, and without the project filter any API key could read or
 // cancel another project's tasks by guessing provider task IDs.
+//
+// Callers without a project are rejected rather than given the unfiltered
+// query. API-key auth always installs the key's project, and background flows
+// such as the video storage worker run under a bypass, so a context with
+// neither is a wiring mistake — for example a future admin or JWT route for
+// videos — and must not silently widen the lookup to every project.
+func scopeTaskQueryToProject(ctx context.Context, query *ent.RequestQuery) (*ent.RequestQuery, error) {
+	if projectID, ok := contexts.GetProjectID(ctx); ok {
+		return query.Where(request.ProjectID(projectID)), nil
+	}
+
+	if authz.IsBypassActive(ctx) {
+		return query, nil
+	}
+
+	return nil, fmt.Errorf("%w: video task lookup requires a project in context", ErrInternal)
+}
+
+// findTaskByExternalID resolves a video task by the provider's task ID
+// (external_id), scoped to the caller's project.
 func (s *VideoService) findTaskByExternalID(ctx context.Context, externalID string) (*ent.Request, error) {
 	client := ent.FromContext(ctx)
 	if client == nil {
 		return nil, fmt.Errorf("%w: ent client not found in context", ErrInternal)
 	}
 
-	query := client.Request.Query().
-		Where(request.ExternalID(externalID))
-
-	// API-key auth always installs the key's project; cross-project lookups
-	// must behave exactly like a missing task.
-	if projectID, ok := contexts.GetProjectID(ctx); ok {
-		query = query.Where(request.ProjectID(projectID))
+	// Cross-project lookups must behave exactly like a missing task.
+	query, err := scopeTaskQueryToProject(ctx, client.Request.Query().Where(request.ExternalID(externalID)))
+	if err != nil {
+		return nil, err
 	}
 
 	return query.Only(ctx)
@@ -133,14 +151,9 @@ func (s *VideoService) loadTask(ctx context.Context, requestID int) (*ent.Reques
 		return nil, nil, nil, fmt.Errorf("%w: ent client not found in context", ErrInternal)
 	}
 
-	query := client.Request.Query().
-		Where(request.ID(requestID))
-
-	// Same project enforcement as findTaskByExternalID. Background flows
-	// (e.g. the video storage worker) run without a project in context and
-	// keep full access.
-	if projectID, ok := contexts.GetProjectID(ctx); ok {
-		query = query.Where(request.ProjectID(projectID))
+	query, err := scopeTaskQueryToProject(ctx, client.Request.Query().Where(request.ID(requestID)))
+	if err != nil {
+		return nil, nil, nil, err
 	}
 
 	task, err := query.Only(ctx)

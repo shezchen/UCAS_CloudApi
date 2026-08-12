@@ -10,14 +10,17 @@ import { DataTableColumnHeader } from '@/components/data-table-column-header';
 import LongText from '@/components/long-text';
 import { useApiKeysContext } from '../context/apikeys-context';
 import { ApiKey } from '../data/schema';
+import { isRedactedApiKey } from '../utils/redaction';
 import { DataTableRowActions } from './data-table-row-actions';
 
 function ApiKeyCell({ apiKey, fullApiKey }: { apiKey: string; fullApiKey: ApiKey }) {
   const { t } = useTranslation();
   const { openDialog } = useApiKeysContext();
 
-  // 显示前8个字符和后4个字符，中间用省略号
-  const maskedKey = apiKey.replace(/./g, '*').slice(0, -4) + apiKey.slice(-4);
+  // The server's redacted form is already a display value; masking it again
+  // would only hide which key the row is.
+  const isRedacted = isRedactedApiKey(apiKey);
+  const maskedKey = isRedacted ? apiKey : apiKey.replace(/./g, '*').slice(0, -4) + apiKey.slice(-4);
 
   const copyToClipboard = () => {
     navigator.clipboard.writeText(apiKey);
@@ -34,9 +37,11 @@ function ApiKeyCell({ apiKey, fullApiKey }: { apiKey: string; fullApiKey: ApiKey
       <Button variant='ghost' size='sm' onClick={handleViewKey} className='h-6 w-6 flex-shrink-0 p-0' title={t('apikeys.actions.view')}>
         <Eye className='h-3 w-3' />
       </Button>
-      <Button variant='ghost' size='sm' onClick={copyToClipboard} className='h-6 w-6 flex-shrink-0 p-0' title={t('apikeys.actions.copy')}>
-        <Copy className='h-3 w-3' />
-      </Button>
+      {!isRedacted && (
+        <Button variant='ghost' size='sm' onClick={copyToClipboard} className='h-6 w-6 flex-shrink-0 p-0' title={t('apikeys.actions.copy')}>
+          <Copy className='h-3 w-3' />
+        </Button>
+      )}
     </div>
   );
 }

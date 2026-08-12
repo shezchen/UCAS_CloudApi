@@ -1,6 +1,9 @@
 package schema
 
 import (
+	"context"
+	"fmt"
+
 	"entgo.io/contrib/entgql"
 	"entgo.io/ent"
 	"entgo.io/ent/schema"
@@ -8,8 +11,10 @@ import (
 	"entgo.io/ent/schema/field"
 	"entgo.io/ent/schema/index"
 
+	"github.com/looplj/axonhub/internal/ent/hook"
 	"github.com/looplj/axonhub/internal/ent/schema/schematype"
 	"github.com/looplj/axonhub/internal/objects"
+	"github.com/looplj/axonhub/internal/pkg/xapikey"
 	"github.com/looplj/axonhub/internal/scopes"
 )
 
@@ -30,8 +35,13 @@ func (APIKey) Indexes() []ent.Index {
 			StorageKey("api_keys_by_user_id"),
 		index.Fields("project_id").
 			StorageKey("api_keys_by_project_id"),
+		// The key column now stores only a redacted display value, so it is
+		// no longer unique; uniqueness lives on key_hash. A plain index is
+		// kept for the legacy plaintext fallback lookup during migration.
 		index.Fields("key").
-			StorageKey("api_keys_by_key").
+			StorageKey("api_keys_by_key"),
+		index.Fields("key_hash").
+			StorageKey("api_keys_by_key_hash").
 			Unique(),
 	}
 }
@@ -50,6 +60,21 @@ func (APIKey) Fields() []ent.Field {
 				entgql.Skip(entgql.SkipMutationUpdateInput),
 			),
 		field.String("key").
+			Comment("Redacted display form of the key (prefix...suffix). The raw key is returned exactly once at creation/rotation time and is never persisted; verification uses key_hash.").
+			Annotations(
+				entgql.Skip(entgql.SkipMutationCreateInput, entgql.SkipMutationUpdateInput),
+			),
+		field.String("key_hash").
+			Optional().
+			Sensitive().
+			Comment("SHA-256 hex digest of the raw key; the unique lookup handle for authentication. Optional only to tolerate legacy rows before the startup backfill runs.").
+			Annotations(
+				entgql.Skip(entgql.SkipAll),
+			),
+		field.String("key_prefix").
+			Optional().
+			Default("").
+			Comment("Leading characters of the raw key for display/identification.").
 			Annotations(
 				entgql.Skip(entgql.SkipMutationCreateInput, entgql.SkipMutationUpdateInput),
 			),
@@ -107,6 +132,65 @@ func (APIKey) Annotations() []schema.Annotation {
 		entgql.QueryField(),
 		entgql.RelayConnection(),
 		entgql.Mutations(entgql.MutationCreate(), entgql.MutationUpdate()),
+	}
+}
+
+// Hooks make key hashing transparent for every write path (biz services,
+// backup restore, tests): whenever a raw key is written, only its SHA-256
+// hash and a redacted display form are persisted.
+//
+// The hook is the sole authority on key material:
+//
+//   - A raw key always determines its own hash and prefix. A caller cannot
+//     pair a raw key with a hash of something else, which would leave the
+//     value shown to the user unable to authenticate while the caller's
+//     string could.
+//   - A redacted display value carries nothing to derive from, so it may only
+//     be written together with the hash it belongs to. That covers the
+//     backfill, the legacy read-repair and backup restore, and rejects a
+//     write that would leave key and key_hash describing different secrets.
+//
+// The hook intentionally uses the generic mutation API (string field names)
+// instead of the typed *gen.APIKeyMutation so that entc can load this schema
+// even before the key_hash/key_prefix accessors have been generated.
+func (APIKey) Hooks() []ent.Hook {
+	return []ent.Hook{
+		hook.On(
+			func(next ent.Mutator) ent.Mutator {
+				return ent.MutateFunc(func(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+					value, ok := m.Field("key")
+
+					raw, isString := value.(string)
+					if !ok || !isString || raw == "" {
+						return next.Mutate(ctx, m)
+					}
+
+					if xapikey.IsRedacted(raw) {
+						if hash, _ := m.Field("key_hash"); hash == nil || hash == "" {
+							return nil, fmt.Errorf(
+								"api key: a redacted key must be written together with its key_hash")
+						}
+
+						return next.Mutate(ctx, m)
+					}
+
+					if err := m.SetField("key_hash", xapikey.Hash(raw)); err != nil {
+						return nil, err
+					}
+
+					if err := m.SetField("key_prefix", xapikey.Prefix(raw)); err != nil {
+						return nil, err
+					}
+
+					if err := m.SetField("key", xapikey.Redact(raw)); err != nil {
+						return nil, err
+					}
+
+					return next.Mutate(ctx, m)
+				})
+			},
+			ent.OpCreate|ent.OpUpdate|ent.OpUpdateOne,
+		),
 	}
 }
 

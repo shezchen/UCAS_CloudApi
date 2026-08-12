@@ -14,6 +14,7 @@ import (
 	"github.com/looplj/axonhub/internal/ent/model"
 	"github.com/looplj/axonhub/internal/ent/project"
 	"github.com/looplj/axonhub/internal/objects"
+	"github.com/looplj/axonhub/internal/pkg/xapikey"
 )
 
 func TestBackupService_Restore(t *testing.T) {
@@ -240,7 +241,9 @@ func TestBackupService_Restore_RemapChannelIDsInModelSettingsAndAPIKeyProfiles(t
 	require.Len(t, restoredModel.Settings.Associations[0].Regex.Exclude, 1)
 	require.Equal(t, []int{restoredChannel.ID}, restoredModel.Settings.Associations[0].Regex.Exclude[0].ChannelIds)
 
-	restoredKey, err := client.APIKey.Query().Where(apikey.Key("sk-backup-key")).First(ctx)
+	// Raw keys from the backup are hashed on write; the key column only keeps
+	// the redacted display form.
+	restoredKey, err := client.APIKey.Query().Where(apikey.KeyHashEQ(xapikey.Hash("sk-backup-key"))).First(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, restoredKey.Profiles)
 	require.Len(t, restoredKey.Profiles.Profiles, 1)
@@ -793,4 +796,89 @@ func TestBackupService_Restore_UsageStatsWithRequestLogs(t *testing.T) {
 	require.Equal(t, int64(150), usageLogs[0].TotalTokens)
 	require.NotNil(t, usageLogs[0].TotalCost)
 	require.Equal(t, *usage.TotalCost, *usageLogs[0].TotalCost)
+}
+
+// TestBackupService_Restore_APIKeys_RejectsRedactedWithoutHash guards the
+// input that produces an unauthenticatable row: a redacted display value with
+// no hash behind it. Importing it would leave the public display value as the
+// only handle that could ever match the row.
+func TestBackupService_Restore_APIKeys_RejectsRedactedWithoutHash(t *testing.T) {
+	client, service, ctx := setupBackupTest(t)
+	defer client.Close()
+
+	_, err := client.Project.Create().
+		SetName("Default").
+		SetDescription("Default project").
+		Save(ctx)
+	require.NoError(t, err)
+
+	backupData := BackupData{
+		Version: BackupVersion,
+		APIKeys: []*BackupAPIKey{
+			{
+				APIKey: ent.APIKey{
+					Key:  xapikey.Redact("sk-a-key-that-is-long-enough"),
+					Name: "no hash behind it",
+					Type: apikey.TypeUser,
+				},
+			},
+		},
+	}
+
+	data, err := json.Marshal(backupData)
+	require.NoError(t, err)
+
+	err = service.Restore(ctx, data, RestoreOptions{IncludeAPIKeys: true})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "no hash behind it")
+
+	count, err := client.APIKey.Query().Count(ctx)
+	require.NoError(t, err)
+	require.Zero(t, count, "the rejected key must not have been created")
+}
+
+// TestUsageRestoreResolver_PrefersHashOverRedactedKey covers usage
+// attribution when two keys share a redacted display value, which the key
+// column no longer makes unique.
+func TestUsageRestoreResolver_PrefersHashOverRedactedKey(t *testing.T) {
+	client, _, ctx := setupBackupTest(t)
+	defer client.Close()
+
+	proj, err := client.Project.Create().SetName("resolver").Save(ctx)
+	require.NoError(t, err)
+
+	// Two distinct keys that redact to the same display value: Redact keeps
+	// only the first 12 and last 4 characters.
+	const (
+		firstRaw  = "ah-collision-aaaaaaaaaaaaaaaa-same"
+		secondRaw = "ah-collision-bbbbbbbbbbbbbbbb-same"
+	)
+
+	require.Equal(t, xapikey.Redact(firstRaw), xapikey.Redact(secondRaw),
+		"the fixture only tests anything if the display values collide")
+
+	first, err := client.APIKey.Create().
+		SetKey(firstRaw).SetName("first").SetProjectID(proj.ID).Save(ctx)
+	require.NoError(t, err)
+
+	second, err := client.APIKey.Create().
+		SetKey(secondRaw).SetName("second").SetProjectID(proj.ID).Save(ctx)
+	require.NoError(t, err)
+
+	resolver, err := newUsageRestoreResolver(ctx, client)
+	require.NoError(t, err)
+
+	// An old backup referencing either raw key resolves through the hash.
+	id, ok := resolver.resolveAPIKeyID(firstRaw)
+	require.True(t, ok)
+	require.Equal(t, first.ID, id)
+
+	id, ok = resolver.resolveAPIKeyID(secondRaw)
+	require.True(t, ok)
+	require.Equal(t, second.ID, id)
+
+	// A new backup referencing the shared display value cannot say which key
+	// it meant, so the usage stays unattributed instead of landing on one.
+	_, ok = resolver.resolveAPIKeyID(xapikey.Redact(firstRaw))
+	require.False(t, ok, "an ambiguous display value must not resolve")
 }

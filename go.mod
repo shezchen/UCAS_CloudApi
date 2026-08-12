@@ -26,7 +26,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.32.3
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.3
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.93.0
-	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/coreos/go-oidc/v3 v3.18.0
 	github.com/dlclark/regexp2/v2 v2.0.0-beta.2
 	github.com/eko/gocache/lib/v4 v4.2.2
@@ -80,6 +79,7 @@ require (
 
 require (
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.8 // indirect
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/tmaxmax/go-sse v0.11.0 // indirect
 )

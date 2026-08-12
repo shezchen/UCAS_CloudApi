@@ -31,6 +31,10 @@ const (
 	FieldProjectID = "project_id"
 	// FieldKey holds the string denoting the key field in the database.
 	FieldKey = "key"
+	// FieldKeyHash holds the string denoting the key_hash field in the database.
+	FieldKeyHash = "key_hash"
+	// FieldKeyPrefix holds the string denoting the key_prefix field in the database.
+	FieldKeyPrefix = "key_prefix"
 	// FieldName holds the string denoting the name field in the database.
 	FieldName = "name"
 	// FieldType holds the string denoting the type field in the database.
@@ -81,6 +85,8 @@ var Columns = []string{
 	FieldUserID,
 	FieldProjectID,
 	FieldKey,
+	FieldKeyHash,
+	FieldKeyPrefix,
 	FieldName,
 	FieldType,
 	FieldStatus,
@@ -104,7 +110,7 @@ func ValidColumn(column string) bool {
 //
 //	import _ "github.com/looplj/axonhub/internal/ent/runtime"
 var (
-	Hooks        [2]ent.Hook
+	Hooks        [3]ent.Hook
 	Interceptors [1]ent.Interceptor
 	Policy       ent.Policy
 	// DefaultCreatedAt holds the default value on creation for the "created_at" field.
@@ -117,6 +123,8 @@ var (
 	DefaultDeletedAt int
 	// DefaultProjectID holds the default value on creation for the "project_id" field.
 	DefaultProjectID int
+	// DefaultKeyPrefix holds the default value on creation for the "key_prefix" field.
+	DefaultKeyPrefix string
 	// DefaultScopes holds the default value on creation for the "scopes" field.
 	DefaultScopes []string
 	// DefaultProfiles holds the default value on creation for the "profiles" field.
@@ -214,6 +222,16 @@ func ByProjectID(opts ...sql.OrderTermOption) OrderOption {
 // ByKey orders the results by the key field.
 func ByKey(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldKey, opts...).ToFunc()
+}
+
+// ByKeyHash orders the results by the key_hash field.
+func ByKeyHash(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldKeyHash, opts...).ToFunc()
+}
+
+// ByKeyPrefix orders the results by the key_prefix field.
+func ByKeyPrefix(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldKeyPrefix, opts...).ToFunc()
 }
 
 // ByName orders the results by the name field.

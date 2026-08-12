@@ -21,6 +21,7 @@ import (
 	"github.com/looplj/axonhub/internal/ent/project"
 	"github.com/looplj/axonhub/internal/ent/user"
 	"github.com/looplj/axonhub/internal/ent/userproject"
+	"github.com/looplj/axonhub/internal/pkg/xapikey"
 	"github.com/looplj/axonhub/internal/pkg/xcache"
 	"github.com/looplj/axonhub/internal/pkg/xredis"
 	servermail "github.com/looplj/axonhub/internal/server/mail"
@@ -884,7 +885,9 @@ func TestAuthService_AuthenticateNoAuth(t *testing.T) {
 	authenticatedAPIKey, err := authService.AuthenticateNoAuth(ctx)
 	require.NoError(t, err)
 	require.Equal(t, noAuthKey.ID, authenticatedAPIKey.ID)
-	require.Equal(t, NoAuthAPIKeyValue, authenticatedAPIKey.Key)
+	// Keys are stored hashed with a redacted display value.
+	require.Equal(t, xapikey.Hash(NoAuthAPIKeyValue), authenticatedAPIKey.KeyHash)
+	require.Equal(t, xapikey.Redact(NoAuthAPIKeyValue), authenticatedAPIKey.Key)
 }
 
 func TestAuthService_AuthenticateNoAuth_DisabledByConfig(t *testing.T) {

@@ -80,6 +80,13 @@ func NewEntClient(cfg Config) *ent.Client {
 		if err := migrator.Run(context.Background()); err != nil {
 			panic(err)
 		}
+
+		// Runs on every startup (not version-gated): it only rewrites rows
+		// that still hold plaintext API keys or credentials, and must also
+		// cover encryption keys configured after the version upgrade.
+		if err := datamigrate.RunSecurityBackfill(context.Background(), client); err != nil {
+			panic(err)
+		}
 	}
 
 	return client

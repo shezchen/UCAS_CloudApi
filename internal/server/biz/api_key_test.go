@@ -2,10 +2,12 @@ package biz
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"testing"
 	"time"
 
+	entsql "entgo.io/ent/dialect/sql"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -18,6 +20,7 @@ import (
 	"github.com/looplj/axonhub/internal/ent/project"
 	"github.com/looplj/axonhub/internal/ent/user"
 	"github.com/looplj/axonhub/internal/objects"
+	"github.com/looplj/axonhub/internal/pkg/xapikey"
 	"github.com/looplj/axonhub/internal/pkg/xcache"
 	"github.com/looplj/axonhub/internal/pkg/xredis"
 	"github.com/looplj/axonhub/internal/scopes"
@@ -1736,4 +1739,228 @@ func TestAPIKeyService_RotateAPIKey(t *testing.T) {
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to get API key")
 	})
+}
+
+// TestAPIKeyService_RedactedKeyCannotAuthenticate pins the boundary of the
+// legacy plaintext fallback. The key column holds redacted display values that
+// are readable by anyone with read_api_keys, so accepting one as a bearer
+// token would hand out a working credential — and the fallback's read-repair
+// would make it permanent.
+//
+// The schema hook now refuses to write such a row, so the test has to insert
+// it behind Ent's back. That is the residual case the fallback still has to
+// defend against: rows written before the hook existed.
+func TestAPIKeyService_RedactedKeyCannotAuthenticate(t *testing.T) {
+	sqlDB, err := sql.Open("sqlite3", "file:apikey_redacted?mode=memory&_fk=1")
+	require.NoError(t, err)
+
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
+
+	defer sqlDB.Close()
+
+	client := enttest.NewClient(t, enttest.WithOptions(ent.Driver(entsql.OpenDB("sqlite3", sqlDB))))
+	defer client.Close()
+
+	apiKeyService := NewAPIKeyService(APIKeyServiceParams{
+		CacheConfig: xcache.Config{Mode: xcache.ModeMemory},
+		Ent:         client,
+		ProjectService: &ProjectService{
+			ProjectCache: xcache.NewFromConfig[xcache.Entry[ent.Project]](xcache.Config{Mode: xcache.ModeMemory}),
+		},
+		KeyPrefix: "ah",
+	})
+	defer apiKeyService.Stop()
+
+	ctx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+
+	testProject, err := client.Project.Create().
+		SetName(uuid.NewString()).
+		SetDescription("redaction test").
+		SetStatus(project.StatusActive).
+		Save(ctx)
+	require.NoError(t, err)
+
+	rawKey, err := GenerateAPIKey("ah")
+	require.NoError(t, err)
+
+	redacted := xapikey.Redact(rawKey)
+
+	_, err = sqlDB.Exec(
+		"INSERT INTO api_keys (id, `key`, key_hash, name, type, status, project_id, deleted_at) "+
+			"VALUES (1, ?, NULL, 'no hash behind it', 'user', 'enabled', ?, 0)",
+		redacted, testProject.ID)
+	require.NoError(t, err)
+
+	_, err = apiKeyService.GetAPIKey(ctx, redacted)
+	require.Error(t, err, "the redacted display value must not authenticate")
+	require.ErrorIs(t, err, ErrInvalidAPIKey)
+
+	// The rejected attempt must not have repaired the row into a valid one.
+	var storedHash any
+	require.NoError(t, sqlDB.QueryRow("SELECT key_hash FROM api_keys WHERE id = 1").Scan(&storedHash))
+	require.Nil(t, storedHash, "a rejected attempt must not backfill a hash of the display value")
+
+	_, err = apiKeyService.GetAPIKey(ctx, redacted)
+	require.Error(t, err, "a second attempt must not succeed either")
+}
+
+// TestAPIKeyService_InvalidateCachesForKeysUsesTheHashEntry pins the boundary
+// other services revoke access through. They hold entities, not secrets, and
+// the `key` column no longer carries anything the cache is keyed by, so a
+// caller deriving the entry itself would notify a key that never existed.
+func TestAPIKeyService_InvalidateCachesForKeysUsesTheHashEntry(t *testing.T) {
+	rawKey, err := GenerateAPIKey("ah")
+	require.NoError(t, err)
+
+	stored := &ent.APIKey{Key: xapikey.Redact(rawKey), KeyHash: xapikey.Hash(rawKey)}
+
+	require.Equal(t, buildAPIKeyCacheKey(rawKey), apiKeyCacheKeyForHash(stored.KeyHash))
+	require.NotEqual(t, buildAPIKeyCacheKey(stored.Key), apiKeyCacheKeyForHash(stored.KeyHash))
+
+	apiKeyService, client := setupTestAPIKeyService(t, xcache.Config{Mode: xcache.ModeMemory})
+	defer apiKeyService.Stop()
+	defer client.Close()
+
+	ctx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+
+	apiKeyService.invalidateAPIKeyCachesForKeys(ctx, stored)
+
+	var absent *APIKeyService
+
+	absent.invalidateAPIKeyCachesForKeys(ctx, stored)
+}
+
+// TestAPIKeyHook_RejectsRedactedKeyWithoutHash keeps the write path from
+// creating the row the fallback above has to defend against.
+func TestAPIKeyHook_RejectsRedactedKeyWithoutHash(t *testing.T) {
+	apiKeyService, client := setupTestAPIKeyService(t, xcache.Config{Mode: xcache.ModeMemory})
+	defer apiKeyService.Stop()
+	defer client.Close()
+
+	ctx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+
+	testProject, err := client.Project.Create().
+		SetName(uuid.NewString()).
+		SetDescription("redaction write test").
+		SetStatus(project.StatusActive).
+		Save(ctx)
+	require.NoError(t, err)
+
+	rawKey, err := GenerateAPIKey("ah")
+	require.NoError(t, err)
+
+	_, err = client.APIKey.Create().
+		SetKey(xapikey.Redact(rawKey)).
+		SetName("no hash behind it").
+		SetProject(testProject).
+		Save(ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "key_hash")
+
+	// Overwriting a valid row's key with a display value would leave the
+	// stored hash describing a different secret.
+	valid, err := client.APIKey.Create().
+		SetKey(rawKey).
+		SetName("valid").
+		SetProject(testProject).
+		Save(ctx)
+	require.NoError(t, err)
+
+	_, err = client.APIKey.UpdateOneID(valid.ID).
+		SetKey(xapikey.Redact("ah-some-entirely-different-key")).
+		Save(ctx)
+	require.Error(t, err)
+
+	unchanged, err := client.APIKey.Get(ctx, valid.ID)
+	require.NoError(t, err)
+	require.Equal(t, xapikey.Redact(rawKey), unchanged.Key)
+	require.Equal(t, xapikey.Hash(rawKey), unchanged.KeyHash)
+}
+
+// TestAPIKeyService_LegacyPlaintextKeyStillRepairs guards the other side of
+// the same predicate: rows written by a not-yet-upgraded instance must keep
+// authenticating and get their hash backfilled in place.
+func TestAPIKeyService_LegacyPlaintextKeyStillRepairs(t *testing.T) {
+	apiKeyService, client := setupTestAPIKeyService(t, xcache.Config{Mode: xcache.ModeMemory})
+	defer apiKeyService.Stop()
+	defer client.Close()
+
+	ctx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+
+	testProject, err := client.Project.Create().
+		SetName(uuid.NewString()).
+		SetDescription("legacy repair test").
+		SetStatus(project.StatusActive).
+		Save(ctx)
+	require.NoError(t, err)
+
+	rawKey, err := GenerateAPIKey("ah")
+	require.NoError(t, err)
+
+	created, err := client.APIKey.Create().
+		SetKey(rawKey).
+		SetName("legacy").
+		SetProject(testProject).
+		Save(ctx)
+	require.NoError(t, err)
+
+	// Put the row back into its pre-upgrade shape.
+	_, err = client.APIKey.UpdateOneID(created.ID).
+		SetKey(rawKey).
+		SetKeyHash("").
+		SetKeyPrefix("").
+		Save(ctx)
+	require.NoError(t, err)
+
+	resolved, err := apiKeyService.GetAPIKey(ctx, rawKey)
+	require.NoError(t, err)
+	require.Equal(t, created.ID, resolved.ID)
+
+	repaired, err := client.APIKey.Get(ctx, created.ID)
+	require.NoError(t, err)
+	require.Equal(t, xapikey.Hash(rawKey), repaired.KeyHash)
+	require.Equal(t, xapikey.Redact(rawKey), repaired.Key)
+}
+
+// TestAPIKeyHook_DerivesHashFromRawKey pins the schema hook as the single
+// authority on key material: a caller cannot pair a raw key with a hash of
+// something else, which would leave the value shown to the user unable to
+// authenticate while the supplied string could.
+func TestAPIKeyHook_DerivesHashFromRawKey(t *testing.T) {
+	apiKeyService, client := setupTestAPIKeyService(t, xcache.Config{Mode: xcache.ModeMemory})
+	defer apiKeyService.Stop()
+	defer client.Close()
+
+	ctx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+
+	testProject, err := client.Project.Create().
+		SetName(uuid.NewString()).
+		SetDescription("hook authority test").
+		SetStatus(project.StatusActive).
+		Save(ctx)
+	require.NoError(t, err)
+
+	rawKey, err := GenerateAPIKey("ah")
+	require.NoError(t, err)
+
+	created, err := client.APIKey.Create().
+		SetKey(rawKey).
+		SetKeyHash(xapikey.Hash("some-other-value")).
+		SetKeyPrefix("bogus").
+		SetName("mismatched").
+		SetProject(testProject).
+		Save(ctx)
+	require.NoError(t, err)
+
+	require.Equal(t, xapikey.Hash(rawKey), created.KeyHash)
+	require.Equal(t, xapikey.Prefix(rawKey), created.KeyPrefix)
+	require.Equal(t, xapikey.Redact(rawKey), created.Key)
+
+	resolved, err := apiKeyService.GetAPIKey(ctx, rawKey)
+	require.NoError(t, err)
+	require.Equal(t, created.ID, resolved.ID)
+
+	_, err = apiKeyService.GetAPIKey(ctx, "some-other-value")
+	require.Error(t, err, "the supplied hash must not have become a usable credential")
 }

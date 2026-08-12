@@ -18,6 +18,7 @@ import (
 	"github.com/looplj/axonhub/internal/ent/request"
 	"github.com/looplj/axonhub/internal/ent/usagelog"
 	"github.com/looplj/axonhub/internal/objects"
+	"github.com/looplj/axonhub/internal/pkg/xapikey"
 )
 
 func setupBackupTest(t *testing.T) (*ent.Client, *BackupService, context.Context) {
@@ -359,7 +360,10 @@ func TestBackupService_Backup_WithUsageStats(t *testing.T) {
 
 	err = json.Unmarshal(data, &backupData)
 	require.NoError(t, err)
-	require.Equal(t, "sk-test-key-1", backupData.UsageLogs[0].APIKeyKey)
+	// The key column only holds the redacted display form now, so even the
+	// key-including export never contains the raw key.
+	require.NotContains(t, string(data), "sk-test-key-1")
+	require.Equal(t, xapikey.Redact("sk-test-key-1"), backupData.UsageLogs[0].APIKeyKey)
 }
 
 func TestBackupService_Backup_WithRequestLogs(t *testing.T) {
@@ -401,5 +405,6 @@ func TestBackupService_Backup_WithRequestLogs(t *testing.T) {
 
 	err = json.Unmarshal(data, &backupData)
 	require.NoError(t, err)
-	require.Equal(t, "sk-test-key-1", backupData.UsageRequests[0].APIKeyKey)
+	require.NotContains(t, string(data), "sk-test-key-1")
+	require.Equal(t, xapikey.Redact("sk-test-key-1"), backupData.UsageRequests[0].APIKeyKey)
 }

@@ -43,6 +43,11 @@ type BackupAPIKey struct {
 	ent.APIKey
 
 	ProjectName string `json:"project_name"`
+
+	// KeyHash mirrors the sensitive key_hash column (excluded from the
+	// embedded entity's JSON), so restored keys stay verifiable. The embedded
+	// Key field only carries the redacted display value in new backups.
+	KeyHash string `json:"key_hash,omitempty"`
 }
 
 type BackupChannelModelPrice struct {
@@ -238,11 +243,15 @@ func (l BackupUsageLog) MarshalJSON() ([]byte, error) {
 }
 
 const (
-	BackupVersion   = "1.4"
+	// BackupVersion 1.5: API keys carry key_hash + redacted key instead of
+	// the plaintext key; channel credentials are exported in the encrypted
+	// envelope form when an encryption key is configured.
+	BackupVersion   = "1.5"
 	BackupVersionV1 = "1.0"
 	BackupVersionV2 = "1.1"
 	BackupVersionV3 = "1.2"
 	BackupVersionV4 = "1.3"
+	BackupVersionV5 = "1.4"
 )
 
 type BackupOptions struct {

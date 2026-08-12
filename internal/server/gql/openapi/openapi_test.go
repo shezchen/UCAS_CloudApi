@@ -31,7 +31,11 @@ type fixtures struct {
 	user           *ent.User
 	serviceAccount *ent.APIKey
 	targetKey      *ent.APIKey
-	template       *ent.APIKeyProfileTemplate
+	// targetKeyRaw is the raw key value of targetKey. Only the hash is
+	// persisted (targetKey.Key holds the redacted display form), so by-key
+	// lookups must use this captured value.
+	targetKeyRaw string
+	template     *ent.APIKeyProfileTemplate
 
 	otherProject  *ent.Project
 	otherTemplate *ent.APIKeyProfileTemplate
@@ -181,6 +185,7 @@ func setupOpenAPI(t *testing.T, serviceAccountScopes []string) (*mutationResolve
 		user:           owner,
 		serviceAccount: sa,
 		targetKey:      target,
+		targetKeyRaw:   targetKeyValue,
 		template:       tmpl,
 		otherProject:   otherProj,
 		otherTemplate:  otherTmpl,
@@ -422,7 +427,7 @@ func TestOpenAPIResolver_APIKeyQuotaUsages_ByKey(t *testing.T) {
 
 	qr := &queryResolver{mr.Resolver}
 
-	keyVal := fx.targetKey.Key
+	keyVal := fx.targetKeyRaw
 
 	got, err := qr.APIKeyQuotaUsages(ctx, nil, &keyVal, nil)
 	require.NoError(t, err)
@@ -707,7 +712,7 @@ func TestOpenAPIResolver_APIKey_ByKey(t *testing.T) {
 
 	qr := &queryResolver{mr.Resolver}
 
-	got, err := qr.APIKey(ctx, nil, lo.ToPtr(fx.targetKey.Key), nil)
+	got, err := qr.APIKey(ctx, nil, lo.ToPtr(fx.targetKeyRaw), nil)
 	require.NoError(t, err)
 	require.Equal(t, fx.targetKey.ID, got.ID.ID)
 	require.Equal(t, fx.targetKey.Name, got.Name)

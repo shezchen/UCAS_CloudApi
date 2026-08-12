@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { useApiKeysContext } from '../context/apikeys-context';
 import { useUpdateApiKey } from '../data/apikeys';
 import { UpdateApiKeyInput, updateApiKeyInputSchemaFactory } from '../data/schema';
+import { isRedactedApiKey } from '../utils/redaction';
 import { ScopesSelect } from '@/components/scopes-select';
 
 export function ApiKeysEditDialog() {
@@ -110,13 +111,17 @@ export function ApiKeysEditDialog() {
               <div>
                 <div className='flex items-center justify-between'>
                   <label className='text-muted-foreground text-sm font-medium'>{t('apikeys.dialogs.fields.key.label')}</label>
-                  <Button type='button' variant='ghost' size='sm' onClick={() => setShowApiKey(!showApiKey)} className='h-6 px-2'>
-                    {showApiKey ? <IconEyeOff className='h-3 w-3' /> : <IconEye className='h-3 w-3' />}
-                    <span className='ml-1 text-xs'>{showApiKey ? t('apikeys.actions.hide') : t('apikeys.actions.show')}</span>
-                  </Button>
+                  {!isRedactedApiKey(selectedApiKey?.key) && (
+                    <Button type='button' variant='ghost' size='sm' onClick={() => setShowApiKey(!showApiKey)} className='h-6 px-2'>
+                      {showApiKey ? <IconEyeOff className='h-3 w-3' /> : <IconEye className='h-3 w-3' />}
+                      <span className='ml-1 text-xs'>{showApiKey ? t('apikeys.actions.hide') : t('apikeys.actions.show')}</span>
+                    </Button>
+                  )}
                 </div>
                 <p className='text-foreground mt-1 font-mono text-sm break-all'>
-                  {showApiKey ? selectedApiKey?.key : '••••••••••••••••••••••••••••••••'}
+                  {isRedactedApiKey(selectedApiKey?.key) || showApiKey
+                    ? selectedApiKey?.key
+                    : '••••••••••••••••••••••••••••••••'}
                 </p>
               </div>
             </div>

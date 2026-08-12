@@ -8,8 +8,16 @@ import (
 
 	"github.com/looplj/axonhub/internal/ent"
 	"github.com/looplj/axonhub/internal/ent/apikey"
+	"github.com/looplj/axonhub/internal/ent/predicate"
 	"github.com/looplj/axonhub/internal/objects"
+	"github.com/looplj/axonhub/internal/pkg/xapikey"
 )
+
+// byRawKey matches an API key row by its raw key. Only the SHA-256 hash of the
+// raw key is persisted, so lookups go through key_hash.
+func byRawKey(raw string) predicate.APIKey {
+	return apikey.KeyHashEQ(xapikey.Hash(raw))
+}
 
 func TestBackupService_Backup_WithAPIKeys(t *testing.T) {
 	client, service, ctx := setupBackupTest(t)
@@ -105,7 +113,7 @@ func TestBackupService_Restore_APIKeys_NewKeys(t *testing.T) {
 	require.Len(t, apiKeys, 2)
 
 	ak1, err := client.APIKey.Query().
-		Where(apikey.Key("sk-new-key-1")).
+		Where(byRawKey("sk-new-key-1")).
 		WithProject().
 		First(ctx)
 	require.NoError(t, err)
@@ -113,8 +121,13 @@ func TestBackupService_Restore_APIKeys_NewKeys(t *testing.T) {
 	require.Equal(t, proj1.ID, ak1.Edges.Project.ID)
 	require.Equal(t, "TestProject", ak1.Edges.Project.Name)
 
+	// Only the hash and display forms are persisted, never the raw key.
+	require.Equal(t, xapikey.Hash("sk-new-key-1"), ak1.KeyHash)
+	require.Equal(t, xapikey.Prefix("sk-new-key-1"), ak1.KeyPrefix)
+	require.Equal(t, xapikey.Redact("sk-new-key-1"), ak1.Key)
+
 	ak2, err := client.APIKey.Query().
-		Where(apikey.Key("sk-new-key-2")).
+		Where(byRawKey("sk-new-key-2")).
 		WithProject().
 		First(ctx)
 	require.NoError(t, err)
@@ -165,7 +178,7 @@ func TestBackupService_Restore_APIKeys_DefaultProject(t *testing.T) {
 	require.NoError(t, err)
 
 	ak, err := client.APIKey.Query().
-		Where(apikey.Key("sk-default-key")).
+		Where(byRawKey("sk-default-key")).
 		WithProject().
 		First(ctx)
 	require.NoError(t, err)
@@ -263,7 +276,7 @@ func TestBackupService_Restore_APIKeys_ConflictSkip(t *testing.T) {
 	require.NoError(t, err)
 
 	ak, err := client.APIKey.Query().
-		Where(apikey.Key("sk-existing-key")).
+		Where(byRawKey("sk-existing-key")).
 		First(ctx)
 	require.NoError(t, err)
 	require.Equal(t, "Existing Key", ak.Name)
@@ -316,7 +329,7 @@ func TestBackupService_Restore_APIKeys_ConflictOverwrite(t *testing.T) {
 	require.NoError(t, err)
 
 	ak, err := client.APIKey.Query().
-		Where(apikey.Key("sk-existing-key")).
+		Where(byRawKey("sk-existing-key")).
 		First(ctx)
 	require.NoError(t, err)
 	require.Equal(t, "Updated Key Name", ak.Name)
@@ -427,7 +440,7 @@ func TestBackupService_Restore_APIKeys_MultipleProjects(t *testing.T) {
 	require.NoError(t, err)
 
 	ak1, err := client.APIKey.Query().
-		Where(apikey.Key("sk-proj1-key")).
+		Where(byRawKey("sk-proj1-key")).
 		WithProject().
 		First(ctx)
 	require.NoError(t, err)
@@ -435,7 +448,7 @@ func TestBackupService_Restore_APIKeys_MultipleProjects(t *testing.T) {
 	require.Equal(t, proj1.ID, ak1.Edges.Project.ID)
 
 	ak2, err := client.APIKey.Query().
-		Where(apikey.Key("sk-proj2-key")).
+		Where(byRawKey("sk-proj2-key")).
 		WithProject().
 		First(ctx)
 	require.NoError(t, err)

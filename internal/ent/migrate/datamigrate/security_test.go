@@ -73,6 +73,9 @@ func TestRunSecurityBackfill_APIKeyHashes(t *testing.T) {
 	_, err = sqlDB.Exec(`UPDATE api_keys SET "key" = ?, key_hash = NULL, key_prefix = '' WHERE id = ?`, rawKey, created.ID)
 	require.NoError(t, err)
 
+	before, err := client.APIKey.Get(seedCtx, created.ID)
+	require.NoError(t, err)
+
 	require.NoError(t, datamigrate.RunSecurityBackfill(ctx, client))
 
 	migrated, err := client.APIKey.Get(seedCtx, created.ID)
@@ -80,6 +83,8 @@ func TestRunSecurityBackfill_APIKeyHashes(t *testing.T) {
 	require.Equal(t, xapikey.Hash(rawKey), migrated.KeyHash)
 	require.Equal(t, xapikey.Prefix(rawKey), migrated.KeyPrefix)
 	require.Equal(t, xapikey.Redact(rawKey), migrated.Key)
+	require.Equal(t, before.UpdatedAt, migrated.UpdatedAt,
+		"changing the storage format is not a user-visible edit")
 
 	// Idempotent: a second run leaves the row untouched.
 	require.NoError(t, datamigrate.RunSecurityBackfill(ctx, client))
@@ -125,12 +130,20 @@ func TestRunSecurityBackfill_ChannelCredentials(t *testing.T) {
 	require.NoError(t, datamigrate.RunSecurityBackfill(ctx, client))
 	require.Contains(t, readCredentialsColumn(), "sk-provider-secret")
 
+	before, err := client.Channel.Get(seedCtx, ch.ID)
+	require.NoError(t, err)
+
 	require.NoError(t, xcrypto.Configure("a-sufficiently-long-master-key"))
 	require.NoError(t, datamigrate.RunSecurityBackfill(ctx, client))
 
 	encryptedColumn := readCredentialsColumn()
 	require.NotContains(t, encryptedColumn, "sk-provider-secret")
 	require.Contains(t, encryptedColumn, "__axonhub_enc")
+
+	after, err := client.Channel.Get(seedCtx, ch.ID)
+	require.NoError(t, err)
+	require.Equal(t, before.UpdatedAt, after.UpdatedAt,
+		"encrypting an existing credential is not a user-visible edit")
 
 	// The transparent codec still yields the plaintext credentials.
 	loaded, err := client.Channel.Get(seedCtx, ch.ID)

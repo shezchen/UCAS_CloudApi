@@ -62,10 +62,15 @@ func backfillAPIKeyHashes(ctx context.Context, client *ent.Client) error {
 			continue
 		}
 
+		// Changing the storage format of a key is not a change the key's
+		// owner made, so keep updated_at where it was. Ent's update default
+		// would otherwise stamp every row with the migration's start time,
+		// which is visible in the UI and cannot be recovered afterwards.
 		_, err := client.APIKey.UpdateOneID(key.ID).
 			SetKeyHash(xapikey.Hash(raw)).
 			SetKeyPrefix(xapikey.Prefix(raw)).
 			SetKey(xapikey.Redact(raw)).
+			SetUpdatedAt(key.UpdatedAt).
 			Save(ctx)
 		if err != nil {
 			return err
@@ -119,8 +124,10 @@ func encryptChannelCredentials(ctx context.Context, client *ent.Client) error {
 
 		// Saving the decoded value re-serializes it through the transparent
 		// encryption codec, which now produces the encrypted envelope.
+		// updated_at is carried over for the same reason as above.
 		_, err := client.Channel.UpdateOneID(ch.ID).
 			SetCredentials(ch.Credentials).
+			SetUpdatedAt(ch.UpdatedAt).
 			Save(ctx)
 		if err != nil {
 			return err

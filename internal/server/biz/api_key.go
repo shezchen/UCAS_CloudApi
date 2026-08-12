@@ -95,9 +95,14 @@ func NewAPIKeyService(params APIKeyServiceParams) *APIKeyService {
 	}
 
 	// The cache name, watcher channel, and cache-key format carry a schema
-	// version segment (v2: hash-based identity) so instances running the old
-	// plaintext-key scheme never exchange incompatible invalidation events
-	// with upgraded instances.
+	// version segment (v2: hash-based identity). Cached API keys themselves
+	// never cross process boundaries — live.IndexedCache is a process-local
+	// map and Redis only carries invalidation events — so the rename is not
+	// protecting against reading a foreign entry. What it does is keep a v1
+	// instance from acting on a v2 event naming a cache key it cannot
+	// interpret, at the cost of revocations no longer reaching instances on
+	// the other version. That is acceptable only because the upgrade requires
+	// stopping the old instances anyway; see docs/deployment/upgrade.md.
 	notifier, err := watcher.NewWatcherFromConfig[live.CacheEvent[string]](watcher.Config{
 		Mode:  watcherMode,
 		Redis: params.CacheConfig.Redis,
@@ -121,10 +126,12 @@ func NewAPIKeyService(params APIKeyServiceParams) *APIKeyService {
 		RefreshInterval: 30 * time.Second,
 		DebounceDelay:   500 * time.Millisecond,
 		KeyFunc:         func(v *ent.APIKey) string { return apiKeyCacheKeyForHash(v.KeyHash) },
-		DeletedFunc:     func(v *ent.APIKey) bool { return v.DeletedAt != 0 },
-		Watcher:         notifier,
-		LoadOneFunc:     svc.onLoadOneKey,
-		LoadSinceFunc:   svc.onLoadAPIKeysSince,
+		// A row with no hash cannot be authenticated, and every such row
+		// would index under the same hashless cache key, so keep them out.
+		DeletedFunc:   func(v *ent.APIKey) bool { return v.DeletedAt != 0 || v.KeyHash == "" },
+		Watcher:       notifier,
+		LoadOneFunc:   svc.onLoadOneKey,
+		LoadSinceFunc: svc.onLoadAPIKeysSince,
 	})
 
 	if err := svc.APIKeyCache.Load(context.Background()); err != nil {
@@ -165,7 +172,7 @@ func (s *APIKeyService) loadAPIKeyByKey(ctx context.Context, cacheKey string) (*
 	// Verify the loaded row actually corresponds to the requested cache entry
 	// before it is stored under that key (guards against any key derivation
 	// mismatch handing out a foreign API key).
-	if item.KeyHash != keyHash || apiKeyCacheKeyForHash(item.KeyHash) != cacheKey {
+	if item.KeyHash != keyHash {
 		return nil, live.ErrKeyNotFound
 	}
 
@@ -643,7 +650,8 @@ func validateProfileQuota(profiles []objects.APIKeyProfile) error {
 type apiKeyCtxKey struct{}
 
 // apiKeyCacheKeyForHash builds the cache key from the stored key hash. The v2
-// segment versions the cache identity scheme (see cache-compat rules).
+// segment versions the cache identity scheme; see NewAPIKeyService for what
+// that does and does not buy (and the cache-compat rules).
 func apiKeyCacheKeyForHash(keyHash string) string {
 	return "api_key:v2:" + keyHash
 }

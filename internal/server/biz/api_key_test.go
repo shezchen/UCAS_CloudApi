@@ -1896,6 +1896,7 @@ func TestAPIKeyService_LegacyPlaintextKeyStillRepairs(t *testing.T) {
 	require.Equal(t, xapikey.Hash(rawKey), repaired.KeyHash)
 	require.Equal(t, xapikey.Redact(rawKey), repaired.Key)
 }
+
 // TestAPIKeyHook_DerivesHashFromRawKey pins the schema hook as the single
 // authority on key material: a caller cannot pair a raw key with a hash of
 // something else, which would leave the value shown to the user unable to

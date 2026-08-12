@@ -973,14 +973,12 @@ func (s *anthropicInboundStream) finalizeExhaustedSource() bool {
 		usage = convertToAnthropicUsage(s.lastUsage)
 	}
 
+	// Only the stop reason actually reported by the upstream is attached; a
+	// stream truncated before finish_reason keeps a null stop reason.
 	deltaEvent := StreamEvent{
 		Type:  "message_delta",
+		Delta: &StreamDelta{StopReason: s.stopReason},
 		Usage: usage,
-	}
-	// Only attach the stop reason actually reported by the upstream; a stream
-	// truncated before finish_reason keeps a nil stop reason.
-	if s.stopReason != nil {
-		deltaEvent.Delta = &StreamDelta{StopReason: s.stopReason}
 	}
 
 	if err := s.enqueEvent(&deltaEvent); err != nil {

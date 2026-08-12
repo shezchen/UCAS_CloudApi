@@ -466,6 +466,41 @@ type StreamEvent struct {
 	Usage *Usage `json:"usage,omitempty"`
 }
 
+// messageDeltaBody is the delta payload of a "message_delta" event. Anthropic
+// clients model it as required with nullable members, so unlike StreamDelta it
+// must never omit stop_reason/stop_sequence.
+type messageDeltaBody struct {
+	StopReason   *string `json:"stop_reason"`
+	StopSequence *string `json:"stop_sequence"`
+}
+
+// MarshalJSON keeps "message_delta" spec-shaped. A stream that ended before the
+// upstream reported a stop reason still has to carry an explicit null one,
+// otherwise the official SDKs reject the event instead of ending the message.
+func (e StreamEvent) MarshalJSON() ([]byte, error) {
+	type eventAlias StreamEvent
+
+	if e.Type != "message_delta" {
+		return json.Marshal(eventAlias(e))
+	}
+
+	var delta messageDeltaBody
+	if e.Delta != nil {
+		delta.StopReason = e.Delta.StopReason
+		delta.StopSequence = e.Delta.StopSequence
+	}
+
+	return json.Marshal(struct {
+		Type  string           `json:"type"`
+		Delta messageDeltaBody `json:"delta"`
+		Usage *Usage           `json:"usage,omitempty"`
+	}{
+		Type:  e.Type,
+		Delta: delta,
+		Usage: e.Usage,
+	})
+}
+
 // StreamDelta represents delta in streaming response.
 type StreamDelta struct {
 	// Type is the type of delta.

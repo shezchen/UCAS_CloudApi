@@ -167,18 +167,20 @@ func (s *Scheduler) schedule(ctx context.Context, t *task) error {
 		}()
 	}
 
+	runnable := NamedRunnable{name: t.spec.Name, fn: wrapped}
+
 	var cancelFunc context.CancelFunc
 	var err error
 
 	if t.spec.FixRate > 0 {
-		cancelFunc, err = s.executor.ScheduleFuncAtFixRate(wrapped, t.spec.FixRate)
+		cancelFunc, err = s.executor.ScheduleAtFixRate(runnable, t.spec.FixRate)
 	} else {
 		tz := t.spec.Timezone
 		if tz == "" {
 			tz = "UTC"
 		}
-		cancelFunc, err = s.executor.ScheduleFuncAtCronRate(
-			wrapped,
+		cancelFunc, err = s.executor.ScheduleAtCronRate(
+			runnable,
 			executors.CRONRule{Expr: t.spec.CronExpr, Timezone: tz},
 		)
 	}

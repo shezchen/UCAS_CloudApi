@@ -161,11 +161,11 @@ func (p *TokenProvider) Get(ctx context.Context) (*OAuthCredentials, error) {
 		return creds, nil
 	}
 
-	// Without a refresh token there is nothing better than the stored
-	// credentials. Static long-lived tokens often come without expires_at,
-	// which IsExpired treats as expired; returning them beats failing every
-	// request on an impossible refresh.
-	if creds.RefreshToken == "" {
+	// Static long-lived tokens come without expires_at, which IsExpired treats
+	// as expired; returning them beats failing every request on an impossible
+	// refresh. A credential with a known past expiry is genuinely expired, so
+	// it must still take the refresh path and surface that error.
+	if creds.RefreshToken == "" && creds.ExpiresAt.IsZero() {
 		return creds, nil
 	}
 
@@ -180,7 +180,7 @@ func (p *TokenProvider) Get(ctx context.Context) (*OAuthCredentials, error) {
 			return nil, fmt.Errorf("credentials is nil")
 		}
 
-		if current.RefreshToken == "" {
+		if current.RefreshToken == "" && current.ExpiresAt.IsZero() {
 			return current, nil
 		}
 

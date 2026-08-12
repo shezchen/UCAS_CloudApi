@@ -955,6 +955,54 @@ func TestSystemService_Initialize_SetsAllSystemKeys(t *testing.T) {
 	require.Len(t, secretKey, 64)
 }
 
+func TestSystemService_SetStoragePolicy_UsageLogsRetentionFloor(t *testing.T) {
+	newPolicy := func(enabled bool, cleanupDays int) *StoragePolicy {
+		return &StoragePolicy{
+			StoreRequestBody:  true,
+			StoreResponseBody: true,
+			CleanupOptions: []CleanupOption{
+				{ResourceType: "requests", Enabled: true, CleanupDays: 3},
+				{ResourceType: "usage_logs", Enabled: enabled, CleanupDays: cleanupDays},
+			},
+		}
+	}
+
+	setup := func(t *testing.T) (*SystemService, context.Context) {
+		t.Helper()
+
+		service, client := setupTestSystemService(t, xcache.Config{Mode: xcache.ModeMemory})
+		t.Cleanup(func() { client.Close() })
+
+		return service, authz.WithTestBypass(ent.NewContext(context.Background(), client))
+	}
+
+	t.Run("an enabled option below the floor is rejected", func(t *testing.T) {
+		service, ctx := setup(t)
+
+		err := service.SetStoragePolicy(ctx, newPolicy(true, MinUsageLogsRetentionDays-1))
+		require.ErrorContains(t, err, "must be at least")
+	})
+
+	t.Run("a disabled option below the floor is saved", func(t *testing.T) {
+		service, ctx := setup(t)
+
+		// A stored policy predating the floor must not make unrelated edits
+		// unsavable while its cleanup is switched off.
+		require.NoError(t, service.SetStoragePolicy(ctx, newPolicy(false, 3)))
+
+		policy, err := service.StoragePolicy(ctx)
+		require.NoError(t, err)
+		require.Equal(t, 3, policy.CleanupOptions[1].CleanupDays)
+		require.False(t, policy.CleanupOptions[1].Enabled)
+	})
+
+	t.Run("an enabled option at the floor is saved", func(t *testing.T) {
+		service, ctx := setup(t)
+
+		require.NoError(t, service.SetStoragePolicy(ctx, newPolicy(true, MinUsageLogsRetentionDays)))
+	})
+}
+
 func TestSystemService_ClaimInitialization(t *testing.T) {
 	t.Run("the first writer claims the flag", func(t *testing.T) {
 		client := enttest.NewEntClient(t, "sqlite3", "file:ent?mode=memory&_fk=1")

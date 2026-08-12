@@ -1035,10 +1035,13 @@ func (s *SystemService) StoragePolicyOrDefault(ctx context.Context) *StoragePoli
 	return policy
 }
 
-// MinUsageLogsRetentionDays is the smallest allowed usage-log retention.
-// The account weekly quota window (see accountQuotaWindows) looks back up to
-// 7 days in Asia/Shanghai; one extra day absorbs the timezone offset so GC can
-// never delete usage logs that still back the active quota window.
+// MinUsageLogsRetentionDays is the smallest usage-log retention a policy may
+// be saved with. The account weekly quota window (see accountQuotaWindows)
+// looks back up to 7 days in Asia/Shanghai and one extra day absorbs the
+// timezone offset, so anything below this is guaranteed to be clamped by GC.
+// It is a configuration guardrail, not the safety mechanism: API key quota
+// windows are user-configurable and can reach much further back, so the
+// binding limit is the runtime clamp in usageLogCleanupCutoff.
 const MinUsageLogsRetentionDays = 8
 
 // SetStoragePolicy sets the storage policy configuration.
@@ -1048,7 +1051,10 @@ func (s *SystemService) SetStoragePolicy(ctx context.Context, policy *StoragePol
 			return fmt.Errorf("cleanup_days for %q must be positive; set enabled=false to keep data forever", opt.ResourceType)
 		}
 
-		if opt.ResourceType == "usage_logs" && opt.CleanupDays < MinUsageLogsRetentionDays {
+		// A disabled option deletes nothing, so rejecting its value would only
+		// make an unrelated policy edit unsavable for anyone who already stored
+		// a shorter retention.
+		if opt.Enabled && opt.ResourceType == "usage_logs" && opt.CleanupDays < MinUsageLogsRetentionDays {
 			return fmt.Errorf(
 				"cleanup_days for usage_logs must be at least %d: newer logs still back the active weekly quota window",
 				MinUsageLogsRetentionDays,

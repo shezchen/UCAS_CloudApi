@@ -29,6 +29,13 @@ import {
   GcCleanupPreviewItem,
 } from '../data/system';
 
+// Mirrors biz.MinUsageLogsRetentionDays: anything shorter is rejected on save
+// because the active weekly quota window still reads those usage logs.
+const MIN_USAGE_LOGS_CLEANUP_DAYS = 8;
+
+const minCleanupDays = (resourceType: string) =>
+  resourceType === 'usage_logs' ? MIN_USAGE_LOGS_CLEANUP_DAYS : 1;
+
 export function StoragePolicySettings() {
   const { t } = useTranslation();
   const { isLoading, setIsLoading } = useSystemContext();
@@ -378,19 +385,41 @@ export function StoragePolicySettings() {
                   />
                 </div>
                 {option.enabled && (
-                  <div className='flex items-center gap-2'>
-                    <Label htmlFor={`cleanup-days-${index}`}>{t('system.storage.policy.cleanupDays')}</Label>
-                    <Input
-                      id={`cleanup-days-${index}`}
-                      type='number'
-                      min='1'
-                      max='365'
-                      value={option.cleanupDays}
-                      onChange={(e) => handleCleanupOptionChange(index, 'cleanupDays', parseInt(e.target.value) || 1)}
-                      className='w-24'
-                      disabled={isLoading}
-                    />
-                    <span>{t('system.storage.policy.days')}</span>
+                  <div className='flex flex-col gap-1'>
+                    <div className='flex items-center gap-2'>
+                      <Label htmlFor={`cleanup-days-${index}`}>{t('system.storage.policy.cleanupDays')}</Label>
+                      <Input
+                        id={`cleanup-days-${index}`}
+                        type='number'
+                        min={minCleanupDays(option.resourceType)}
+                        max='365'
+                        value={option.cleanupDays}
+                        onChange={(e) =>
+                          handleCleanupOptionChange(
+                            index,
+                            'cleanupDays',
+                            parseInt(e.target.value) || minCleanupDays(option.resourceType)
+                          )
+                        }
+                        onBlur={() =>
+                          handleCleanupOptionChange(
+                            index,
+                            'cleanupDays',
+                            Math.max(minCleanupDays(option.resourceType), option.cleanupDays)
+                          )
+                        }
+                        className='w-24'
+                        disabled={isLoading}
+                      />
+                      <span>{t('system.storage.policy.days')}</span>
+                    </div>
+                    {option.resourceType === 'usage_logs' && (
+                      <div className='text-muted-foreground text-xs'>
+                        {t('system.storage.policy.usageLogsRetentionFloor', {
+                          days: MIN_USAGE_LOGS_CLEANUP_DAYS,
+                        })}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

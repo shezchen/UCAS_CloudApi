@@ -85,6 +85,7 @@
   "system.storage.policy.resourceTypes.requests": "请求日志",
   "system.storage.policy.resourceTypes.usage_logs": "用量日志",
   "system.storage.policy.cleanupDescription": "在指定天数后自动移除旧数据，以管理存储增长并符合数据保留策略。关闭开关可永久保留数据。",
+  "system.storage.policy.usageLogsRetentionFloor": "至少 {{days}} 天：更新的用量日志仍在支撑生效中的配额窗口，无论此处如何设置，清理都会保留它们。",
   "system.storage.policy.runCleanupNow": "立即清理",
   "system.storage.policy.runCleanupSuccess": "后台清理任务已启动",
   "system.storage.policy.runCleanupError": "启动后台清理任务失败",

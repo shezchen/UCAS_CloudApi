@@ -275,6 +275,12 @@ func ValidateEndpointURLSyntax(rawURL string) error {
 		return fmt.Errorf("URL userinfo is not allowed")
 	}
 
+	// A non-empty Host can still carry no hostname ("http://:8080"), which the
+	// Go client dials as localhost.
+	if strings.TrimSuffix(parsed.Hostname(), ".") == "" {
+		return fmt.Errorf("URL host is required")
+	}
+
 	return nil
 }
 

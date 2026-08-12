@@ -356,6 +356,75 @@ func TestValidatePublicURLWithResolver(t *testing.T) {
 	require.Error(t, validatePublicURLWithResolver(t.Context(), "https://unresolved.example/v1", failingResolver))
 }
 
+func TestValidateEndpointURLSyntax(t *testing.T) {
+	for _, rawURL := range []string{
+		"http://provider.example/v1",
+		"https://provider.example/v1",
+		"ws://provider.example/realtime",
+		"wss://provider.example/realtime",
+		// Owners may target private and self-hosted providers.
+		"http://localhost:11434/v1",
+		"http://127.0.0.1:11434/v1",
+		"http://192.168.1.10:8000/v1",
+		"http://[::1]:11434/v1",
+	} {
+		require.NoError(t, ValidateEndpointURLSyntax(rawURL), rawURL)
+	}
+
+	tests := []struct {
+		rawURL    string
+		wantError string
+	}{
+		{rawURL: "", wantError: "must be absolute and include a host"},
+		{rawURL: "/v1/chat", wantError: "must be absolute and include a host"},
+		{rawURL: "provider.example/v1", wantError: "must be absolute and include a host"},
+		{rawURL: "file:///etc/passwd", wantError: "must be absolute and include a host"},
+		{rawURL: "mailto:someone@example.com", wantError: "must be absolute and include a host"},
+		{rawURL: "gopher://provider.example/v1", wantError: "not supported"},
+		{rawURL: "ftp://provider.example/v1", wantError: "not supported"},
+		{rawURL: "https://user:password@provider.example/v1", wantError: "userinfo is not allowed"},
+		// An authority with no hostname is dialed as localhost.
+		{rawURL: "http://:8080", wantError: "host is required"},
+		{rawURL: "http://:8080/v1", wantError: "host is required"},
+		{rawURL: "http://./v1", wantError: "host is required"},
+	}
+
+	for _, tt := range tests {
+		require.ErrorContains(t, ValidateEndpointURLSyntax(tt.rawURL), tt.wantError, tt.rawURL)
+	}
+}
+
+func TestValidatePublicEndpointURLSyntax(t *testing.T) {
+	for _, rawURL := range []string{
+		"https://provider.example/v1",
+		"wss://provider.example/realtime",
+		"https://8.8.8.8/v1",
+	} {
+		require.NoError(t, ValidatePublicEndpointURLSyntax(rawURL), rawURL)
+	}
+
+	for _, rawURL := range []string{
+		"http://localhost:9093/hook",
+		"http://sub.localhost/hook",
+		"http://metadata.google.internal/hook",
+		"http://127.0.0.1:9093/hook",
+		"http://10.0.0.5/hook",
+		"http://192.168.1.10/hook",
+		"http://169.254.169.254/latest/meta-data",
+		"http://[::1]/hook",
+		"http://[fe80::1]/hook",
+		"gopher://provider.example/hook",
+		"https://user:password@provider.example/hook",
+		"http://:8080/hook",
+	} {
+		require.Error(t, ValidatePublicEndpointURLSyntax(rawURL), rawURL)
+	}
+
+	// Unlike ValidatePublicURL this never resolves DNS, so a hostname that
+	// happens to point at a private address is not rejected here.
+	require.NoError(t, ValidatePublicEndpointURLSyntax("https://rebinding.example/hook"))
+}
+
 func TestValidatePublicProxyURL(t *testing.T) {
 	require.NoError(t, ValidatePublicProxyURL(t.Context(), "http://user:password@8.8.8.8:8080"))
 	require.NoError(t, ValidatePublicProxyURL(t.Context(), "https://8.8.8.8:8443"))

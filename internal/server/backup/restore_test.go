@@ -409,6 +409,75 @@ func TestBackupService_Restore_NewData(t *testing.T) {
 	require.Equal(t, 1, priceCount)
 }
 
+func TestBackupService_Restore_RejectsInvalidChannelBaseURL(t *testing.T) {
+	tests := []struct {
+		name      string
+		baseURL   string
+		wantError string
+	}{
+		{
+			name:      "non-network scheme",
+			baseURL:   "file:///etc/passwd",
+			wantError: "must be absolute and include a host",
+		},
+		{
+			name:      "credential bearing URL",
+			baseURL:   "https://user:pass@api.example.com",
+			wantError: "userinfo is not allowed",
+		},
+		{
+			name:    "private host is allowed for owners",
+			baseURL: "http://192.168.1.10:11434",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client, service, ctx := setupBackupTest(t)
+			defer client.Close()
+
+			backupData := BackupData{
+				Version: BackupVersion,
+				Channels: []*BackupChannel{
+					{
+						Channel: ent.Channel{
+							Type:             channel.TypeOpenai,
+							Name:             "Restored Channel",
+							BaseURL:          tt.baseURL,
+							Status:           channel.StatusEnabled,
+							SupportedModels:  []string{"gpt-4"},
+							DefaultTestModel: "gpt-4",
+						},
+						Credentials: objects.ChannelCredentials{APIKey: "test-api-key"},
+					},
+				},
+			}
+
+			data, err := json.MarshalIndent(backupData, "", "  ")
+			require.NoError(t, err)
+
+			err = service.Restore(ctx, data, RestoreOptions{
+				IncludeChannels:         true,
+				ChannelConflictStrategy: ConflictStrategyOverwrite,
+			})
+
+			count, countErr := client.Channel.Query().Count(ctx)
+			require.NoError(t, countErr)
+
+			if tt.wantError == "" {
+				require.NoError(t, err)
+				require.Equal(t, 1, count)
+
+				return
+			}
+
+			require.Error(t, err)
+			require.Contains(t, err.Error(), tt.wantError)
+			require.Zero(t, count)
+		})
+	}
+}
+
 func TestBackupService_Restore_UpdateExisting(t *testing.T) {
 	client, service, ctx := setupBackupTest(t)
 	defer client.Close()

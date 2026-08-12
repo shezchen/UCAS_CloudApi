@@ -21,6 +21,7 @@ import (
 	"github.com/looplj/axonhub/internal/ent/usagelog"
 	"github.com/looplj/axonhub/internal/log"
 	"github.com/looplj/axonhub/internal/objects"
+	"github.com/looplj/axonhub/internal/server/biz"
 )
 
 func (svc *BackupService) Restore(ctx context.Context, data []byte, opts RestoreOptions) error {
@@ -599,6 +600,17 @@ func (svc *BackupService) restoreChannels(ctx context.Context, db *ent.Client, c
 		var baseURL *string
 		if chData.BaseURL != "" {
 			baseURL = &chData.BaseURL
+		}
+
+		// Restore is owner-only, so this is the owner gate rather than the
+		// donation gate: private destinations stay allowed, non-network and
+		// credential-bearing URLs do not.
+		if err := biz.ValidateOwnerChannelURLs(baseURL, nil); err != nil {
+			log.Error(ctx, "failed to restore channel",
+				log.String("channel", chData.Name),
+				log.Cause(err))
+
+			return fmt.Errorf("failed to restore channel %s: %w", chData.Name, err)
 		}
 
 		if existing != nil {

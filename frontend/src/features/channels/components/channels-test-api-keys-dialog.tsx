@@ -57,6 +57,15 @@ export function ChannelsTestAPIKeysDialog({ open, onOpenChange, currentRow, cred
   const { data: disabledKeys = [] } = useChannelDisabledAPIKeys(currentRow.id, { enabled: open });
   const disabledKeySet = useMemo(() => new Set(disabledKeys.map((item) => item.key)), [disabledKeys]);
 
+  // An empty key list has three very different causes, and the action is
+  // reachable for all of them because the row carries no key count.
+  const emptyStateKey =
+    credentials === null
+      ? 'channels.dialogs.testAPIKeys.credentialsUnavailable'
+      : credentials?.apiKey
+        ? 'channels.dialogs.testAPIKeys.oauthOnly'
+        : 'channels.dialogs.testAPIKeys.noKeys';
+
   const isTested = results.length > 0;
   const isTesting = testingKey !== null;
 
@@ -313,7 +322,7 @@ export function ChannelsTestAPIKeysDialog({ open, onOpenChange, currentRow, cred
                   {allKeys.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={4} className='h-32 text-center text-sm text-muted-foreground'>
-                        {t('channels.dialogs.testAPIKeys.noKeys')}
+                        {t(emptyStateKey)}
                       </TableCell>
                     </TableRow>
                   ) : isTested ? (

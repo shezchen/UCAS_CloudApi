@@ -687,6 +687,8 @@
   "channels.dialogs.testAPIKeys.confirmDeleteFailed": "Are you sure you want to delete {{count}} failed API key(s)? This will permanently remove them from the channel.",
   "channels.dialogs.testAPIKeys.successSummary": "{{success}} / {{total}} keys passed",
   "channels.dialogs.testAPIKeys.requestFailed": "Request failed",
+  "channels.dialogs.testAPIKeys.oauthOnly": "This channel authenticates with OAuth credentials, which cannot be tested key by key. Use \"Test Channel\" instead.",
+  "channels.dialogs.testAPIKeys.credentialsUnavailable": "You cannot view the API keys of this channel, so they cannot be tested here.",
   "channels.dialogs.credentials.loadingTitle": "Loading credentials",
   "channels.dialogs.credentials.loadingDescription": "Fetching the API keys of this channel.",
   "channels.dialogs.credentials.errorTitle": "Failed to load credentials",

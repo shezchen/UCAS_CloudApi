@@ -86,6 +86,11 @@ type WebhookTarget {
   timeoutMs: Int!
   headers: [HeaderEntry!]!
   body: String!
+  """
+  Allows the target to reach loopback, private and link-local addresses.
+  Deliveries are restricted to public addresses unless this is set.
+  """
+  allowPrivateNetwork: Boolean!
 }
 
 input WebhookTargetInput {
@@ -96,6 +101,11 @@ input WebhookTargetInput {
   timeoutMs: Int!
   headers: [HeaderEntryInput!]
   body: String!
+  """
+  Allows the target to reach loopback, private and link-local addresses.
+  Deliveries are restricted to public addresses unless this is set.
+  """
+  allowPrivateNetwork: Boolean! = false
 }
 
 type WebhookSubscription {

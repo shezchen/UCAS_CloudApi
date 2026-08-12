@@ -37,6 +37,8 @@
   "system.webhook.nameHint": "Used as the internal address identifier for event subscriptions.",
   "system.webhook.timeout": "Delivery Timeout (ms)",
   "system.webhook.url": "Request URL",
+  "system.webhook.allowPrivateNetwork.label": "Allow Private Network",
+  "system.webhook.allowPrivateNetwork.description": "Deliveries are restricted to public addresses by default. Enable this only to reach an internal endpoint such as an on-premise Alertmanager or a localhost sidecar.",
   "system.webhook.subscription": "Event Subscriptions",
   "system.webhook.subscriptionHelp": "Currently available: channel.auto_disabled",
   "system.webhook.events.channelAutoDisabled": "Triggered after the system automatically disables a channel or API key based on configured error rules.",

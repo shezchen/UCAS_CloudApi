@@ -404,6 +404,14 @@ type WebhookTarget struct {
 	TimeoutMs int                     `json:"timeout_ms"`
 	Headers   []objects.HeaderEntry   `json:"headers"`
 	Body      string                  `json:"body"`
+
+	// AllowPrivateNetwork opts the target out of the public-network
+	// restriction so it can reach an internal endpoint such as an on-premise
+	// Alertmanager or a localhost sidecar. Webhook targets are owner-only
+	// settings, so this is a deployment choice rather than a privilege
+	// boundary, but it must be explicit: leaving it false keeps deliveries
+	// away from loopback, private and cloud metadata addresses.
+	AllowPrivateNetwork bool `json:"allow_private_network"`
 }
 
 type WebhookSubscription struct {
@@ -1182,8 +1190,43 @@ func (s *SystemService) WebhookNotifierConfigOrDefault(ctx context.Context) *Web
 	return cfg
 }
 
+// validateWebhookTargets rejects targets that could never be delivered, so a
+// bad URL fails when the owner saves it instead of being dropped at delivery
+// time with only a warning in the logs.
+func validateWebhookTargets(targets []WebhookTarget) error {
+	for _, target := range targets {
+		rawURL := strings.TrimSpace(target.URL)
+		if rawURL == "" {
+			// selectTargets skips these; a target can be saved before its URL
+			// is filled in.
+			continue
+		}
+
+		if target.AllowPrivateNetwork {
+			if err := httpclient.ValidateEndpointURLSyntax(rawURL); err != nil {
+				return fmt.Errorf("webhook target %q: %w", target.Name, err)
+			}
+
+			continue
+		}
+
+		if err := httpclient.ValidatePublicEndpointURLSyntax(rawURL); err != nil {
+			return fmt.Errorf(
+				"webhook target %q: %w (set allowPrivateNetwork to deliver to an internal endpoint)",
+				target.Name, err,
+			)
+		}
+	}
+
+	return nil
+}
+
 func (s *SystemService) SetWebhookNotifierConfig(ctx context.Context, cfg *WebhookNotifierConfig) error {
 	normalizeWebhookNotifierConfig(cfg)
+
+	if err := validateWebhookTargets(cfg.Targets); err != nil {
+		return err
+	}
 
 	jsonBytes, err := json.Marshal(cfg)
 	if err != nil {

@@ -43,6 +43,7 @@ function createDefaultTarget(index: number): WebhookTarget {
     timeoutMs: 3000,
     headers: [{ key: 'Content-Type', value: 'application/json' }],
     body: DEFAULT_WEBHOOK_BODY_TEMPLATE,
+    allowPrivateNetwork: false,
   };
 }
 
@@ -103,7 +104,7 @@ export function WebhookSettings() {
     });
   }, []);
 
-  const handleTargetChange = useCallback((index: number, field: 'name' | 'url' | 'timeoutMs' | 'body' | 'enabled', value: string | number | boolean) => {
+  const handleTargetChange = useCallback((index: number, field: 'name' | 'url' | 'timeoutMs' | 'body' | 'enabled' | 'allowPrivateNetwork', value: string | number | boolean) => {
     setFormData((prev) => ({
       ...prev,
       targets: prev.targets.map((target, i) => (i === index ? { ...target, [field]: value } : target)),
@@ -442,6 +443,21 @@ export function WebhookSettings() {
                         aria-invalid={target.enabled && !target.url.trim()}
                       />
                       {target.enabled && !target.url.trim() && <div className='text-destructive text-xs'>{t('system.webhook.validation.urlRequired')}</div>}
+                    </div>
+
+                    <div className='flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-md border p-3'>
+                      <div className='space-y-0.5 min-w-0'>
+                        <Label htmlFor={`webhook-allow-private-network-${targetIndex}`} className='text-sm font-medium'>
+                          {t('system.webhook.allowPrivateNetwork.label')}
+                        </Label>
+                        <div className='text-muted-foreground text-sm'>{t('system.webhook.allowPrivateNetwork.description')}</div>
+                      </div>
+                      <Switch
+                        id={`webhook-allow-private-network-${targetIndex}`}
+                        checked={target.allowPrivateNetwork}
+                        onCheckedChange={(checked) => handleTargetChange(targetIndex, 'allowPrivateNetwork', checked)}
+                        className='shrink-0'
+                      />
                     </div>
 
                     <div className='space-y-4 rounded-md border p-3 sm:p-4'>

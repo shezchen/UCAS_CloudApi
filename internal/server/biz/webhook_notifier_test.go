@@ -67,6 +67,9 @@ func TestWebhookNotifier_NotifyChannelAutoDisabled(t *testing.T) {
 					{Key: "X-AxonHub-Event", Value: "{{.Event}}"},
 				},
 				Body: `{"event":"{{.Event}}","channel":"{{.Channel.Name}}","status_code":{{.Trigger.StatusCode}},"threshold":{{.Trigger.Threshold}},"actual_count":{{.Trigger.ActualCount}}}`,
+				// The httptest server listens on loopback, which the
+				// public-network restriction rejects unless the target opts in.
+				AllowPrivateNetwork: true,
 			},
 		},
 		Subscriptions: []WebhookSubscription{
@@ -76,9 +79,7 @@ func TestWebhookNotifier_NotifyChannelAutoDisabled(t *testing.T) {
 
 	systemService := newTestSystemServiceWithWebhookConfig(t, client, cfg)
 	notifier := NewWebhookNotifier(systemService, httpclient.NewHttpClient())
-	// The httptest server listens on loopback, which the production
-	// public-network restriction rejects by design.
-	notifier.restrictPublicNetwork = false
+	require.True(t, notifier.restrictPublicNetwork, "delivery must run under the production restriction")
 
 	notifier.NotifyChannelAutoDisabled(context.Background(), ChannelAutoDisabledEvent{
 		ChannelID:       1,
@@ -121,6 +122,10 @@ func TestWebhookNotifier_SkipWhenTemplateInvalid(t *testing.T) {
 				Enabled: true,
 				URL:     server.URL,
 				Body:    `{"event":"{{if .Event}}"}`,
+				// Without the opt-in the loopback target would be dropped by the
+				// public-network restriction, and the assertion below would hold
+				// even if the invalid template were delivered.
+				AllowPrivateNetwork: true,
 			},
 		},
 		Subscriptions: []WebhookSubscription{

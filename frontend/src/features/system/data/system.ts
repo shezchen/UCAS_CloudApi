@@ -158,6 +158,7 @@ const WEBHOOK_NOTIFIER_CONFIG_QUERY = `
           value
         }
         body
+        allowPrivateNetwork
       }
       subscriptions {
         event
@@ -338,6 +339,7 @@ export interface WebhookTarget {
   timeoutMs: number;
   headers: WebhookHeader[];
   body: string;
+  allowPrivateNetwork: boolean;
 }
 
 export interface WebhookSubscription {

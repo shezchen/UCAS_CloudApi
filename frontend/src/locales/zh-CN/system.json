@@ -37,6 +37,8 @@
   "system.webhook.nameHint": "该名称会作为事件订阅里使用的内部地址标识。",
   "system.webhook.timeout": "投递超时 (ms)",
   "system.webhook.url": "请求地址",
+  "system.webhook.allowPrivateNetwork.label": "允许访问内网地址",
+  "system.webhook.allowPrivateNetwork.description": "默认只允许投递到公网地址。仅当需要访问内网服务（如自建 Alertmanager 或本机 sidecar）时才开启。",
   "system.webhook.subscription": "事件订阅",
   "system.webhook.subscriptionHelp": "当前可用：channel.auto_disabled",
   "system.webhook.events.channelAutoDisabled": "当系统根据配置的错误规则自动禁用渠道或 API Key 后触发。",

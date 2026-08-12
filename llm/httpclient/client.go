@@ -127,6 +127,50 @@ func publicNetworkAddressRestricted(addr netip.Addr) bool {
 	return false
 }
 
+// validatePublicNetworkURLSyntax runs every public-network check that does not
+// need name resolution and returns the normalized host.
+func validatePublicNetworkURLSyntax(
+	rawURL string,
+	allowedSchemes map[string]struct{},
+	allowUserinfo bool,
+) (string, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid URL: %w", err)
+	}
+
+	if parsed.Opaque != "" || parsed.Host == "" {
+		return "", fmt.Errorf("URL must be absolute and include a host")
+	}
+
+	scheme := strings.ToLower(parsed.Scheme)
+	if _, ok := allowedSchemes[scheme]; !ok {
+		return "", fmt.Errorf("URL scheme %q is not supported", parsed.Scheme)
+	}
+
+	if parsed.User != nil && !allowUserinfo {
+		return "", fmt.Errorf("URL userinfo is not allowed")
+	}
+
+	host := strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
+	if host == "" {
+		return "", fmt.Errorf("URL host is required")
+	}
+
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") ||
+		host == "metadata.google.internal" || host == "metadata.tencentyun.com" {
+		return "", fmt.Errorf("URL host %q is not publicly routable", host)
+	}
+
+	if literal, parseErr := netip.ParseAddr(host); parseErr == nil {
+		if publicNetworkAddressRestricted(literal) {
+			return "", fmt.Errorf("URL host %q resolves to a restricted address", host)
+		}
+	}
+
+	return host, nil
+}
+
 func validatePublicNetworkURLWithResolver(
 	ctx context.Context,
 	rawURL string,
@@ -134,39 +178,12 @@ func validatePublicNetworkURLWithResolver(
 	allowedSchemes map[string]struct{},
 	allowUserinfo bool,
 ) error {
-	parsed, err := url.Parse(rawURL)
+	host, err := validatePublicNetworkURLSyntax(rawURL, allowedSchemes, allowUserinfo)
 	if err != nil {
-		return fmt.Errorf("invalid URL: %w", err)
+		return err
 	}
 
-	if parsed.Opaque != "" || parsed.Host == "" {
-		return fmt.Errorf("URL must be absolute and include a host")
-	}
-
-	scheme := strings.ToLower(parsed.Scheme)
-	if _, ok := allowedSchemes[scheme]; !ok {
-		return fmt.Errorf("URL scheme %q is not supported", parsed.Scheme)
-	}
-
-	if parsed.User != nil && !allowUserinfo {
-		return fmt.Errorf("URL userinfo is not allowed")
-	}
-
-	host := strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
-	if host == "" {
-		return fmt.Errorf("URL host is required")
-	}
-
-	if host == "localhost" || strings.HasSuffix(host, ".localhost") ||
-		host == "metadata.google.internal" || host == "metadata.tencentyun.com" {
-		return fmt.Errorf("URL host %q is not publicly routable", host)
-	}
-
-	if literal, parseErr := netip.ParseAddr(host); parseErr == nil {
-		if publicNetworkAddressRestricted(literal) {
-			return fmt.Errorf("URL host %q resolves to a restricted address", host)
-		}
-
+	if _, parseErr := netip.ParseAddr(host); parseErr == nil {
 		return nil
 	}
 
@@ -211,6 +228,24 @@ func ValidatePublicURL(ctx context.Context, rawURL string) error {
 // standard authenticated proxy URLs.
 func ValidatePublicProxyURL(ctx context.Context, rawURL string) error {
 	return validatePublicNetworkURLWithResolver(ctx, rawURL, net.DefaultResolver, publicProxySchemes, true)
+}
+
+// ValidatePublicEndpointURLSyntax verifies that an HTTP(S)/WS(S) endpoint URL
+// is well formed and is not, on the face of it, aimed at a non-public address,
+// without resolving DNS.
+//
+// It is a save-time gate for configuration that is later delivered through the
+// public-network pinned dialer: it rejects what is visible in the URL itself
+// (loopback, private and link-local literals, localhost, cloud metadata names)
+// so a misconfiguration fails when it is saved rather than being dropped at
+// delivery time. A hostname that resolves to a restricted address is not
+// rejected here — DNS can change between saving and delivery, so a save-time
+// lookup would be misleading as well as flaky, and the dialer is the
+// enforcement point.
+func ValidatePublicEndpointURLSyntax(rawURL string) error {
+	_, err := validatePublicNetworkURLSyntax(rawURL, publicEndpointSchemes, false)
+
+	return err
 }
 
 // ValidateEndpointURLSyntax verifies that an endpoint URL is an absolute

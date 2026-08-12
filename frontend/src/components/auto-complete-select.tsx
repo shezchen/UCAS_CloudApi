@@ -62,8 +62,15 @@ export function AutoCompleteSelect<T extends string>({
     return items.filter((it) => it.label.toLowerCase().includes(q));
   }, [items, searchValue]);
 
-  // Only render a bounded slice; the rest stay reachable via search.
-  const visibleItems = useMemo(() => filtered.slice(0, MAX_RENDERED_ITEMS), [filtered]);
+  // Only render a bounded slice; the rest stay reachable via search. The
+  // selected item is pinned so it stays visible even when it sorts past the cap
+  // and the search box was cleared on open.
+  const visibleItems = useMemo(() => {
+    if (filtered.length <= MAX_RENDERED_ITEMS) return filtered;
+    const selectedIndex = filtered.findIndex((item) => item.value === selectedValue);
+    if (selectedIndex < 0 || selectedIndex < MAX_RENDERED_ITEMS) return filtered.slice(0, MAX_RENDERED_ITEMS);
+    return [filtered[selectedIndex], ...filtered.slice(0, MAX_RENDERED_ITEMS - 1)];
+  }, [filtered, selectedValue]);
   const hiddenCount = filtered.length - visibleItems.length;
 
   const onInputBlur = (e: React.FocusEvent<HTMLInputElement>) => {

@@ -22,8 +22,9 @@ import (
 //     SHA-256 hash and display prefix backfilled, and the plaintext key column
 //     is replaced with the redacted display form.
 //   - channels: when a credential encryption key is configured, rows whose
-//     credentials are still stored as plaintext JSON are rewritten through the
-//     transparent encryption codec.
+//     credentials are still stored as plaintext JSON — or are still sealed
+//     with a superseded key — are rewritten through the transparent
+//     encryption codec under the current primary key.
 //
 // Unlike the version-gated migrations above, this runs on every startup: it
 // only touches unmigrated rows (idempotent, cheap once complete), and the
@@ -103,10 +104,16 @@ func encryptChannelCredentials(ctx context.Context, client *ent.Client) error {
 		return nil
 	}
 
+	primaryKeyID := xcrypto.PrimaryKeyID()
+
 	migrated := 0
 
 	for _, ch := range channels {
-		if ch.Credentials.StoredEncrypted() {
+		// Covers plaintext rows and rows still sealed with a superseded key,
+		// so promoting a replacement key to primary and keeping the previous
+		// one in security.credential_decryption_keys rewrites every row on
+		// the next start.
+		if ch.Credentials.StoredEncrypted() && ch.Credentials.StoredKeyID() == primaryKeyID {
 			continue
 		}
 
@@ -123,7 +130,8 @@ func encryptChannelCredentials(ctx context.Context, client *ent.Client) error {
 	}
 
 	if migrated > 0 {
-		log.Info(ctx, "encrypted stored channel credentials", log.Int("count", migrated))
+		log.Info(ctx, "encrypted stored channel credentials",
+			log.Int("count", migrated), log.String("key_id", primaryKeyID))
 	}
 
 	return nil

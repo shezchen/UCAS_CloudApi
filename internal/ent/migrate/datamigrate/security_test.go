@@ -179,6 +179,56 @@ func TestRunSecurityBackfill_RefusesToStartWithoutKey(t *testing.T) {
 	require.ErrorIs(t, err, objects.ErrCredentialsEncryptedNoKey)
 }
 
+// TestRunSecurityBackfill_RewritesSupersededKey covers key replacement: with
+// the previous key kept for decryption, the startup backfill moves every row
+// onto the new primary key so the old one can then be dropped.
+func TestRunSecurityBackfill_RewritesSupersededKey(t *testing.T) {
+	t.Cleanup(func() { _ = xcrypto.Configure("") })
+
+	const (
+		oldKey = "the-original-master-key-value"
+		newKey = "the-replacement-master-key!!!"
+	)
+
+	require.NoError(t, xcrypto.Configure(oldKey))
+	oldKeyID := xcrypto.PrimaryKeyID()
+
+	client, _ := newSecurityTestClient(t)
+
+	ctx := context.Background()
+	seedCtx := authz.WithTestBypass(ent.NewContext(ctx, client))
+
+	ch, err := client.Channel.Create().
+		SetType(channel.TypeOpenai).
+		SetName("rotating-channel").
+		SetBaseURL("https://api.example.com").
+		SetCredentials(objects.ChannelCredentials{APIKey: "sk-provider-secret"}).
+		SetSupportedModels([]string{"gpt-4"}).
+		SetDefaultTestModel("gpt-4").
+		Save(seedCtx)
+	require.NoError(t, err)
+
+	loaded, err := client.Channel.Get(seedCtx, ch.ID)
+	require.NoError(t, err)
+	require.Equal(t, oldKeyID, loaded.Credentials.StoredKeyID())
+
+	require.NoError(t, xcrypto.Configure(newKey, oldKey))
+	require.NoError(t, datamigrate.RunSecurityBackfill(ctx, client))
+
+	rotated, err := client.Channel.Get(seedCtx, ch.ID)
+	require.NoError(t, err)
+	require.Equal(t, "sk-provider-secret", rotated.Credentials.APIKey)
+	require.Equal(t, xcrypto.PrimaryKeyID(), rotated.Credentials.StoredKeyID())
+
+	// With every row rewritten the superseded key can be removed.
+	require.NoError(t, xcrypto.Configure(newKey))
+	require.NoError(t, datamigrate.RunSecurityBackfill(ctx, client))
+
+	final, err := client.Channel.Get(seedCtx, ch.ID)
+	require.NoError(t, err)
+	require.Equal(t, "sk-provider-secret", final.Credentials.APIKey)
+}
+
 // TestRunSecurityBackfill_NoKeyWithoutEncryptedRows keeps the fail-fast check
 // from blocking the supported plaintext deployment.
 func TestRunSecurityBackfill_NoKeyWithoutEncryptedRows(t *testing.T) {

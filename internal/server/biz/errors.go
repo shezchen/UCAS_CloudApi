@@ -26,4 +26,5 @@ var (
 	ErrVerificationInvalid     = errors.New("verification code is invalid or expired")
 	ErrVerificationRateLimit   = errors.New("verification email requested too frequently")
 	ErrVerificationUnavailable = errors.New("email verification is temporarily unavailable")
+	ErrTooManyLoginAttempts    = errors.New("too many failed sign-in attempts, please try again later")
 )

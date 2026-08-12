@@ -8,7 +8,13 @@ server:
   port: 8090                    # Server port (env: AXONHUB_SERVER_PORT)
   name: "AxonHub"               # Server name (env: AXONHUB_SERVER_NAME)
   base_path: ""                 # Base path for API routes (env: AXONHUB_SERVER_BASE_PATH)
-  trusted_proxies: []           # Only proxies here may provide client IP headers (env: AXONHUB_SERVER_TRUSTED_PROXIES)
+  # Addresses or CIDRs of the reverse proxies in front of AxonHub; only they
+  # may supply client IP headers such as X-Forwarded-For. While this is empty
+  # the client IP resolves to the TCP peer — the proxy itself when there is
+  # one — so per-client throttling of failed sign-ins stays disabled. Set it to
+  # your proxy addresses (or to "127.0.0.1" when AxonHub is exposed directly)
+  # to enable it.
+  trusted_proxies: []           # (env: AXONHUB_SERVER_TRUSTED_PROXIES)
   request_timeout: "30s"        # Request timeout duration (env: AXONHUB_SERVER_REQUEST_TIMEOUT)
   llm_request_timeout: "600s"   # LLM request timeout duration (env: AXONHUB_SERVER_LLM_REQUEST_TIMEOUT)
   trace:

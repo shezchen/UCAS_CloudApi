@@ -275,6 +275,29 @@ services:
       - axonhub_network
 ```
 
+### Client IP Behind a Proxy
+
+Every request now reaches AxonHub from the proxy, so the TCP peer address is
+the same for all users. Declare the proxy in `server.trusted_proxies` so
+AxonHub reads the real client address from `X-Forwarded-For` instead:
+
+```yaml
+server:
+  trusted_proxies:
+    - "172.16.0.0/12"   # the Docker network the proxy runs on
+```
+
+The proxy must set the header (`proxy_set_header X-Forwarded-For
+$proxy_add_x_forwarded_for;`). Only the listed addresses are allowed to supply
+it, so a client cannot forge its own address.
+
+While the list is empty AxonHub cannot tell one client from another and
+disables per-client throttling of failed sign-ins — otherwise the whole
+deployment would be locked out by a single attacker. Per-account throttling
+and the `limit_req` zones in `nginx.conf` still apply. When AxonHub is exposed
+directly, without any proxy, set `trusted_proxies: ["127.0.0.1"]`: the TCP peer
+is then the real client and per-client throttling engages.
+
 ## Backup and Recovery
 
 ### Database Backup

@@ -41,6 +41,7 @@ type Config struct {
 	DisableSSLVerify        bool                              `name:"disable_ssl_verify" yaml:"-" json:"-"`
 	AllowNoAuth             bool                              `name:"allow_no_auth" yaml:"-" json:"-"`
 	APIKeyPrefix            string                            `name:"api_key_prefix" yaml:"-" json:"-"`
+	TrustedProxies          []string                          `name:"trusted_proxies" yaml:"-" json:"-"`
 }
 
 type providerQuotaConfig struct {
@@ -99,6 +100,7 @@ func Load() (Config, error) {
 	config.DisableSSLVerify = config.APIServer.DisableSSLVerify
 	config.AllowNoAuth = config.APIServer.API.Auth.AllowNoAuth
 	config.APIKeyPrefix = config.APIServer.API.Auth.KeyPrefix
+	config.TrustedProxies = config.APIServer.TrustedProxies
 
 	if config.Cache.Redis.Addr != "" {
 		log.Warn(context.Background(), "Config `cache.redis.addr` Deprecated: Use `cache.redis.addrs` instead.")

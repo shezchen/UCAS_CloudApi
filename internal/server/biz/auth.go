@@ -115,6 +115,7 @@ func NewAuthService(params AuthServiceParams) *AuthService {
 		VerificationSender:      params.VerificationSender,
 		AllowNoAuth:             params.AllowNoAuth,
 		now:                     time.Now,
+		signInLimiter:           newSignInLimiter(time.Now),
 	}
 }
 
@@ -131,6 +132,7 @@ type AuthService struct {
 
 	verificationMu sync.Mutex
 	now            func() time.Time
+	signInLimiter  *signInLimiter
 }
 
 func generateEmailVerificationCode() (string, error) {
@@ -175,7 +177,14 @@ func (s *AuthService) verificationSecret(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("%w: verification secret is unavailable", ErrVerificationUnavailable)
 	}
 
-	return secret, nil
+	// Derive a purpose-bound subkey so the email-verification HMACs never
+	// share key material with JWT signing, which uses the system secret
+	// directly. Deploying this change only invalidates verification codes
+	// still inside their short TTL.
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte("axonhub:campus-email-verification:v1"))
+
+	return hex.EncodeToString(mac.Sum(nil)), nil
 }
 
 // RequestCampusEmailVerification persists a rate-limited one-time challenge
@@ -433,9 +442,13 @@ func (s *AuthService) GenerateJWTToken(ctx context.Context, user *ent.User) (str
 		return "", fmt.Errorf("failed to get secret key: %w", err)
 	}
 
+	now := time.Now()
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"user_id": user.ID,
-		"exp":     time.Now().Add(time.Hour * 24 * 7).Unix(), // 7 days
+		// The issued-at claim is compared against the per-user revocation
+		// timestamp during validation; see AuthenticateJWTToken.
+		"iat": now.Unix(),
+		"exp": now.Add(time.Hour * 24 * 7).Unix(), // 7 days
 	})
 
 	tokenString, err := token.SignedString([]byte(secretKey))
@@ -528,7 +541,29 @@ func (s *AuthService) AuthenticateJWTToken(ctx context.Context, tokenString stri
 		return nil, fmt.Errorf("%w: user not activated", ErrInvalidJWT)
 	}
 
+	validAfter, err := userTokenValidAfter(ctx, s.entFromContext(ctx), u.ID)
+	if err != nil {
+		// Fail closed: an unverifiable revocation state must not grant access.
+		return nil, fmt.Errorf("failed to check token revocation: %w", err)
+	}
+
+	if !validAfter.IsZero() {
+		// Tokens without an issued-at claim predate the revocation mechanism
+		// and cannot be proven newer than the revocation, so reject them too.
+		issuedAt, ok := claims["iat"].(float64)
+		if !ok || int64(issuedAt) < userTokenRevocationCutoff(validAfter) {
+			return nil, fmt.Errorf("%w: token has been revoked", ErrInvalidJWT)
+		}
+	}
+
 	return u, nil
+}
+
+// RevokeUserTokens invalidates every JWT issued to the user strictly before
+// now. Sign-out uses it to implement "sign out everywhere"; password changes
+// and account deactivation trigger the same mechanism in UserService.
+func (s *AuthService) RevokeUserTokens(ctx context.Context, userID int) error {
+	return setUserTokenValidAfter(ctx, s.entFromContext(ctx), userID, time.Now())
 }
 
 func (s *AuthService) AuthenticateAPIKey(ctx context.Context, key string) (*ent.APIKey, error) {
@@ -550,6 +585,29 @@ func (s *AuthService) AuthenticateAPIKey(ctx context.Context, key string) (*ent.
 
 	if proj == nil || proj.Status != project.StatusActive {
 		return nil, fmt.Errorf("api key project not valid: %w", ErrInvalidAPIKey)
+	}
+
+	// An API key is only as valid as its owning user: keys of deactivated or
+	// deleted users must stop working immediately, mirroring the user status
+	// check on the JWT path. Without the service the check cannot run, so the
+	// request is refused rather than silently authenticated unchecked.
+	if s.UserService == nil {
+		return nil, errors.New("cannot verify api key owner: user service is not configured")
+	}
+
+	ownerStatus, err := authz.RunWithSystemBypass(ctx, "auth-lookup", func(bypassCtx context.Context) (user.Status, error) {
+		return s.UserService.GetUserStatus(bypassCtx, apiKey.UserID)
+	})
+	if err != nil {
+		if ent.IsNotFound(err) {
+			return nil, fmt.Errorf("api key owner not found: %w", ErrInvalidAPIKey)
+		}
+
+		return nil, fmt.Errorf("failed to get api key owner: %w", err)
+	}
+
+	if ownerStatus != user.StatusActivated {
+		return nil, fmt.Errorf("api key owner is not activated: %w", ErrInvalidAPIKey)
 	}
 
 	if apiKey.Type == apikey.TypeNoauth {

@@ -23,25 +23,52 @@ func WithAPIKeyAuth(auth *biz.AuthService) gin.HandlerFunc {
 	return WithAPIKeyConfig(auth, nil)
 }
 
+// isInvalidAPIKeyError reports whether authentication failed because the
+// credential is not a usable API key, as opposed to failing for an internal
+// reason such as an unreachable database.
+func isInvalidAPIKeyError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	return ent.IsNotFound(err) || errors.Is(err, biz.ErrInvalidAPIKey)
+}
+
 // WithAPIKeyConfig 中间件用于验证 API key，支持自定义配置.
 func WithAPIKeyConfig(auth *biz.AuthService, config *APIKeyConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		key, err := ExtractAPIKeyFromRequest(c.Request, config)
+		key, extractErr := ExtractAPIKeyFromRequest(c.Request, config)
+
+		var (
+			apiKey *ent.APIKey
+			err    error
+		)
+
+		switch {
+		case extractErr != nil:
+			// The request carried no usable credentials.
+			apiKey, err = auth.AuthenticateNoAuth(c.Request.Context())
+
 		// DO NOT ALLOW USE NO AUTH API KEY DIRECTLY.
-		if key == biz.NoAuthAPIKeyValue {
+		case key == biz.NoAuthAPIKeyValue:
 			AbortWithError(c, http.StatusUnauthorized, errors.New("Invalid API key"))
 			return
+
+		default:
+			apiKey, err = auth.AuthenticateAPIKey(c.Request.Context(), key)
+			if isInvalidAPIKeyError(err) {
+				// The credential does not name a usable key. Falling back
+				// keeps the placeholder key that the OpenAI, Anthropic and
+				// Gemini SDKs insist on sending working while API auth is
+				// disabled; when it is enabled AuthenticateNoAuth rejects the
+				// request just the same. Authentication failing for any other
+				// reason must never be masked as NoAuth.
+				apiKey, err = auth.AuthenticateNoAuth(c.Request.Context())
+			}
 		}
 
-		var apiKey *ent.APIKey
-		if err == nil {
-			apiKey, err = auth.AuthenticateAPIKey(c.Request.Context(), key)
-		}
 		if err != nil {
-			apiKey, err = auth.AuthenticateNoAuth(c.Request.Context())
-		}
-		if err != nil {
-			if ent.IsNotFound(err) || errors.Is(err, biz.ErrInvalidAPIKey) {
+			if isInvalidAPIKeyError(err) {
 				AbortWithError(c, http.StatusUnauthorized, errors.New("Invalid API key"))
 			} else {
 				log.Error(c.Request.Context(), "Failed to validate API key", log.Cause(err))

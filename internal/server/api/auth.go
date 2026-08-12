@@ -1,12 +1,19 @@
 package api
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"net"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/fx"
 
+	"github.com/looplj/axonhub/internal/contexts"
+	"github.com/looplj/axonhub/internal/log"
 	"github.com/looplj/axonhub/internal/objects"
 	"github.com/looplj/axonhub/internal/server/biz"
 )
@@ -14,22 +21,116 @@ import (
 type AuthHandlersParams struct {
 	fx.In
 
-	AuthService *biz.AuthService
+	AuthService    *biz.AuthService
+	TrustedProxies []string `name:"trusted_proxies"`
 }
 
 func NewAuthHandlers(params AuthHandlersParams) *AuthHandlers {
+	trustedProxies := parseTrustedProxyNetworks(params.TrustedProxies)
+	if len(trustedProxies) == 0 {
+		log.Warn(
+			context.Background(),
+			"per-client sign-in throttling is disabled because server.trusted_proxies is empty; "+
+				"configure it so failed sign-ins can be attributed to a client address",
+		)
+	}
+
 	return &AuthHandlers{
-		AuthService: params.AuthService,
+		AuthService:    params.AuthService,
+		trustedProxies: trustedProxies,
+		withhold:       withholdSignInFailure,
 	}
 }
 
 type AuthHandlers struct {
 	AuthService *biz.AuthService
+
+	trustedProxies []*net.IPNet
+	withhold       func(ctx context.Context, delay time.Duration)
+}
+
+// parseTrustedProxyNetworks mirrors how gin interprets the same list. Entries
+// that do not parse are dropped here because gin already rejects them while
+// building the engine.
+func parseTrustedProxyNetworks(values []string) []*net.IPNet {
+	networks := make([]*net.IPNet, 0, len(values))
+
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+
+		if !strings.Contains(value, "/") {
+			ip := net.ParseIP(value)
+			if ip == nil {
+				continue
+			}
+
+			bits := 32
+			if ip.To4() == nil {
+				bits = 128
+			}
+
+			value = fmt.Sprintf("%s/%d", value, bits)
+		}
+
+		_, network, err := net.ParseCIDR(value)
+		if err != nil {
+			continue
+		}
+
+		networks = append(networks, network)
+	}
+
+	return networks
+}
+
+// signInSource returns the client address the sign-in throttle may lock out,
+// or an empty string when the address cannot be attributed to a single client.
+// Without server.trusted_proxies gin resolves ClientIP to the TCP peer, which
+// behind a reverse proxy is the proxy itself and therefore shared by every
+// user: locking it out would lock out the whole deployment.
+func (h *AuthHandlers) signInSource(c *gin.Context) string {
+	if len(h.trustedProxies) == 0 {
+		return ""
+	}
+
+	ip := net.ParseIP(c.ClientIP())
+	if ip == nil {
+		return ""
+	}
+
+	for _, network := range h.trustedProxies {
+		if network.Contains(ip) {
+			return ""
+		}
+	}
+
+	return ip.String()
+}
+
+// withholdSignInFailure delays a failed sign-in response for the duration the
+// throttle asked for, so repeated guessing gets progressively more expensive.
+func withholdSignInFailure(ctx context.Context, delay time.Duration) {
+	if delay <= 0 {
+		return
+	}
+
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-timer.C:
+	case <-ctx.Done():
+	}
 }
 
 // SignInRequest 登录请求.
 type SignInRequest struct {
-	Email    string `json:"email"    binding:"required,email"`
+	// The address is bounded to the RFC 5321 maximum: it reaches the sign-in
+	// throttle before any account exists, and nothing else caps the body size.
+	Email    string `json:"email"    binding:"required,email,max=254"`
 	Password string `json:"password" binding:"required"`
 }
 
@@ -134,11 +235,24 @@ func (h *AuthHandlers) SignIn(c *gin.Context) {
 		return
 	}
 
+	// Brute-force protection: reject the attempt outright while this client is
+	// locked out after repeated failures.
+	source := h.signInSource(c)
+	if err := h.AuthService.CheckSignInThrottle(req.Email, source); err != nil {
+		JSONError(c, http.StatusTooManyRequests, err)
+		return
+	}
+
 	// Authenticate user
 	user, err := h.AuthService.AuthenticateUser(ctx, req.Email, req.Password)
 	if err != nil {
 		if errors.Is(err, biz.ErrInvalidPassword) {
+			// Only failed credential checks are throttled; internal errors
+			// must not count, and the delay is charged to the failure response
+			// so a correct password is never held back.
+			h.withhold(ctx, h.AuthService.RecordSignInFailure(req.Email, source))
 			JSONError(c, http.StatusUnauthorized, errors.New("Invalid email or password"))
+
 			return
 		}
 
@@ -146,6 +260,8 @@ func (h *AuthHandlers) SignIn(c *gin.Context) {
 
 		return
 	}
+
+	h.AuthService.RecordSignInSuccess(req.Email, source)
 
 	// Generate JWT token
 	token, err := h.AuthService.GenerateJWTToken(ctx, user)
@@ -160,4 +276,23 @@ func (h *AuthHandlers) SignIn(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, response)
+}
+
+// SignOut revokes every JWT previously issued to the current user ("sign out
+// everywhere"). The JWT scheme is stateless, so revocation is implemented with
+// a per-user token-valid-after timestamp that is checked on every token
+// validation.
+func (h *AuthHandlers) SignOut(c *gin.Context) {
+	currentUser, ok := contexts.GetUser(c.Request.Context())
+	if !ok || currentUser == nil {
+		JSONError(c, http.StatusUnauthorized, errors.New("Authentication required"))
+		return
+	}
+
+	if err := h.AuthService.RevokeUserTokens(c.Request.Context(), currentUser.ID); err != nil {
+		JSONError(c, http.StatusInternalServerError, errors.New("Failed to sign out"))
+		return
+	}
+
+	c.Status(http.StatusNoContent)
 }

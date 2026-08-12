@@ -107,6 +107,9 @@ func SetupRoutes(server *Server, handlers Handlers, client *ent.Client, services
 	adminGroup := server.Group("/admin", middleware.WithJWTAuth(services.AuthService), middleware.WithProjectID())
 	// 管理员路由 - 使用 JWT 认证
 	{
+		// Sign out - revokes every JWT previously issued to the current user.
+		adminGroup.POST("/auth/signout", middleware.WithTimeout(server.Config.RequestTimeout), handlers.Auth.SignOut)
+
 		adminGroup.GET("/playground", middleware.WithTimeout(server.Config.RequestTimeout), func(c *gin.Context) {
 			handlers.Graphql.Playground.ServeHTTP(c.Writer, c.Request)
 		})

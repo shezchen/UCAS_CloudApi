@@ -551,7 +551,7 @@ func (s *AuthService) AuthenticateJWTToken(ctx context.Context, tokenString stri
 		// Tokens without an issued-at claim predate the revocation mechanism
 		// and cannot be proven newer than the revocation, so reject them too.
 		issuedAt, ok := claims["iat"].(float64)
-		if !ok || int64(issuedAt) < validAfter.Unix() {
+		if !ok || int64(issuedAt) < userTokenRevocationCutoff(validAfter) {
 			return nil, fmt.Errorf("%w: token has been revoked", ErrInvalidJWT)
 		}
 	}

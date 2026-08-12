@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"entgo.io/ent/dialect/sql"
@@ -15,13 +16,53 @@ import (
 
 // JWT revocation is implemented with a per-user "token valid after" timestamp
 // stored in the system key-value table. Tokens carry an "iat" claim; any token
-// issued strictly before the stored timestamp is rejected. This gives durable
-// revocation (sign-out everywhere, password change, deactivation) without a
-// schema change. The check reads the database directly instead of a cache so a
-// revocation takes effect immediately.
+// that cannot be proven to have been issued after the stored timestamp is
+// rejected. This gives durable revocation (sign-out everywhere, password
+// change, deactivation) without a schema change. The check reads the database
+// directly instead of a cache so a revocation takes effect immediately.
+
+// Timestamps are stored in milliseconds behind a prefix that names the unit,
+// so an upgrade cannot read a value written in seconds as a 1970 millisecond
+// timestamp and quietly un-revoke every token.
+const userTokenValidAfterMillisPrefix = "ms:"
 
 func userTokenValidAfterKey(userID int) string {
 	return fmt.Sprintf("auth_token_valid_after:%d", userID)
+}
+
+func formatUserTokenValidAfter(ts time.Time) string {
+	return userTokenValidAfterMillisPrefix + strconv.FormatInt(ts.UnixMilli(), 10)
+}
+
+func parseUserTokenValidAfter(value string) (time.Time, error) {
+	if millis, ok := strings.CutPrefix(value, userTokenValidAfterMillisPrefix); ok {
+		parsed, err := strconv.ParseInt(millis, 10, 64)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("invalid token revocation timestamp %q: %w", value, err)
+		}
+
+		return time.UnixMilli(parsed), nil
+	}
+
+	seconds, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid token revocation timestamp %q: %w", value, err)
+	}
+
+	return time.Unix(seconds, 0), nil
+}
+
+// userTokenRevocationCutoff returns the earliest issued-at second a token may
+// carry and still be served. An "iat" of T only proves the token was issued
+// somewhere inside [T, T+1s), so a revocation recorded during that second
+// rounds up: the token cannot be shown to be newer than the revocation.
+func userTokenRevocationCutoff(validAfter time.Time) int64 {
+	cutoff := validAfter.Unix()
+	if validAfter.Nanosecond() > 0 {
+		cutoff++
+	}
+
+	return cutoff
 }
 
 // setUserTokenValidAfter persists the revocation timestamp for a user. The
@@ -32,7 +73,7 @@ func setUserTokenValidAfter(ctx context.Context, client *ent.Client, userID int,
 	return authz.RunWithSystemBypassVoid(ctx, "auth-token-revocation", func(bypassCtx context.Context) error {
 		err := client.System.Create().
 			SetKey(userTokenValidAfterKey(userID)).
-			SetValue(strconv.FormatInt(ts.Unix(), 10)).
+			SetValue(formatUserTokenValidAfter(ts)).
 			OnConflict(sql.ConflictColumns("key")).
 			UpdateNewValues().
 			Exec(bypassCtx)
@@ -59,11 +100,6 @@ func userTokenValidAfter(ctx context.Context, client *ent.Client, userID int) (t
 			return time.Time{}, fmt.Errorf("failed to load token revocation timestamp: %w", err)
 		}
 
-		unix, err := strconv.ParseInt(sys.Value, 10, 64)
-		if err != nil {
-			return time.Time{}, fmt.Errorf("invalid token revocation timestamp %q: %w", sys.Value, err)
-		}
-
-		return time.Unix(unix, 0), nil
+		return parseUserTokenValidAfter(sys.Value)
 	})
 }

@@ -41,6 +41,20 @@ jobs:
       - name: Lint chart
         run: helm lint "$CHART_DIR"
 
+      # helm lint downgrades a failed `required` to an INFO line, so render the
+      # chart directly to prove a credential-less install cannot succeed.
+      - name: Verify the chart fails closed without database credentials
+        run: |
+          if helm template axonhub "$CHART_DIR" >/dev/null 2>&1; then
+            echo "::error::chart rendered with default values; the database password must not have a usable default" >&2
+            exit 1
+          fi
+
+          helm template axonhub "$CHART_DIR" \
+            --set postgresql.auth.password=ci-verification-password \
+            --set axonhub.env.AXONHUB_DB_DSN='postgres://axonhub:ci-verification-password@axonhub-postgresql:5432/axonhub?sslmode=disable' \
+            >/dev/null
+
       - name: Package chart
         run: helm package "$CHART_DIR" --destination .chart-packages
 

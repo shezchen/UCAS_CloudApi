@@ -37,7 +37,7 @@ spec:
             - name: POSTGRES_USER
               value: {{ .Values.postgresql.auth.username | quote }}
             - name: POSTGRES_PASSWORD
-              value: {{ .Values.postgresql.auth.password | quote }}
+              value: {{ required "postgresql.auth.password is required. Choose a password and use the same one in axonhub.env.AXONHUB_DB_DSN, e.g. --set postgresql.auth.password=<password>" .Values.postgresql.auth.password | quote }}
           ports:
             - name: postgresql
               containerPort: 5432

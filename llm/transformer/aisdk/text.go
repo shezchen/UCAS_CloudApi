@@ -173,11 +173,14 @@ func (t *TextTransformer) TransformStreamChunk(
 	}, nil
 }
 
+// AggregateStreamChunks is not supported by the text protocol, which carries no
+// event framing to reconstruct a response from. The zero ResponseMeta reports
+// no terminal state, which is what callers treat as unverified.
+// TODO: support.
 func (t *TextTransformer) AggregateStreamChunks(
 	ctx context.Context,
 	chunks []*httpclient.StreamEvent,
 ) ([]byte, llm.ResponseMeta, error) {
-	// TODO: support.
 	return []byte(`{}`), llm.ResponseMeta{}, nil
 }
 

@@ -139,8 +139,14 @@ func (t *DataStreamTransformer) AggregateStreamChunks(
 				reasoningOpen = false
 			}
 
-		case "finish-step", "finish":
-			// Nothing to aggregate; markers for UI flows.
+		case "finish":
+			// The stream emits finish only once the upstream reported a finish
+			// reason, so it is the successful terminal marker.
+			meta.Terminal = true
+			meta.Completed = true
+
+		case "finish-step":
+			// Per-step marker for UI flows; not a terminal event.
 		case "tool-input-start", "tool-input-delta", "tool-input-available":
 			// For now we don't include tool inputs in the aggregated UIMessage parts.
 			// Can be added later if needed by consumers.

@@ -159,8 +159,11 @@ func setupE2E(t *testing.T) e2eEnv {
 	tmplSvc := biz.NewAPIKeyProfileTemplateService(biz.APIKeyProfileTemplateServiceParams{Ent: client})
 	systemSvc := biz.NewSystemService(biz.SystemServiceParams{Ent: client})
 	quotaSvc := biz.NewQuotaService(client, systemSvc)
+	userSvc := biz.NewUserService(biz.UserServiceParams{
+		CacheConfig: cacheCfg, Ent: client, APIKeyService: apiKeySvc,
+	})
 	authSvc := biz.NewAuthService(biz.AuthServiceParams{
-		SystemService: systemSvc, APIKeyService: apiKeySvc, Ent: client,
+		SystemService: systemSvc, APIKeyService: apiKeySvc, UserService: userSvc, Ent: client,
 	})
 
 	handler := openapi.NewGraphqlHandlers(openapi.Dependencies{

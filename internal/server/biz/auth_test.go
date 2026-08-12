@@ -879,6 +879,45 @@ func TestAuthService_AuthenticateAPIKey_OwnerMustBeActivated(t *testing.T) {
 	require.Equal(t, apiKeyString, authenticated.Key)
 }
 
+func TestAuthService_AuthenticateAPIKey_WithoutUserServiceIsRefused(t *testing.T) {
+	authService, client, cleanup := setupTestAuthService(t, xcache.Config{})
+	defer cleanup()
+	defer client.Close()
+
+	ctx := ent.NewContext(authz.WithTestBypass(context.Background()), client)
+
+	owner, err := client.User.Create().
+		SetEmail(fmt.Sprintf("owner-%d@example.com", time.Now().UnixNano())).
+		SetPassword("hashed").
+		SetStatus(user.StatusActivated).
+		Save(ctx)
+	require.NoError(t, err)
+
+	testProject, err := client.Project.Create().
+		SetName(uuid.NewString()).
+		SetStatus(project.StatusActive).
+		Save(ctx)
+	require.NoError(t, err)
+
+	apiKeyString, err := GenerateAPIKey("ah")
+	require.NoError(t, err)
+	_, err = client.APIKey.Create().
+		SetKey(apiKeyString).
+		SetName("Unverifiable Owner Key").
+		SetUserID(owner.ID).
+		SetProjectID(testProject.ID).
+		SetStatus(apikey.StatusEnabled).
+		Save(ctx)
+	require.NoError(t, err)
+
+	authService.UserService = nil
+
+	_, err = authService.AuthenticateAPIKey(ctx, apiKeyString)
+	require.Error(t, err)
+	require.NotErrorIs(t, err, ErrInvalidAPIKey)
+	require.Contains(t, err.Error(), "user service is not configured")
+}
+
 func TestAuthService_AuthenticateNoAuth(t *testing.T) {
 	cacheConfig := xcache.Config{}
 

@@ -1244,26 +1244,25 @@ const GET_CHANNEL_CREDENTIALS_QUERY = `
 `;
 
 export function useChannelCredentials(channelId: string, options?: { enabled?: boolean }) {
-  const { handleError } = useErrorHandler();
-  const { t } = useTranslation();
   const viewerCacheKey = useChannelViewerCacheKey();
 
   return useQuery({
     // Keyed under 'channels' so channel mutations' invalidations also refresh it.
     queryKey: ['channels', viewerCacheKey, 'credentials', channelId],
     queryFn: async () => {
-      try {
-        const data = await graphqlRequest<{ node: { id: string; credentials?: ChannelCredentials | null } | null }>(
-          GET_CHANNEL_CREDENTIALS_QUERY,
-          { id: channelId }
-        );
-        return data.node?.credentials ? channelCredentialsSchema.parse(data.node.credentials) : null;
-      } catch (error) {
-        handleError(error, t('common.errors.internalServerError'));
-        throw error;
-      }
+      const data = await graphqlRequest<{ node: { id: string; credentials?: ChannelCredentials | null } | null }>(
+        GET_CHANNEL_CREDENTIALS_QUERY,
+        { id: channelId }
+      );
+      // Null when the viewer may not read this channel's secrets.
+      return data.node?.credentials ? channelCredentialsSchema.parse(data.node.credentials) : null;
     },
     enabled: !!channelId && options?.enabled !== false,
+    // Plaintext keys must not outlive the dialog that asked for them.
+    gcTime: 0,
+    // The caller renders a retryable error state, so fail fast instead of
+    // running the global retry policy.
+    retry: 1,
   });
 }
 

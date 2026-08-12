@@ -1,7 +1,5 @@
-import { useMemo } from 'react';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useChannels } from '../context/channels-context';
-import { useChannelCredentials } from '../data/channels';
 import { ChannelsActionDialog } from './channels-action-dialog';
 import { ChannelsArchiveDialog } from './channels-archive-dialog';
 import { ChannelsBulkApplyTemplateDialog } from './channels-bulk-apply-template-dialog';
@@ -23,7 +21,7 @@ import { ChannelsProxyDialog } from './channels-proxy-dialog';
 import { ChannelsStatusDialog } from './channels-status-dialog';
 import { ChannelsTestDialog } from './channels-test-dialog';
 import { ChannelsTestHistoryDrawer } from './channels-test-history-drawer';
-import { ChannelsTestAPIKeysDialog } from './channels-test-api-keys-dialog';
+import { ChannelsCredentialDialogs } from './channels-credential-dialogs';
 import { ChannelsRateLimitDialog } from './channels-rate-limit-dialog';
 import { ChannelsTransformOptionsDialog } from './channels-transform-options-dialog';
 import { ChannelsEndpointsDialog } from './channels-endpoints-dialog';
@@ -32,19 +30,6 @@ import { ChannelsSystemSettingsDialog } from './channels-system-settings-dialog'
 export function ChannelsDialogs() {
   const { isOwner } = usePermissions();
   const { open, setOpen, currentRow, setCurrentRow, selectedChannels } = useChannels();
-
-  // Credentials are excluded from the channel list query, so dialogs that edit or
-  // test keys fetch them on demand for the single selected channel. Their render
-  // is gated on the fetch settling so form default values include credentials.
-  const needsCredentials = !!currentRow && (open === 'edit' || open === 'duplicate' || open === 'viewModels' || open === 'testAPIKeys');
-  const { data: credentials, isFetched: credentialsFetched } = useChannelCredentials(currentRow?.id ?? '', {
-    enabled: needsCredentials,
-  });
-  const credentialsReady = !needsCredentials || credentialsFetched;
-  const currentRowWithCredentials = useMemo(() => {
-    if (!currentRow) return null;
-    return { ...currentRow, credentials: credentials ?? undefined };
-  }, [currentRow, credentials]);
 
   return (
     <>
@@ -72,58 +57,7 @@ export function ChannelsDialogs() {
 
       {currentRow && (
         <>
-          {credentialsReady && (
-            <>
-              <ChannelsActionDialog
-                key={`channel-edit-${currentRow.id}`}
-                open={open === 'edit'}
-                onOpenChange={(isOpen) => {
-                  if (isOpen) {
-                    setOpen('edit');
-                  } else {
-                    setOpen(null);
-                    setTimeout(() => {
-                      setCurrentRow(null);
-                    }, 500);
-                  }
-                }}
-                currentRow={currentRowWithCredentials ?? currentRow}
-              />
-
-              <ChannelsActionDialog
-                key={`channel-duplicate-${currentRow.id}`}
-                open={open === 'duplicate'}
-                onOpenChange={(isOpen) => {
-                  if (isOpen) {
-                    setOpen('duplicate');
-                  } else {
-                    setOpen(null);
-                    setTimeout(() => {
-                      setCurrentRow(null);
-                    }, 500);
-                  }
-                }}
-                duplicateFromRow={currentRowWithCredentials ?? currentRow}
-              />
-
-              <ChannelsActionDialog
-                key={`channel-view-models-${currentRow.id}`}
-                open={open === 'viewModels'}
-                onOpenChange={(isOpen) => {
-                  if (isOpen) {
-                    setOpen('viewModels');
-                  } else {
-                    setOpen(null);
-                    setTimeout(() => {
-                      setCurrentRow(null);
-                    }, 500);
-                  }
-                }}
-                currentRow={currentRowWithCredentials ?? currentRow}
-                showModelsPanel={true}
-              />
-            </>
-          )}
+          <ChannelsCredentialDialogs key={`channel-credentials-${currentRow.id}`} channel={currentRow} />
 
           <ChannelsDeleteDialog
             key={`channel-delete-${currentRow.id}`}
@@ -320,22 +254,6 @@ export function ChannelsDialogs() {
               }
             }}
           />
-
-          {credentialsReady && (
-            <ChannelsTestAPIKeysDialog
-              key={`channel-test-api-keys-${currentRow.id}`}
-              open={open === 'testAPIKeys'}
-              onOpenChange={(isOpen) => {
-                if (!isOpen) {
-                  setOpen(null);
-                  setTimeout(() => {
-                    setCurrentRow(null);
-                  }, 500);
-                }
-              }}
-              currentRow={currentRowWithCredentials ?? currentRow}
-            />
-          )}
         </>
       )}
     </>

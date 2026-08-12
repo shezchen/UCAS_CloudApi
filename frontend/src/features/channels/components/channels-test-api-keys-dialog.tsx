@@ -12,14 +12,15 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useChannels } from '../context/channels-context';
 import { useDeleteDisabledChannelAPIKeys, useDisableChannelAPIKey, useTestChannelAPIKey, useUpdateChannel } from '../data/channels';
-import { Channel, TestAPIKeyResult } from '../data/schema';
+import { Channel, ChannelCredentials, TestAPIKeyResult } from '../data/schema';
 
 interface ChannelsTestAPIKeysDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  // Passed in with on-demand fetched credentials (the list query no longer
-  // carries them), instead of reading the bare row from context.
   currentRow: Channel;
+  // Fetched on demand by the caller; null when the viewer may not read this
+  // channel's secrets, which reads differently from "no keys configured".
+  credentials: ChannelCredentials | null;
 }
 
 function maskAPIKey(key: string) {
@@ -29,7 +30,7 @@ function maskAPIKey(key: string) {
   return `${key.slice(0, 4)}****${key.slice(-4)}`;
 }
 
-export function ChannelsTestAPIKeysDialog({ open, onOpenChange, currentRow }: ChannelsTestAPIKeysDialogProps) {
+export function ChannelsTestAPIKeysDialog({ open, onOpenChange, currentRow, credentials }: ChannelsTestAPIKeysDialogProps) {
   const { t } = useTranslation();
   const { setOpen } = useChannels();
   const [results, setResults] = useState<TestAPIKeyResult[]>([]);
@@ -44,7 +45,7 @@ export function ChannelsTestAPIKeysDialog({ open, onOpenChange, currentRow }: Ch
   const updateChannel = useUpdateChannel();
   const deleteDisabledAPIKeys = useDeleteDisabledChannelAPIKeys();
 
-  const allKeys = useMemo(() => currentRow?.credentials?.apiKeys ?? [], [currentRow?.credentials?.apiKeys]);
+  const allKeys = useMemo(() => credentials?.apiKeys ?? [], [credentials?.apiKeys]);
   const disabledKeySet = useMemo(
     () => new Set(currentRow?.disabledAPIKeys?.map((item) => item.key) ?? []),
     [currentRow?.disabledAPIKeys]

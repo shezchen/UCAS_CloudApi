@@ -306,6 +306,34 @@ metrics:
 - `AXONHUB_METRICS_EXPORTER_ENDPOINT`
 - `AXONHUB_METRICS_EXPORTER_INSECURE`
 
+### 安全配置
+
+```yaml
+security:
+  credential_encryption_key: ""   # 加密存储渠道的服务商凭证
+  credential_decryption_keys: []  # 已被替换的旧密钥，更换密钥期间保持数据可读
+```
+
+**环境变量：**
+- `AXONHUB_SECURITY_CREDENTIAL_ENCRYPTION_KEY`
+- `AXONHUB_SECURITY_CREDENTIAL_DECRYPTION_KEYS`
+
+配置 `credential_encryption_key` 后，渠道的服务商凭证会先用 AES-256-GCM 加密再写入
+数据库。该密钥在启动时经过 Argon2id 派生，因此可以使用口令，但更推荐使用随机值：
+
+```bash
+openssl rand -base64 32
+```
+
+留空则以明文存储凭证，即此前的行为。
+
+> **请将该密钥保存在数据库之外。** 一旦缺失，所有由它加密的数据都无法读取，包括
+> 备份文件中的渠道凭证。如果数据库中已存在加密凭证而密钥缺失，实例会拒绝启动，
+> 而不是带着无法读取任何渠道的状态运行。
+
+`credential_decryption_keys` 用于存放只允许解密、不再用于写入的密钥。它仅在更换
+密钥时需要，详见[升级指南](upgrade.md)。
+
 ### 垃圾回收配置
 
 ```yaml
@@ -560,6 +588,7 @@ username.root:password@tcp(host:4000)/database?tls=true&parseTime=true&multiStat
 
 ## 相关文档
 
+- [升级指南](upgrade.md)
 - [Docker 部署](docker.md)
 - [快速入门](../getting-started/quick-start.md)
 - [OpenAI API](../api-reference/openai-api.md)

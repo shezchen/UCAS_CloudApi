@@ -305,6 +305,39 @@ metrics:
 - `AXONHUB_METRICS_EXPORTER_ENDPOINT`
 - `AXONHUB_METRICS_EXPORTER_INSECURE`
 
+### Security Configuration
+
+```yaml
+security:
+  credential_encryption_key: ""   # Encrypts channel provider credentials at rest
+  credential_decryption_keys: []  # Superseded keys, kept readable during a key change
+```
+
+**Environment Variables:**
+- `AXONHUB_SECURITY_CREDENTIAL_ENCRYPTION_KEY`
+- `AXONHUB_SECURITY_CREDENTIAL_DECRYPTION_KEYS`
+
+When `credential_encryption_key` is set, channel provider credentials are
+encrypted with AES-256-GCM before being written to the database. The key is
+run through Argon2id at startup, so a passphrase is acceptable, but a random
+value is better:
+
+```bash
+openssl rand -base64 32
+```
+
+Leaving it empty stores credentials in plaintext, which is the previous
+behaviour.
+
+> **Keep this key outside the database.** Anything encrypted with it becomes
+> unreadable without it, including channel credentials inside backup files.
+> An instance whose database holds encrypted credentials refuses to start
+> when the key is missing, rather than come up unable to read any channel.
+
+`credential_decryption_keys` holds keys that are accepted for decryption but
+no longer used for writing. It is only needed while replacing a key — see the
+[Upgrade Guide](upgrade.md).
+
 ### Garbage Collection Configuration
 
 ```yaml
@@ -602,6 +635,7 @@ This command will validate your configuration file and report any errors.
 
 ## Related Documentation
 
+- [Upgrade Guide](upgrade.md)
 - [Docker Deployment](docker.md)
 - [Quick Start Guide](../getting-started/quick-start.md)
 - [OpenAI API](../api-reference/openai-api.md)

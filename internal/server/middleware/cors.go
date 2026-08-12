@@ -68,9 +68,12 @@ func IsPublicAPIPath(requestPath string) bool {
 // delegated to the restricted handler, which is the configurable strict CORS
 // policy and may be nil when disabled.
 //
-// The middleware must be registered before any authentication middleware:
-// it short-circuits OPTIONS preflight requests on public routes with 204
-// before API key validation can reject them.
+// Preflight requests to public routes are answered here with 204, so the
+// middleware has to be registered before any authentication middleware that
+// could reject them. Under the current route layout that ordering is belt and
+// braces: every API route is registered for a concrete method, so gin matches
+// OPTIONS against the catch-all route in its own method tree and the API key
+// middleware is not in that chain either way.
 func WithCORS(restricted gin.HandlerFunc) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if IsPublicAPIPath(c.Request.URL.Path) {

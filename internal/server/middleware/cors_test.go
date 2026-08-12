@@ -94,8 +94,35 @@ func newCORSTestEngine(restricted gin.HandlerFunc) *gin.Engine {
 	return engine
 }
 
-func TestWithCORSPublicPreflightSkipsAuth(t *testing.T) {
-	engine := newCORSTestEngine(nil)
+// newCORSTestEngineWithGlobalAuth puts the auth middleware in the global chain
+// directly after WithCORS. newCORSTestEngine attaches it to a route group
+// instead, which gin never consults for a preflight -- OPTIONS lives in its own
+// method tree and matches the catch-all route -- so that engine cannot show
+// whether WithCORS really answers ahead of authentication.
+func newCORSTestEngineWithGlobalAuth(authCalled *bool) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+
+	engine := gin.New()
+	engine.Use(WithCORS(nil))
+	engine.Use(func(c *gin.Context) {
+		*authCalled = true
+
+		AbortWithError(c, http.StatusUnauthorized, ErrAPIKeyRequired)
+	})
+
+	engine.OPTIONS("*any", func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+	engine.POST("/v1/chat/completions", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"object": "chat.completion"})
+	})
+
+	return engine
+}
+
+func TestWithCORSPublicPreflightShortCircuitsBeforeAuth(t *testing.T) {
+	authCalled := false
+	engine := newCORSTestEngineWithGlobalAuth(&authCalled)
 
 	req := httptest.NewRequest(http.MethodOptions, "/v1/chat/completions", nil)
 	req.Header.Set("Origin", "https://random-client.example")
@@ -107,6 +134,10 @@ func TestWithCORSPublicPreflightSkipsAuth(t *testing.T) {
 
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("preflight status = %d, want %d", w.Code, http.StatusNoContent)
+	}
+
+	if authCalled {
+		t.Error("authentication ran on a public preflight request")
 	}
 
 	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "*" {
@@ -127,6 +158,24 @@ func TestWithCORSPublicPreflightSkipsAuth(t *testing.T) {
 
 	if got := w.Header().Get("Access-Control-Max-Age"); got == "" {
 		t.Error("Access-Control-Max-Age is empty")
+	}
+
+	// Control: the same engine does reach authentication for a real request,
+	// so the assertion above is about the short-circuit and not about the
+	// middleware being absent.
+	authCalled = false
+	req = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	req.Header.Set("Origin", "https://random-client.example")
+
+	w = httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	if !authCalled {
+		t.Fatal("authentication did not run on a non-preflight request")
+	}
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("unauthenticated POST status = %d, want %d", w.Code, http.StatusUnauthorized)
 	}
 }
 

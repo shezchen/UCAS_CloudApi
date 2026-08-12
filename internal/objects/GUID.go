@@ -50,8 +50,11 @@ func (guid *GUID) UnmarshalGQL(v any) error {
 		return err
 	}
 
-	if id <= 0 {
-		return errors.New("guid id must be a positive integer")
+	// Zero is a legitimate id: system-level rows use it as a sentinel for
+	// "no project" (see the project_id = 0 system roles in biz/role.go), and
+	// the dashboard filters on gid://axonhub/Project/0.
+	if id < 0 {
+		return errors.New("guid id must not be negative")
 	}
 
 	guid.Type = typ

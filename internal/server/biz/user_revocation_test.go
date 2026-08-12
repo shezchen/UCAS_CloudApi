@@ -74,6 +74,21 @@ func TestUserService_DeletionDisablesAPIKeys(t *testing.T) {
 	require.Equal(t, apikey.StatusDisabled, stored.Status)
 }
 
+// A UserService without an API key service still has to revoke access.
+func TestUserService_DeactivationWithoutAPIKeyService(t *testing.T) {
+	fixture := setupRevocationFixture(t)
+	fixture.users.APIKeyService = nil
+
+	owner, apiKey := fixture.createUserWithAPIKey(t, user.StatusActivated)
+
+	_, err := fixture.users.UpdateUserStatus(fixture.ctx, owner.ID, user.StatusDeactivated)
+	require.NoError(t, err)
+
+	stored, err := fixture.client.APIKey.Get(fixture.ctx, apiKey.ID)
+	require.NoError(t, err)
+	require.Equal(t, apikey.StatusDisabled, stored.Status)
+}
+
 func setupRevocationFixture(t *testing.T) *revocationFixture {
 	t.Helper()
 

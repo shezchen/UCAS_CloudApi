@@ -674,7 +674,9 @@ func (s *APIKeyService) GetForRead(ctx context.Context, id *int, key *string, na
 // material themselves: how a key maps to its cache entry is an implementation
 // detail of this service, and a caller that gets it wrong fails silently.
 func (s *APIKeyService) invalidateAPIKeyCachesForKeys(ctx context.Context, keys ...*ent.APIKey) {
-	if len(keys) == 0 {
+	// A UserService assembled by hand, as several tests do, has no API key
+	// service; revoking access must not panic because of it.
+	if s == nil || len(keys) == 0 {
 		return
 	}
 

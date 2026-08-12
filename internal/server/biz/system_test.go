@@ -13,6 +13,7 @@ import (
 	"github.com/looplj/axonhub/internal/authz"
 	"github.com/looplj/axonhub/internal/ent"
 	"github.com/looplj/axonhub/internal/ent/enttest"
+	"github.com/looplj/axonhub/internal/ent/user"
 	"github.com/looplj/axonhub/internal/objects"
 	"github.com/looplj/axonhub/internal/pkg/xcache"
 	"github.com/looplj/axonhub/internal/pkg/xredis"
@@ -952,6 +953,88 @@ func TestSystemService_Initialize_SetsAllSystemKeys(t *testing.T) {
 	secretKey, err := service.SecretKey(ctx)
 	require.NoError(t, err)
 	require.Len(t, secretKey, 64)
+}
+
+func TestSystemService_ClaimInitialization(t *testing.T) {
+	t.Run("the first writer claims the flag", func(t *testing.T) {
+		client := enttest.NewEntClient(t, "sqlite3", "file:ent?mode=memory&_fk=1")
+		defer client.Close()
+
+		service := NewSystemService(SystemServiceParams{})
+		ctx := authz.WithTestBypass(ent.NewContext(t.Context(), client))
+
+		tx, err := client.BeginTx(ctx, nil)
+		require.NoError(t, err)
+
+		claimed, err := service.claimInitialization(ent.NewContext(ctx, tx.Client()), tx)
+		require.NoError(t, err)
+		require.True(t, claimed)
+		require.NoError(t, tx.Commit())
+
+		isInitialized, err := service.IsInitialized(ctx)
+		require.NoError(t, err)
+		require.True(t, isInitialized)
+	})
+
+	t.Run("a second writer loses to the unique key instead of overwriting it", func(t *testing.T) {
+		client := enttest.NewEntClient(t, "sqlite3", "file:ent?mode=memory&_fk=1")
+		defer client.Close()
+
+		service := NewSystemService(SystemServiceParams{})
+		ctx := authz.WithTestBypass(ent.NewContext(t.Context(), client))
+
+		// Another process committed the flag after this one passed its
+		// pre-check, which is exactly the window an unlocked SELECT misses.
+		_, err := client.System.Create().SetKey(SystemKeyInitialized).SetValue("true").Save(ctx)
+		require.NoError(t, err)
+
+		tx, err := client.BeginTx(ctx, nil)
+		require.NoError(t, err)
+
+		defer func() { _ = tx.Rollback() }()
+
+		claimed, err := service.claimInitialization(ent.NewContext(ctx, tx.Client()), tx)
+		require.NoError(t, err)
+		require.False(t, claimed, "the loser must back off rather than initialize a second time")
+	})
+}
+
+func TestSystemService_Initialize_SecondServiceCannotCreateASecondOwner(t *testing.T) {
+	client := enttest.NewEntClient(t, "sqlite3", "file:ent?mode=memory&_fk=1")
+	defer client.Close()
+
+	ctx := ent.NewContext(t.Context(), client)
+	params := &InitializeSystemParams{
+		OwnerEmail:     "owner@example.com",
+		OwnerPassword:  "password123",
+		OwnerFirstName: "System",
+		OwnerLastName:  "Owner",
+		BrandName:      "Test Brand",
+	}
+
+	require.NoError(t, NewSystemService(SystemServiceParams{}).Initialize(ctx, params))
+
+	// A separate service has a separate initMu, so only the database can stop
+	// it: the same situation as a second process.
+	second := NewSystemService(SystemServiceParams{})
+	require.NoError(t, second.Initialize(ctx, &InitializeSystemParams{
+		OwnerEmail:     "attacker@example.com",
+		OwnerPassword:  "password123",
+		OwnerFirstName: "Second",
+		OwnerLastName:  "Owner",
+		BrandName:      "Hijacked",
+	}))
+
+	bypassCtx := authz.WithTestBypass(ctx)
+
+	owners, err := client.User.Query().Where(user.IsOwner(true)).All(bypassCtx)
+	require.NoError(t, err)
+	require.Len(t, owners, 1)
+	require.Equal(t, "owner@example.com", owners[0].Email)
+
+	brandName, err := second.BrandName(bypassCtx)
+	require.NoError(t, err)
+	require.Equal(t, "Test Brand", brandName)
 }
 
 func TestSystemService_DefaultDataStorageID(t *testing.T) {

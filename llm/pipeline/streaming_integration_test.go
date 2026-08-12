@@ -730,6 +730,68 @@ func TestPipeline_NonStreaming_AutoAggregateUpgradedStream_EmptyJSONObjectAggreg
 	require.NotNil(t, result.Response)
 	require.Equal(t, "{}", string(result.Response.Body))
 }
+// TestPipeline_NonStreaming_AutoAggregateUpgradedStream_NoFinishReasonServed covers
+// OpenAI-compatible gateways that never send a finish_reason: the real aggregator
+// reports a non-terminal meta, which must not fail the attempt.
+func TestPipeline_NonStreaming_AutoAggregateUpgradedStream_NoFinishReasonServed(t *testing.T) {
+	ctx := context.Background()
+
+	inbound := openai.NewInboundTransformer()
+	baseOutbound, err := openai.NewOutboundTransformer("https://api.openai.com", "test-api-key")
+	require.NoError(t, err)
+
+	outbound := &streamUpgradeOutboundWrapper{Outbound: baseOutbound}
+
+	executor := &mockExecutor{
+		doStreamFunc: func(ctx context.Context, request *httpclient.Request) (streams.Stream[*httpclient.StreamEvent], error) {
+			return streams.SliceStream([]*httpclient.StreamEvent{
+				{Data: []byte(`{"id":"chatcmpl-nofinish","object":"chat.completion.chunk","model":"gpt-4","choices":[{"index":0,"delta":{"role":"assistant","content":"Hello"}}]}`)},
+				{Data: []byte(`{"id":"chatcmpl-nofinish","object":"chat.completion.chunk","model":"gpt-4","choices":[{"index":0,"delta":{"content":" world"}}]}`)},
+				{Data: []byte("[DONE]")},
+			}), nil
+		},
+	}
+
+	factory := pipeline.NewFactory(executor)
+	pipeline := factory.Pipeline(inbound, outbound)
+
+	requestBody := map[string]any{
+		"model": "gpt-4",
+		"messages": []map[string]any{
+			{
+				"role":    "user",
+				"content": "Test message",
+			},
+		},
+	}
+
+	requestBodyBytes, err := json.Marshal(requestBody)
+	require.NoError(t, err)
+
+	httpRequest := &httpclient.Request{
+		Method: http.MethodPost,
+		URL:    "/v1/chat/completions",
+		Headers: http.Header{
+			"Content-Type": []string{"application/json"},
+		},
+		Body: requestBodyBytes,
+	}
+
+	result, err := pipeline.Process(ctx, httpRequest)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.False(t, result.Stream)
+	require.NotNil(t, result.Response)
+	require.Equal(t, http.StatusOK, result.Response.StatusCode)
+
+	var aggregated llm.Response
+
+	require.NoError(t, json.Unmarshal(result.Response.Body, &aggregated))
+	require.Len(t, aggregated.Choices, 1)
+	require.Equal(t, "Hello world", lo.FromPtr(aggregated.Choices[0].Message.Content.Content))
+	require.Nil(t, aggregated.Choices[0].FinishReason, "the aggregator must not fabricate a finish reason")
+}
+
 func TestPipeline_Streaming_WithTestData(t *testing.T) {
 	tests := []struct {
 		name                string

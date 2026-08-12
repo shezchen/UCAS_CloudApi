@@ -24,6 +24,10 @@ import (
 	"github.com/looplj/axonhub/llm"
 )
 
+// maxVideoArchiveBytes caps how large a generated video may be before the
+// worker gives up on archiving it.
+var maxVideoArchiveBytes int64 = 512 * 1024 * 1024
+
 type Params struct {
 	fx.In
 
@@ -184,16 +188,21 @@ func (w *Worker) processOne(ctx context.Context, ds *ent.DataStorage, req *ent.R
 	downloadCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
-	resp, filename, err := openVideoStream(downloadCtx, videoURL)
+	resp, filename, contentLength, err := openVideoStream(downloadCtx, videoURL)
 	if err != nil {
 		return err
 	}
 	defer resp.Close()
 
-	// Read one byte past the limit so an oversized download is detected instead
-	// of silently truncated and then marked as a successful archive.
-	const maxBytes int64 = 512 * 1024 * 1024
-	reader := io.LimitReader(resp, maxBytes+1)
+	// Trust an advertised length so an oversized video is rejected before a
+	// single byte is transferred or written to object storage.
+	if contentLength > maxVideoArchiveBytes {
+		return w.markVideoUnarchivable(ctx, req, contentLength, "content_length")
+	}
+
+	// Otherwise read one byte past the limit so an oversized download is
+	// detected instead of silently truncated and marked as a full archive.
+	reader := io.LimitReader(resp, maxVideoArchiveBytes+1)
 
 	storageKey := GenerateVideoKey(req.ProjectID, req.ID, filename)
 
@@ -202,7 +211,7 @@ func (w *Worker) processOne(ctx context.Context, ds *ent.DataStorage, req *ent.R
 		return fmt.Errorf("failed to save video to storage: %w", err)
 	}
 
-	if n > maxBytes {
+	if n > maxVideoArchiveBytes {
 		if delErr := w.dataStorageService.DeleteData(ctx, ds, storageKey); delErr != nil {
 			log.Warn(ctx, "Failed to delete truncated oversized video from storage",
 				log.Cause(delErr),
@@ -211,7 +220,7 @@ func (w *Worker) processOne(ctx context.Context, ds *ent.DataStorage, req *ent.R
 			)
 		}
 
-		return fmt.Errorf("video exceeds max archive size of %d bytes, skipping archive for request %d", maxBytes, req.ID)
+		return w.markVideoUnarchivable(ctx, req, n, "streamed_body")
 	}
 
 	now := xtime.UTCNow()
@@ -230,6 +239,36 @@ func (w *Worker) processOne(ctx context.Context, ds *ent.DataStorage, req *ent.R
 		log.Int("data_storage_id", ds.ID),
 		log.String("key", storageKey),
 		log.Int64("size", n),
+	)
+
+	return nil
+}
+
+// markVideoUnarchivable retires a video the worker will never be able to
+// store. The scan queue is defined by content_saved=false, so leaving the flag
+// unset would re-download the same oversized body every scan and, once enough
+// of them pile up, starve every newer video out of the ScanLimit window.
+//
+// content_saved is the only queue marker available without a schema change, so
+// it is set with no storage id or key: both the download endpoint and the
+// request detail UI require a key, and therefore keep reporting the content as
+// unavailable rather than offering bytes that were never stored.
+func (w *Worker) markVideoUnarchivable(ctx context.Context, req *ent.Request, observedBytes int64, detectedBy string) error {
+	_, err := w.ent.Request.UpdateOneID(req.ID).
+		SetContentSaved(true).
+		ClearContentStorageID().
+		ClearContentStorageKey().
+		SetContentSavedAt(xtime.UTCNow()).
+		Save(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to retire oversized video request %d: %w", req.ID, err)
+	}
+
+	log.Warn(ctx, "Video exceeds the max archive size, skipping archive permanently",
+		log.Int("request_id", req.ID),
+		log.Int64("observed_bytes", observedBytes),
+		log.Int64("max_bytes", maxVideoArchiveBytes),
+		log.String("detected_by", detectedBy),
 	)
 
 	return nil
@@ -257,34 +296,37 @@ func extractVideoURLFromResponseBody(raw []byte) (string, error) {
 	return v.VideoURL, nil
 }
 
-func openVideoStream(ctx context.Context, videoURL string) (io.ReadCloser, string, error) {
+// openVideoStream returns the video body, its filename, and the advertised
+// content length, which is -1 when the server does not declare one.
+func openVideoStream(ctx context.Context, videoURL string) (io.ReadCloser, string, int64, error) {
 	parsedURL, err := url.Parse(videoURL)
 	if err != nil {
-		return nil, "", fmt.Errorf("invalid video URL: %w", err)
+		return nil, "", 0, fmt.Errorf("invalid video URL: %w", err)
 	}
 
 	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
-		return nil, "", fmt.Errorf("invalid URL scheme: %s", parsedURL.Scheme)
+		return nil, "", 0, fmt.Errorf("invalid URL scheme: %s", parsedURL.Scheme)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, videoURL, nil)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to create request: %w", err)
+		return nil, "", 0, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	// nolint:gosec
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to download video: %w", err)
+		return nil, "", 0, fmt.Errorf("failed to download video: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		_ = resp.Body.Close()
-		return nil, "", fmt.Errorf("failed to download video: HTTP %d", resp.StatusCode)
+		return nil, "", 0, fmt.Errorf("failed to download video: HTTP %d", resp.StatusCode)
 	}
 
 	filename := filenameFromResponse(resp, videoURL)
-	return resp.Body, filename, nil
+
+	return resp.Body, filename, resp.ContentLength, nil
 }
 
 func filenameFromResponse(resp *http.Response, fallbackURL string) string {

@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -163,6 +164,26 @@ func TestAuthHandlers_SignIn_LocksOutAttributableClientOnly(t *testing.T) {
 	// that produced the failures.
 	response := fixture.signIn(t, signInTestPassword, "192.0.2.100", "203.0.113.6")
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+}
+
+func TestAuthHandlers_SignIn_RejectsOverlongEmail(t *testing.T) {
+	fixture := setupSignInHandler(t, nil)
+
+	body, err := json.Marshal(SignInRequest{
+		Email:    strings.Repeat("a", 250) + "@example.com",
+		Password: signInTestPassword,
+	})
+	require.NoError(t, err)
+
+	request := httptest.NewRequest(http.MethodPost, "/admin/auth/signin", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.RemoteAddr = "203.0.113.10:51234"
+
+	recorder := httptest.NewRecorder()
+	fixture.engine.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	require.Empty(t, fixture.withheld, "an unusable address must not reach the throttle")
 }
 
 func TestWithholdSignInFailure(t *testing.T) {

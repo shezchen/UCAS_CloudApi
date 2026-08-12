@@ -1,6 +1,7 @@
 package biz
 
 import (
+	"crypto/sha256"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +36,11 @@ const (
 	signInMaxFailureDelay    = 2 * time.Second
 
 	signInPruneInterval = 5 * time.Minute
+
+	// Every key an unauthenticated caller can invent is bounded, both in size
+	// (keys are digests) and in number.
+	signInMaxTrackedKeys = 20_000
+	signInEvictionSample = 64
 )
 
 type signInAttemptState struct {
@@ -72,8 +78,18 @@ func normalizeSignInAccount(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
 
+// signInAccountKey digests the account so that the amount of memory an
+// attempt can pin does not depend on the length of an attacker-supplied
+// address. A collision only makes two accounts share a failure counter.
 func signInAccountKey(email string) string {
-	return normalizeSignInAccount(email)
+	account := normalizeSignInAccount(email)
+	if account == "" {
+		return ""
+	}
+
+	sum := sha256.Sum256([]byte(account))
+
+	return string(sum[:])
 }
 
 func signInClientAccountKey(email, source string) string {
@@ -82,7 +98,9 @@ func signInClientAccountKey(email, source string) string {
 		return ""
 	}
 
-	return account + "\x00" + source
+	sum := sha256.Sum256([]byte(account + "\x00" + source))
+
+	return string(sum[:])
 }
 
 // check reports whether a sign-in attempt is currently allowed. An empty
@@ -194,6 +212,10 @@ func recordSignInFailureLocked(
 
 	switch {
 	case state == nil:
+		if !reserveSignInSlot(states, now) {
+			return 0
+		}
+
 		state = &signInAttemptState{windowStart: now}
 		states[key] = state
 	case now.Sub(state.windowStart) > signInFailureWindow:
@@ -208,6 +230,42 @@ func recordSignInFailureLocked(
 	}
 
 	return state.failures
+}
+
+// reserveSignInSlot makes room for one more tracked key. A running lockout is
+// never evicted, so flooding the table with invented accounts cannot clear a
+// penalty; when everything tracked is locked out the new key is dropped
+// instead of growing the table.
+func reserveSignInSlot(states map[string]*signInAttemptState, now time.Time) bool {
+	if len(states) < signInMaxTrackedKeys {
+		return true
+	}
+
+	var (
+		oldestKey   string
+		oldestStart time.Time
+		visited     int
+	)
+
+	// Map iteration is randomised, so a bounded sample is an unbiased pick.
+	for key, state := range states {
+		if !state.lockedUntil.After(now) && (oldestKey == "" || state.windowStart.Before(oldestStart)) {
+			oldestKey, oldestStart = key, state.windowStart
+		}
+
+		visited++
+		if visited >= signInEvictionSample {
+			break
+		}
+	}
+
+	if oldestKey == "" {
+		return false
+	}
+
+	delete(states, oldestKey)
+
+	return true
 }
 
 func (l *signInLimiter) pruneLocked(now time.Time) {

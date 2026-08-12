@@ -1,6 +1,9 @@
 package biz
 
 import (
+	"crypto/sha256"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -206,6 +209,58 @@ func TestSignInLimiter_PrunesExpiredEntries(t *testing.T) {
 	require.Empty(t, limiter.accounts)
 	require.Empty(t, limiter.clients)
 	require.Empty(t, limiter.clientAccounts)
+}
+
+func TestSignInLimiter_KeysHaveFixedSize(t *testing.T) {
+	limiter, _ := newTestSignInLimiter()
+
+	overlong := strings.Repeat("a", 100_000) + "@example.com"
+	limiter.recordFailure(overlong, strings.Repeat("b", 100_000))
+
+	for key := range limiter.accounts {
+		require.Len(t, key, sha256.Size)
+	}
+
+	for key := range limiter.clientAccounts {
+		require.Len(t, key, sha256.Size)
+	}
+}
+
+func TestSignInLimiter_BoundsTrackedAccounts(t *testing.T) {
+	limiter, _ := newTestSignInLimiter()
+
+	for i := range signInMaxTrackedKeys + 500 {
+		limiter.recordFailure(fmt.Sprintf("flood-%d@example.com", i), "")
+	}
+
+	require.LessOrEqual(t, len(limiter.accounts), signInMaxTrackedKeys)
+}
+
+func TestSignInLimiter_EvictionKeepsLockouts(t *testing.T) {
+	limiter, clock := newTestSignInLimiter()
+
+	const (
+		email  = "victim@example.com"
+		source = "203.0.113.18"
+	)
+
+	for range signInMaxClientAccountFailures {
+		limiter.recordFailure(email, source)
+	}
+
+	require.ErrorIs(t, limiter.check(email, source), ErrTooManyLoginAttempts)
+
+	// Flooding the table with invented pairs must not release the lockout.
+	for i := range signInMaxTrackedKeys + 500 {
+		clock.advance(time.Millisecond)
+		limiter.recordFailure(
+			fmt.Sprintf("flood-%d@example.com", i),
+			fmt.Sprintf("198.51.100.%d", i%254+1),
+		)
+	}
+
+	require.LessOrEqual(t, len(limiter.clientAccounts), signInMaxTrackedKeys)
+	require.ErrorIs(t, limiter.check(email, source), ErrTooManyLoginAttempts)
 }
 
 func TestSignInLimiter_NilLimiterIsInert(t *testing.T) {

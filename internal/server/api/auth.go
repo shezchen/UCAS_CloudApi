@@ -128,7 +128,9 @@ func withholdSignInFailure(ctx context.Context, delay time.Duration) {
 
 // SignInRequest 登录请求.
 type SignInRequest struct {
-	Email    string `json:"email"    binding:"required,email"`
+	// The address is bounded to the RFC 5321 maximum: it reaches the sign-in
+	// throttle before any account exists, and nothing else caps the body size.
+	Email    string `json:"email"    binding:"required,email,max=254"`
 	Password string `json:"password" binding:"required"`
 }
 

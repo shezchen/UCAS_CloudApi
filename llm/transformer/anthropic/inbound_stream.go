@@ -40,6 +40,7 @@ type anthropicInboundStream struct {
 	hasFinished               bool
 	messageStoped             bool
 	sourceExhausted           bool
+	closed                    bool
 	messageID                 string
 	model                     string
 	contentIndex              int64
@@ -924,6 +925,12 @@ func (s *anthropicInboundStream) Next() bool {
 // message_delta/message_stop and hang or mis-handle the response.
 // It reports whether synthesized events were enqueued.
 func (s *anthropicInboundStream) finalizeExhaustedSource() bool {
+	// A closed source reports exhaustion too, but a torn-down stream must not
+	// produce new events.
+	if s.closed {
+		return false
+	}
+
 	// A broken source must surface through Err(); do not fabricate a clean
 	// termination on top of a transport error.
 	if s.source.Err() != nil {
@@ -1017,5 +1024,7 @@ func (s *anthropicInboundStream) Err() error {
 }
 
 func (s *anthropicInboundStream) Close() error {
+	s.closed = true
+
 	return s.source.Close()
 }

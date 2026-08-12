@@ -185,6 +185,43 @@ func TestInboundStream_MessageDeltaKeepsReportedStopReason(t *testing.T) {
 	require.Nil(t, deltaObject["stop_sequence"])
 }
 
+func TestInboundStream_ClosedStreamDoesNotSynthesizeTerminalEvents(t *testing.T) {
+	transformer := NewInboundTransformer()
+
+	text := "partial answer"
+
+	input := []*llm.Response{
+		{
+			ID:     "msg_closed_stream",
+			Object: "chat.completion.chunk",
+			Model:  "claude-sonnet-4-6",
+			Choices: []llm.Choice{{
+				Index: 0,
+				Delta: &llm.Message{
+					Role: "assistant",
+					Content: llm.MessageContent{
+						Content: &text,
+					},
+				},
+			}},
+		},
+	}
+
+	stream, err := transformer.TransformStream(t.Context(), streams.SliceStream(input))
+	require.NoError(t, err)
+
+	// Drain the events of the first chunk without advancing far enough to
+	// exhaust the source, so the close happens before finalization.
+	require.True(t, stream.Next())
+
+	for stream.Current() != nil {
+	}
+
+	require.NoError(t, stream.Close())
+	require.False(t, stream.Next(), "a closed stream must not synthesize terminal events")
+	require.Nil(t, stream.Current())
+}
+
 func TestStreamEvent_MarshalJSON_OnlyMessageDeltaForcesStopFields(t *testing.T) {
 	textType := "text_delta"
 	text := "hi"

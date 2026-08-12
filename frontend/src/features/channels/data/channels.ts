@@ -918,10 +918,7 @@ const QUERY_CHANNELS_QUERY = `
             transport
           }
           disabledAPIKeys {
-            key
             disabledAt
-            errorCode
-            reason
           }
         }
         cursor

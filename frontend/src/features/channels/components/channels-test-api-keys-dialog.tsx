@@ -11,7 +11,13 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useChannels } from '../context/channels-context';
-import { useDeleteDisabledChannelAPIKeys, useDisableChannelAPIKey, useTestChannelAPIKey, useUpdateChannel } from '../data/channels';
+import {
+  useChannelDisabledAPIKeys,
+  useDeleteDisabledChannelAPIKeys,
+  useDisableChannelAPIKey,
+  useTestChannelAPIKey,
+  useUpdateChannel,
+} from '../data/channels';
 import { Channel, ChannelCredentials, TestAPIKeyResult } from '../data/schema';
 
 interface ChannelsTestAPIKeysDialogProps {
@@ -46,10 +52,10 @@ export function ChannelsTestAPIKeysDialog({ open, onOpenChange, currentRow, cred
   const deleteDisabledAPIKeys = useDeleteDisabledChannelAPIKeys();
 
   const allKeys = useMemo(() => credentials?.apiKeys ?? [], [credentials?.apiKeys]);
-  const disabledKeySet = useMemo(
-    () => new Set(currentRow?.disabledAPIKeys?.map((item) => item.key) ?? []),
-    [currentRow?.disabledAPIKeys]
-  );
+  // Channel rows only carry the disabled key count, so the keys themselves are
+  // fetched on demand.
+  const { data: disabledKeys = [] } = useChannelDisabledAPIKeys(currentRow.id, { enabled: open });
+  const disabledKeySet = useMemo(() => new Set(disabledKeys.map((item) => item.key)), [disabledKeys]);
 
   const isTested = results.length > 0;
   const isTesting = testingKey !== null;

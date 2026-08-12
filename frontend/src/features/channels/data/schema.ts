@@ -307,14 +307,13 @@ export const channelDonorSchema = z.object({
   lastName: z.string().optional().nullable(),
 });
 
-// Disabled API Key
-export const disabledAPIKeySchema = z.object({
-  key: z.string(),
+// Disabled API Key, as carried by a channel row: only the count is needed
+// there, so the plaintext key is left to the on-demand query that backs the
+// dialogs acting on individual keys.
+export const disabledAPIKeySummarySchema = z.object({
   disabledAt: z.string(),
-  errorCode: z.number(),
-  reason: z.string().optional().nullable(),
 });
-export type DisabledAPIKey = z.infer<typeof disabledAPIKeySchema>;
+export type DisabledAPIKeySummary = z.infer<typeof disabledAPIKeySummarySchema>;
 
 // Channel
 export const channelSchema = z.object({
@@ -330,7 +329,7 @@ export const channelSchema = z.object({
   status: channelStatusSchema,
   policies: channelPoliciesSchema.optional().nullable(),
   credentials: channelCredentialsSchema.optional().nullable(),
-  disabledAPIKeys: z.array(disabledAPIKeySchema).optional().nullable(),
+  disabledAPIKeys: z.array(disabledAPIKeySummarySchema).optional().nullable(),
   supportedModels: z.array(z.string()),
   autoSyncSupportedModels: z.boolean().default(false),
   autoSyncModelPattern: z.string().optional().default(''),

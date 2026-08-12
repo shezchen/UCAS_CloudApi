@@ -9,6 +9,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { MaskedCodeBlock, MaskedCodeBlockCopyButton, highlightMaskedCode } from '@/components/ai-elements/masked-code-block';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useApiKeysContext } from '../context/apikeys-context';
+import { API_KEY_PLACEHOLDER, isRedactedApiKey } from '../utils/redaction';
 
 function CopyBaseUrlButton({ baseUrl }: { baseUrl: string }) {
   const { t } = useTranslation();
@@ -39,8 +40,16 @@ export function ApiKeysViewDialog() {
   const [isVisible, setIsVisible] = useState(false);
   const [preRenderedCode, setPreRenderedCode] = useState<Record<string, { light: string; dark: string }>>({});
 
-  const apiKey = selectedApiKey?.key || '';
-  const maskedApiKey = selectedApiKey?.key ? selectedApiKey.key.slice(0, 3) + '...' + selectedApiKey.key.slice(-4) : '';
+  // Outside the moment a key is created or rotated, `key` holds the server's
+  // redacted display form, which cannot authenticate.
+  const isRedacted = isRedactedApiKey(selectedApiKey?.key);
+
+  const apiKey = isRedacted ? API_KEY_PLACEHOLDER : selectedApiKey?.key || '';
+  const maskedApiKey = isRedacted
+    ? API_KEY_PLACEHOLDER
+    : apiKey
+      ? apiKey.slice(0, 3) + '...' + apiKey.slice(-4)
+      : '';
 
   const currentOrigin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8090';
 
@@ -254,6 +263,8 @@ print(response.text)`
 
   const maskedKey = selectedApiKey?.key ? selectedApiKey.key.replace(/./g, '*').slice(0, -4) + selectedApiKey.key.slice(-4) : '';
 
+  const keyDisplay = isRedacted ? selectedApiKey?.key : isVisible ? selectedApiKey?.key : maskedKey;
+
   return (
     <Dialog open={isDialogOpen.view} onOpenChange={() => closeDialog()}>
       <DialogContent className='flex max-h-[90vh] flex-col sm:max-w-3xl'>
@@ -264,7 +275,9 @@ print(response.text)`
 
         <Alert className='border-orange-200 bg-orange-50 dark:border-orange-800 dark:bg-orange-950 shrink-0'>
           <AlertTriangle className='h-4 w-4 text-orange-600 dark:text-orange-400' />
-          <AlertDescription className='text-orange-800 dark:text-orange-200'>{t('apikeys.dialogs.view.warning')}</AlertDescription>
+          <AlertDescription className='text-orange-800 dark:text-orange-200'>
+            {isRedacted ? t('apikeys.dialogs.view.redactedWarning') : t('apikeys.dialogs.view.warning')}
+          </AlertDescription>
         </Alert>
 
         <div className='space-y-4 shrink-0'>
@@ -276,16 +289,21 @@ print(response.text)`
           <div>
             <label className='text-sm font-medium'>{t('apikeys.columns.key')}</label>
             <div className='mt-1 flex items-center space-x-2'>
-              <code className='bg-muted flex-1 rounded-md p-3 font-mono text-sm break-all'>
-                {isVisible ? selectedApiKey?.key : maskedKey}
-              </code>
-              <Button variant='outline' size='sm' onClick={() => setIsVisible(!isVisible)} className='flex-shrink-0'>
-                {isVisible ? <EyeOff className='h-4 w-4' /> : <Eye className='h-4 w-4' />}
-              </Button>
-              <Button variant='outline' size='sm' onClick={copyToClipboard} className='flex-shrink-0'>
-                <Copy className='h-4 w-4' />
-              </Button>
+              <code className='bg-muted flex-1 rounded-md p-3 font-mono text-sm break-all'>{keyDisplay}</code>
+              {!isRedacted && (
+                <>
+                  <Button variant='outline' size='sm' onClick={() => setIsVisible(!isVisible)} className='flex-shrink-0'>
+                    {isVisible ? <EyeOff className='h-4 w-4' /> : <Eye className='h-4 w-4' />}
+                  </Button>
+                  <Button variant='outline' size='sm' onClick={copyToClipboard} className='flex-shrink-0'>
+                    <Copy className='h-4 w-4' />
+                  </Button>
+                </>
+              )}
             </div>
+            {isRedacted && (
+              <p className='text-muted-foreground mt-2 text-sm'>{t('apikeys.dialogs.view.redactedHint')}</p>
+            )}
           </div>
         </div>
 

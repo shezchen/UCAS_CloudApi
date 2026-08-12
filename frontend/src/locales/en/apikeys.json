@@ -81,6 +81,8 @@
   "apikeys.dialogs.view.title": "View API Key",
   "apikeys.dialogs.view.description": "View the complete API key details.",
   "apikeys.dialogs.view.warning": "⚠️ Keep your API key secure and do not share it with unauthorized parties. Anyone with access to this key can make requests on your behalf.",
+  "apikeys.dialogs.view.redactedWarning": "⚠️ The full key is shown only once, when it is created or rotated. It is not stored and cannot be shown again — rotate the key if you no longer have it.",
+  "apikeys.dialogs.view.redactedHint": "This is a shortened form used to identify the key. It cannot be used to authenticate.",
   "apikeys.dialogs.rotate.title": "Rotate API Key",
   "apikeys.dialogs.rotate.description": "Are you sure you want to rotate API Key {{name}}? This will generate a new key and the old key will be immediately invalidated.",
   "apikeys.dialogs.rotate.warning": "⚠️ The old key will be immediately invalidated after rotation. Make sure to update all applications using this key. Usage statistics will be preserved.",

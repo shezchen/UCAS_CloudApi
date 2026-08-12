@@ -81,6 +81,8 @@
   "apikeys.dialogs.view.title": "查看 API 密钥",
   "apikeys.dialogs.view.description": "查看完整的 API 密钥详情。",
   "apikeys.dialogs.view.warning": "⚠️ 请妥善保管您的 API 密钥，不要与未授权的人员分享。任何拥有此密钥的人都可以代表您发出请求。",
+  "apikeys.dialogs.view.redactedWarning": "⚠️ 完整密钥只在创建或轮转时展示一次。系统不会保存它，也无法再次展示 —— 如果你没有留存，请轮转该密钥。",
+  "apikeys.dialogs.view.redactedHint": "这是用于识别该密钥的缩略形式，无法用于认证。",
   "apikeys.dialogs.rotate.title": "轮转 API 密钥",
   "apikeys.dialogs.rotate.description": "确定要轮转 API 密钥 {{name}} 吗？这将生成一个新的密钥，旧密钥将立即失效。",
   "apikeys.dialogs.rotate.warning": "⚠️ 轮转后旧密钥将立即失效。请确保更新所有使用该密钥的应用程序。统计数据将被保留。",

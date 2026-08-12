@@ -275,6 +275,28 @@ services:
       - axonhub_network
 ```
 
+### 代理后的客户端 IP
+
+此时所有请求都由代理转发到 AxonHub，TCP 对端地址对所有用户都相同。请在
+`server.trusted_proxies` 中声明代理地址，AxonHub 才会改从 `X-Forwarded-For`
+中读取真实的客户端地址：
+
+```yaml
+server:
+  trusted_proxies:
+    - "172.16.0.0/12"   # 代理所在的 Docker 网络
+```
+
+代理需要设置该请求头（`proxy_set_header X-Forwarded-For
+$proxy_add_x_forwarded_for;`）。只有列表中的地址才被允许提供该请求头，因此客户端
+无法伪造自己的地址。
+
+列表为空时，AxonHub 无法区分不同客户端，会关闭针对客户端的登录失败限流——否则
+单个攻击者就能让整个部署被锁定。按账号的限流以及 `nginx.conf` 中的 `limit_req`
+仍然生效。若 AxonHub 不经任何代理直接对外提供服务，可设置
+`trusted_proxies: ["127.0.0.1"]`：此时 TCP 对端就是真实客户端，按客户端的限流会
+自动启用。
+
 ## 备份与恢复
 
 ### 数据库备份

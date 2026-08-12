@@ -60,6 +60,7 @@ server:
   port: 8090                    # Server port
   name: "AxonHub"               # Server name
   base_path: ""                 # Base path for API routes
+  trusted_proxies: []           # Reverse proxies allowed to supply client IP headers
   request_timeout: "30s"        # Request timeout duration
   llm_request_timeout: "600s"   # LLM request timeout duration
   trace:
@@ -76,6 +77,7 @@ server:
 - `AXONHUB_SERVER_PORT`
 - `AXONHUB_SERVER_NAME`
 - `AXONHUB_SERVER_BASE_PATH`
+- `AXONHUB_SERVER_TRUSTED_PROXIES`
 - `AXONHUB_SERVER_REQUEST_TIMEOUT`
 - `AXONHUB_SERVER_LLM_REQUEST_TIMEOUT`
 - `AXONHUB_SERVER_TRACE_THREAD_HEADER`

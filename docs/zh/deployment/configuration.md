@@ -60,6 +60,7 @@ server:
   port: 8090                    # 服务器端口
   name: "AxonHub"               # 服务器名称
   base_path: ""                 # API 路由的基础路径
+  trusted_proxies: []           # 允许提供客户端 IP 请求头的反向代理
   request_timeout: "30s"        # 请求超时时间
   llm_request_timeout: "600s"   # LLM 请求超时时间
   trace:
@@ -76,6 +77,7 @@ server:
 - `AXONHUB_SERVER_PORT`
 - `AXONHUB_SERVER_NAME`
 - `AXONHUB_SERVER_BASE_PATH`
+- `AXONHUB_SERVER_TRUSTED_PROXIES`
 - `AXONHUB_SERVER_REQUEST_TIMEOUT`
 - `AXONHUB_SERVER_LLM_REQUEST_TIMEOUT`
 - `AXONHUB_SERVER_TRACE_THREAD_HEADER`

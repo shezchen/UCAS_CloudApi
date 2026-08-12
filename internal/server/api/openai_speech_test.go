@@ -229,7 +229,11 @@ func TestOpenAIHandlers_CreateSpeech_AudioStreamEndToEnd(t *testing.T) {
 	require.Equal(t, "audio", providerBody["stream_format"])
 	require.NotContains(t, providerBody, "stream")
 
-	requests, err := client.Request.Query().All(ctx)
+	// A successful attempt asynchronously triggers a programmatic channel test
+	// that records its own request, so only the API request is asserted here.
+	requests, err := client.Request.Query().
+		Where(entrequest.SourceEQ(entrequest.SourceAPI)).
+		All(ctx)
 	require.NoError(t, err)
 	require.Len(t, requests, 1)
 	require.Equal(t, entrequest.StatusCompleted, requests[0].Status)
@@ -237,7 +241,9 @@ func TestOpenAIHandlers_CreateSpeech_AudioStreamEndToEnd(t *testing.T) {
 	require.Contains(t, string(requests[0].ResponseBody), `"object":"audio.speech.stream"`)
 	require.Contains(t, string(requests[0].ResponseBody), `"audio_bytes":3`)
 
-	executions, err := client.RequestExecution.Query().All(ctx)
+	executions, err := client.RequestExecution.Query().
+		Where(entrequestexecution.RequestIDEQ(requests[0].ID)).
+		All(ctx)
 	require.NoError(t, err)
 	require.Len(t, executions, 1)
 	require.Equal(t, entrequestexecution.StatusCompleted, executions[0].Status)

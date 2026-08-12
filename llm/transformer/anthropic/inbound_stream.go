@@ -966,9 +966,10 @@ func (s *anthropicInboundStream) finalizeExhaustedSource() bool {
 		}
 	}
 
-	// Use the last known usage, or the same placeholder as message_start when
-	// the upstream never reported usage.
-	usage := &Usage{InputTokens: 1, OutputTokens: 1}
+	// Zero rather than the message_start placeholder when the upstream never
+	// reported usage: clients render these counts, so a fabricated 1 is a wrong
+	// number where 0 reads as absent.
+	usage := &Usage{}
 	if s.lastUsage != nil {
 		usage = convertToAnthropicUsage(s.lastUsage)
 	}

@@ -102,6 +102,43 @@ func TestInboundStream_TruncatedSourceEmitsSpecShapedMessageDelta(t *testing.T) 
 	stopSequence, ok := deltaObject["stop_sequence"]
 	require.True(t, ok, "delta must carry an explicit stop_sequence key")
 	require.Nil(t, stopSequence)
+
+	usage, ok := messageDelta["usage"].(map[string]any)
+	require.True(t, ok, "message_delta must carry usage")
+	require.InDelta(t, float64(0), usage["input_tokens"], 0, "usage must not be fabricated when the upstream sent none")
+	require.InDelta(t, float64(0), usage["output_tokens"], 0)
+}
+
+func TestInboundStream_TruncatedSourceKeepsReportedUsage(t *testing.T) {
+	transformer := NewInboundTransformer()
+
+	text := "partial answer"
+
+	input := []*llm.Response{
+		{
+			ID:     "msg_truncated_usage_stream",
+			Object: "chat.completion.chunk",
+			Model:  "claude-sonnet-4-6",
+			Choices: []llm.Choice{{
+				Index: 0,
+				Delta: &llm.Message{
+					Role: "assistant",
+					Content: llm.MessageContent{
+						Content: &text,
+					},
+				},
+			}},
+			Usage: &llm.Usage{PromptTokens: 12, CompletionTokens: 7},
+		},
+	}
+
+	events := collectInboundStreamRawEvents(t, transformer, input)
+	messageDelta := findRawEvent(t, events, "message_delta")
+
+	usage, ok := messageDelta["usage"].(map[string]any)
+	require.True(t, ok, "message_delta must carry usage")
+	require.InDelta(t, float64(12), usage["input_tokens"], 0)
+	require.InDelta(t, float64(7), usage["output_tokens"], 0)
 }
 
 func TestInboundStream_MessageDeltaKeepsReportedStopReason(t *testing.T) {

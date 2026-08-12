@@ -48,12 +48,18 @@ type Config struct {
 // SecurityConfig groups at-rest data protection settings.
 type SecurityConfig struct {
 	// CredentialEncryptionKey is the master key used to encrypt channel
-	// provider credentials at rest (AES-256-GCM, key derived via SHA-256).
+	// provider credentials at rest (AES-256-GCM, key derived via Argon2id).
 	// Supply it via config file or AXONHUB_SECURITY_CREDENTIAL_ENCRYPTION_KEY;
 	// it must never be stored alongside the database. Empty disables
 	// encryption. The yaml/json tags intentionally hide the value from
 	// `axonhub config preview` output.
 	CredentialEncryptionKey string `conf:"credential_encryption_key" yaml:"-" json:"-"`
+
+	// CredentialDecryptionKeys are superseded keys kept for decryption only,
+	// so credentials written under a previous CredentialEncryptionKey stay
+	// readable while the startup backfill rewrites them under the new one.
+	// Remove an entry once no row references it any more.
+	CredentialDecryptionKeys []string `conf:"credential_decryption_keys" yaml:"-" json:"-"`
 }
 
 type providerQuotaConfig struct {
@@ -113,10 +119,13 @@ func Load() (Config, error) {
 	config.AllowNoAuth = config.APIServer.API.Auth.AllowNoAuth
 	config.APIKeyPrefix = config.APIServer.API.Auth.KeyPrefix
 
-	// Install the credential encryption key before anything opens the
+	// Install the credential encryption keys before anything opens the
 	// database, so Ent reads/writes and the startup data migration observe a
 	// fully configured crypto state.
-	if err := xcrypto.Configure(config.Security.CredentialEncryptionKey); err != nil {
+	if err := xcrypto.Configure(
+		config.Security.CredentialEncryptionKey,
+		config.Security.CredentialDecryptionKeys...,
+	); err != nil {
 		return Config{}, fmt.Errorf("invalid security.credential_encryption_key: %w", err)
 	}
 
@@ -297,9 +306,11 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("smtp.tls_mode", servermail.TLSModeSTARTTLS)
 	v.SetDefault("smtp.timeout", "10s")
 
-	// Security defaults. The default must be registered so AutomaticEnv picks
-	// up AXONHUB_SECURITY_CREDENTIAL_ENCRYPTION_KEY.
+	// Security defaults. The defaults must be registered so AutomaticEnv picks
+	// up AXONHUB_SECURITY_CREDENTIAL_ENCRYPTION_KEY and
+	// AXONHUB_SECURITY_CREDENTIAL_DECRYPTION_KEYS.
 	v.SetDefault("security.credential_encryption_key", "")
+	v.SetDefault("security.credential_decryption_keys", []string{})
 }
 
 // parseLogLevel converts a string log level to zapcore.Level.

@@ -46,12 +46,70 @@ func TestChannelCredentials_JSON_EncryptedRoundTrip(t *testing.T) {
 	require.NotContains(t, string(data), "oauth-token")
 	require.Contains(t, string(data), "__axonhub_enc")
 
+	require.Contains(t, string(data), xcrypto.PrimaryKeyID(),
+		"the envelope must record which key produced it")
+
 	var decoded objects.ChannelCredentials
 	require.NoError(t, json.Unmarshal(data, &decoded))
 	require.Equal(t, "sk-encrypted-secret", decoded.APIKey)
 	require.NotNil(t, decoded.OAuth)
 	require.Equal(t, "oauth-token", decoded.OAuth.AccessToken)
 	require.True(t, decoded.StoredEncrypted())
+	require.Equal(t, xcrypto.PrimaryKeyID(), decoded.StoredKeyID())
+}
+
+// TestChannelCredentials_JSON_SupersededKeyRoundTrip covers a rotation window:
+// the row was written under the previous key, which is still configured for
+// decryption while the backfill rewrites it.
+func TestChannelCredentials_JSON_SupersededKeyRoundTrip(t *testing.T) {
+	t.Cleanup(func() { _ = xcrypto.Configure("") })
+
+	const (
+		oldKey = "the-original-master-key-value"
+		newKey = "the-replacement-master-key!!!"
+	)
+
+	require.NoError(t, xcrypto.Configure(oldKey))
+	oldKeyID := xcrypto.PrimaryKeyID()
+
+	data, err := json.Marshal(objects.ChannelCredentials{APIKey: "sk-under-old-key"})
+	require.NoError(t, err)
+
+	require.NoError(t, xcrypto.Configure(newKey, oldKey))
+
+	var decoded objects.ChannelCredentials
+	require.NoError(t, json.Unmarshal(data, &decoded))
+	require.Equal(t, "sk-under-old-key", decoded.APIKey)
+	require.Equal(t, oldKeyID, decoded.StoredKeyID())
+	require.NotEqual(t, xcrypto.PrimaryKeyID(), decoded.StoredKeyID(),
+		"a value under a superseded key must be identifiable so it can be rewritten")
+
+	// Re-serializing moves it onto the primary key.
+	rewritten, err := json.Marshal(decoded)
+	require.NoError(t, err)
+
+	var reloaded objects.ChannelCredentials
+	require.NoError(t, json.Unmarshal(rewritten, &reloaded))
+	require.Equal(t, xcrypto.PrimaryKeyID(), reloaded.StoredKeyID())
+}
+
+// TestChannelCredentials_JSON_UnknownKeyIDFailsLoudly guards the case an
+// operator hits after dropping a key that rows still reference.
+func TestChannelCredentials_JSON_UnknownKeyIDFailsLoudly(t *testing.T) {
+	t.Cleanup(func() { _ = xcrypto.Configure("") })
+
+	require.NoError(t, xcrypto.Configure("the-original-master-key-value"))
+
+	data, err := json.Marshal(objects.ChannelCredentials{APIKey: "sk-secret"})
+	require.NoError(t, err)
+
+	require.NoError(t, xcrypto.Configure("the-replacement-master-key!!!"))
+
+	var decoded objects.ChannelCredentials
+	err = json.Unmarshal(data, &decoded)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "credential_decryption_keys",
+		"the error must name the config that recovers the value")
 }
 
 func TestChannelCredentials_JSON_LegacyPlaintextStillLoadsWithKey(t *testing.T) {

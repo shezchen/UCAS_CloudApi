@@ -225,15 +225,15 @@ export function ChannelsTestAPIKeysDialog({ open, onOpenChange, currentRow, cred
     }
 
     try {
-      const disabledKeys = failedKeysToDelete.filter((key) => disabledKeySet.has(key));
-      const activeKeys = failedKeysToDelete.filter((key) => !disabledKeys.includes(key));
+      const disabledKeysToDelete = failedKeysToDelete.filter((key) => disabledKeySet.has(key));
+      const activeKeys = failedKeysToDelete.filter((key) => !disabledKeysToDelete.includes(key));
 
-      if (disabledKeys.length > 0) {
-        await deleteDisabledAPIKeys.mutateAsync({ channelID: currentRow.id, keys: disabledKeys });
+      if (disabledKeysToDelete.length > 0) {
+        await deleteDisabledAPIKeys.mutateAsync({ channelID: currentRow.id, keys: disabledKeysToDelete });
       }
 
       if (activeKeys.length > 0) {
-        const remainingKeys = (currentRow.credentials?.apiKeys ?? []).filter((key) => !activeKeys.includes(key));
+        const remainingKeys = allKeys.filter((key) => !activeKeys.includes(key));
         await updateChannel.mutateAsync({
           id: currentRow.id,
           input: {

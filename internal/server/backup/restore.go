@@ -879,15 +879,16 @@ func (svc *BackupService) restoreAPIKeys(ctx context.Context, db *ent.Client, ap
 				SetUserID(user.ID).
 				SetProjectID(proj.ID)
 
-			// Raw keys from old backups are hashed by the APIKey schema hook.
-			// New backups carry a redacted key, so the hash (and prefix) must
-			// be restored explicitly for the key to stay verifiable.
-			if akData.KeyHash != "" {
-				create.SetKeyHash(akData.KeyHash)
-			}
+			// Raw keys from old backups are hashed by the APIKey schema hook,
+			// which overrides whatever the backup claims. New backups carry a
+			// redacted key, and the hook requires its hash to come with it —
+			// keyHash is guaranteed non-empty by the check above.
+			if xapikey.IsRedacted(akData.Key) {
+				create.SetKeyHash(keyHash)
 
-			if akData.KeyPrefix != "" {
-				create.SetKeyPrefix(akData.KeyPrefix)
+				if akData.KeyPrefix != "" {
+					create.SetKeyPrefix(akData.KeyPrefix)
+				}
 			}
 
 			if _, err := create.Save(ctx); err != nil {

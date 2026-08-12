@@ -2,6 +2,7 @@ package schema
 
 import (
 	"context"
+	"fmt"
 
 	"entgo.io/contrib/entgql"
 	"entgo.io/ent"
@@ -138,6 +139,17 @@ func (APIKey) Annotations() []schema.Annotation {
 // backup restore, tests): whenever a raw key is written, only its SHA-256
 // hash and a redacted display form are persisted.
 //
+// The hook is the sole authority on key material:
+//
+//   - A raw key always determines its own hash and prefix. A caller cannot
+//     pair a raw key with a hash of something else, which would leave the
+//     value shown to the user unable to authenticate while the caller's
+//     string could.
+//   - A redacted display value carries nothing to derive from, so it may only
+//     be written together with the hash it belongs to. That covers the
+//     backfill, the legacy read-repair and backup restore, and rejects a
+//     write that would leave key and key_hash describing different secrets.
+//
 // The hook intentionally uses the generic mutation API (string field names)
 // instead of the typed *gen.APIKeyMutation so that entc can load this schema
 // even before the key_hash/key_prefix accessors have been generated.
@@ -147,31 +159,31 @@ func (APIKey) Hooks() []ent.Hook {
 			func(next ent.Mutator) ent.Mutator {
 				return ent.MutateFunc(func(ctx context.Context, m ent.Mutation) (ent.Value, error) {
 					value, ok := m.Field("key")
+
 					raw, isString := value.(string)
+					if !ok || !isString || raw == "" {
+						return next.Mutate(ctx, m)
+					}
 
-					// Values that are already redacted (backfill/restore of
-					// new-format backups) are written verbatim; their hash is
-					// expected to be provided explicitly by the caller.
-					//
-					// An empty hash/prefix counts as unset: schema defaults are
-					// applied before hooks run, so on create these fields are
-					// always present (as "") even when the caller never set them.
-					if ok && isString && raw != "" && !xapikey.IsRedacted(raw) {
+					if xapikey.IsRedacted(raw) {
 						if hash, _ := m.Field("key_hash"); hash == nil || hash == "" {
-							if err := m.SetField("key_hash", xapikey.Hash(raw)); err != nil {
-								return nil, err
-							}
+							return nil, fmt.Errorf(
+								"api key: a redacted key must be written together with its key_hash")
 						}
 
-						if prefix, _ := m.Field("key_prefix"); prefix == nil || prefix == "" {
-							if err := m.SetField("key_prefix", xapikey.Prefix(raw)); err != nil {
-								return nil, err
-							}
-						}
+						return next.Mutate(ctx, m)
+					}
 
-						if err := m.SetField("key", xapikey.Redact(raw)); err != nil {
-							return nil, err
-						}
+					if err := m.SetField("key_hash", xapikey.Hash(raw)); err != nil {
+						return nil, err
+					}
+
+					if err := m.SetField("key_prefix", xapikey.Prefix(raw)); err != nil {
+						return nil, err
+					}
+
+					if err := m.SetField("key", xapikey.Redact(raw)); err != nil {
+						return nil, err
 					}
 
 					return next.Mutate(ctx, m)

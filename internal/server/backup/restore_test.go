@@ -836,3 +836,49 @@ func TestBackupService_Restore_APIKeys_RejectsRedactedWithoutHash(t *testing.T) 
 	require.NoError(t, err)
 	require.Zero(t, count, "the rejected key must not have been created")
 }
+
+// TestUsageRestoreResolver_PrefersHashOverRedactedKey covers usage
+// attribution when two keys share a redacted display value, which the key
+// column no longer makes unique.
+func TestUsageRestoreResolver_PrefersHashOverRedactedKey(t *testing.T) {
+	client, _, ctx := setupBackupTest(t)
+	defer client.Close()
+
+	proj, err := client.Project.Create().SetName("resolver").Save(ctx)
+	require.NoError(t, err)
+
+	// Two distinct keys that redact to the same display value: Redact keeps
+	// only the first 12 and last 4 characters.
+	const (
+		firstRaw  = "ah-collision-aaaaaaaaaaaaaaaa-same"
+		secondRaw = "ah-collision-bbbbbbbbbbbbbbbb-same"
+	)
+
+	require.Equal(t, xapikey.Redact(firstRaw), xapikey.Redact(secondRaw),
+		"the fixture only tests anything if the display values collide")
+
+	first, err := client.APIKey.Create().
+		SetKey(firstRaw).SetName("first").SetProjectID(proj.ID).Save(ctx)
+	require.NoError(t, err)
+
+	second, err := client.APIKey.Create().
+		SetKey(secondRaw).SetName("second").SetProjectID(proj.ID).Save(ctx)
+	require.NoError(t, err)
+
+	resolver, err := newUsageRestoreResolver(ctx, client)
+	require.NoError(t, err)
+
+	// An old backup referencing either raw key resolves through the hash.
+	id, ok := resolver.resolveAPIKeyID(firstRaw)
+	require.True(t, ok)
+	require.Equal(t, first.ID, id)
+
+	id, ok = resolver.resolveAPIKeyID(secondRaw)
+	require.True(t, ok)
+	require.Equal(t, second.ID, id)
+
+	// A new backup referencing the shared display value cannot say which key
+	// it meant, so the usage stays unattributed instead of landing on one.
+	_, ok = resolver.resolveAPIKeyID(xapikey.Redact(firstRaw))
+	require.False(t, ok, "an ambiguous display value must not resolve")
+}

@@ -195,6 +195,10 @@ type usageRestoreResolver struct {
 	channelIDs   map[int]struct{}
 	apiKeyKeys   map[string]int
 	apiKeyHashes map[string]int
+	// Redacted display values are not unique, so the ones shared by more
+	// than one key are recorded and refused rather than resolved to whichever
+	// row happened to be seen last.
+	ambiguousAPIKeys map[string]struct{}
 }
 
 func newUsageRestoreResolver(ctx context.Context, db *ent.Client) (*usageRestoreResolver, error) {
@@ -226,6 +230,8 @@ func newUsageRestoreResolver(ctx context.Context, db *ent.Client) (*usageRestore
 		channelIDs:   make(map[int]struct{}, len(channels)),
 		apiKeyKeys:   make(map[string]int, len(apiKeys)),
 		apiKeyHashes: make(map[string]int, len(apiKeys)),
+
+		ambiguousAPIKeys: make(map[string]struct{}),
 	}
 
 	for _, proj := range projects {
@@ -239,7 +245,11 @@ func newUsageRestoreResolver(ctx context.Context, db *ent.Client) (*usageRestore
 	}
 
 	for _, ak := range apiKeys {
-		resolver.apiKeyKeys[ak.Key] = ak.ID
+		if _, seen := resolver.apiKeyKeys[ak.Key]; seen {
+			resolver.ambiguousAPIKeys[ak.Key] = struct{}{}
+		} else {
+			resolver.apiKeyKeys[ak.Key] = ak.ID
+		}
 
 		if ak.KeyHash != "" {
 			resolver.apiKeyHashes[ak.KeyHash] = ak.ID
@@ -282,19 +292,25 @@ func (r *usageRestoreResolver) resolveAPIKeyID(apiKeyKey string) (int, bool) {
 		return 0, false
 	}
 
-	// New backups reference keys by their redacted display value, which is
-	// exactly what the key column stores.
-	if id, ok := r.apiKeyKeys[apiKeyKey]; ok {
-		return id, ok
-	}
-
-	// Old backups carry the raw key; resolve it through the stored hash.
+	// Old backups carry the raw key. Its hash is the only unique handle, so
+	// try that before falling back to the display value.
 	if !xapikey.IsRedacted(apiKeyKey) {
-		id, ok := r.apiKeyHashes[xapikey.Hash(apiKeyKey)]
-		return id, ok
+		if id, ok := r.apiKeyHashes[xapikey.Hash(apiKeyKey)]; ok {
+			return id, true
+		}
 	}
 
-	return 0, false
+	// New backups reference keys by their redacted display value, which is
+	// what the key column stores but is not unique: two keys sharing a prefix
+	// and suffix redact identically. Attributing usage to an arbitrary one of
+	// them would be worse than leaving it unattributed.
+	if _, ambiguous := r.ambiguousAPIKeys[apiKeyKey]; ambiguous {
+		return 0, false
+	}
+
+	id, ok := r.apiKeyKeys[apiKeyKey]
+
+	return id, ok
 }
 
 func remapModelSettingsChannelIDs(settings *objects.ModelSettings, channelIDMap map[int]int) {

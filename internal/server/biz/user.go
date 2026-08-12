@@ -457,7 +457,7 @@ func (s *UserService) UpdateOwnProfile(ctx context.Context, input ent.UpdateUser
 func (s *UserService) UpdateUserStatus(ctx context.Context, id int, status user.Status) (*ent.User, error) {
 	var (
 		updatedUser  *ent.User
-		disabledKeys []string
+		disabledKeys []*ent.APIKey
 	)
 
 	err := s.RunInTransaction(ctx, func(txCtx context.Context) error {
@@ -490,22 +490,19 @@ func (s *UserService) UpdateUserStatus(ctx context.Context, id int, status user.
 	// Invalidate caches only after the transaction has been committed so a
 	// concurrent request cannot re-populate them with the pre-commit state.
 	s.invalidateUserCache(ctx, id)
-
-	if len(disabledKeys) > 0 {
-		s.APIKeyService.invalidateAPIKeyCaches(ctx, disabledKeys...)
-	}
+	s.APIKeyService.invalidateAPIKeyCachesForKeys(ctx, disabledKeys...)
 
 	return updatedUser, nil
 }
 
 // disableUserAPIKeys disables every enabled API key owned by the user inside
-// the current transaction and returns the disabled key values so callers can
+// the current transaction and returns the disabled keys so callers can
 // invalidate the API key cache after the transaction commits. It runs under a
 // system bypass: cutting off access on deactivation or deletion is a security
 // side effect that must not depend on the caller's api-key scopes. The noauth
 // key is excluded because it is a system-managed key.
-func (s *UserService) disableUserAPIKeys(ctx context.Context, userID int) ([]string, error) {
-	return authz.RunWithSystemBypass(ctx, "user-revoke-api-keys", func(bypassCtx context.Context) ([]string, error) {
+func (s *UserService) disableUserAPIKeys(ctx context.Context, userID int) ([]*ent.APIKey, error) {
+	return authz.RunWithSystemBypass(ctx, "user-revoke-api-keys", func(bypassCtx context.Context) ([]*ent.APIKey, error) {
 		client := s.entFromContext(bypassCtx)
 
 		apiKeys, err := client.APIKey.Query().
@@ -531,7 +528,7 @@ func (s *UserService) disableUserAPIKeys(ctx context.Context, userID int) ([]str
 			return nil, fmt.Errorf("failed to disable user api keys: %w", err)
 		}
 
-		return lo.Map(apiKeys, func(k *ent.APIKey, _ int) string { return k.Key }), nil
+		return apiKeys, nil
 	})
 }
 
@@ -851,7 +848,7 @@ func (s *UserService) DeleteUser(ctx context.Context, id int) error {
 		return fmt.Errorf("permission denied: %w", err)
 	}
 
-	var disabledKeys []string
+	var disabledKeys []*ent.APIKey
 
 	err := s.RunInTransaction(ctx, func(ctx context.Context) error {
 		client := s.entFromContext(ctx)
@@ -910,9 +907,7 @@ func (s *UserService) DeleteUser(ctx context.Context, id int) error {
 		return err
 	}
 
-	if len(disabledKeys) > 0 {
-		s.APIKeyService.invalidateAPIKeyCaches(ctx, disabledKeys...)
-	}
+	s.APIKeyService.invalidateAPIKeyCachesForKeys(ctx, disabledKeys...)
 
 	return nil
 }

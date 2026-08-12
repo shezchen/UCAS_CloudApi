@@ -669,6 +669,18 @@ func (s *APIKeyService) GetForRead(ctx context.Context, id *int, key *string, na
 	return apiKey, nil
 }
 
+// invalidateAPIKeyCachesForKeys invalidates the cache entries of the given API
+// keys. Callers outside this file must use this form rather than passing key
+// material themselves: how a key maps to its cache entry is an implementation
+// detail of this service, and a caller that gets it wrong fails silently.
+func (s *APIKeyService) invalidateAPIKeyCachesForKeys(ctx context.Context, keys ...*ent.APIKey) {
+	if len(keys) == 0 {
+		return
+	}
+
+	s.invalidateAPIKeyCaches(ctx, lo.Map(keys, func(k *ent.APIKey, _ int) string { return k.Key })...)
+}
+
 func (s *APIKeyService) invalidateAPIKeyCaches(ctx context.Context, keys ...string) {
 	if len(keys) == 0 {
 		return

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -946,6 +947,130 @@ func TestApplyPassThroughStream_DrainsInner(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("drain goroutine did not complete")
 	}
+}
+
+// panicStream panics on the first Next, standing in for a middleware that
+// blows up while the drain goroutine is consuming the transformed stream.
+type panicStream struct {
+	closed          atomic.Bool
+	panicOnCloseErr bool
+}
+
+func (s *panicStream) Next() bool {
+	panic("boom")
+}
+
+func (s *panicStream) Current() *httpclient.StreamEvent { return nil }
+func (s *panicStream) Err() error                       { return nil }
+
+func (s *panicStream) Close() error {
+	s.closed.Store(true)
+
+	if s.panicOnCloseErr {
+		panic("close boom")
+	}
+
+	return nil
+}
+
+func newPassThroughDrainState(rawCh chan *httpclient.StreamEvent, cancel context.CancelFunc) *PersistenceState {
+	channel := &biz.Channel{
+		Channel: &ent.Channel{
+			ID:   1,
+			Name: "test",
+			Settings: &objects.ChannelSettings{
+				PassThroughBody: lo.ToPtr(true),
+			},
+		},
+	}
+
+	return &PersistenceState{
+		CurrentCandidate:      &ChannelModelsCandidate{Channel: channel},
+		RawStreamCh:           rawCh,
+		RawStreamErr:          &rawStreamErrStore{},
+		RawStreamCancel:       cancel,
+		OriginalRequestStream: lo.ToPtr(true),
+		LlmRequest: &llm.Request{
+			APIFormat: llm.APIFormatOpenAIChatCompletion,
+			Stream:    lo.ToPtr(true),
+			RawRequest: &httpclient.Request{
+				APIFormat: string(llm.APIFormatOpenAIChatCompletion),
+				Body:      []byte(`{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"hi"}]}`),
+			},
+		},
+		RawProviderRequest: &httpclient.Request{
+			APIFormat: string(llm.APIFormatOpenAIChatCompletion),
+		},
+	}
+}
+
+func TestApplyPassThroughStream_DrainPanicUnblocksConsumerAndFinalizesAttempt(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// rawCh is deliberately never closed: without the recover path the consumer
+	// below would block until the request times out.
+	state := newPassThroughDrainState(make(chan *httpclient.StreamEvent), cancel)
+	outbound := &PersistentOutboundTransformer{state: state}
+
+	transformed := &panicStream{}
+
+	mw := applyPassThroughStream(outbound, nil)
+	result, err := mw.OnInboundRawStream(ctx, transformed)
+	require.NoError(t, err)
+
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		for result.Next() { //nolint:revive // intentional drain
+		}
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("drain panic did not unblock the pass-through consumer")
+	}
+
+	require.ErrorContains(t, result.Err(), "pass-through pipeline drain panic")
+
+	// Close on the transformed stream is the only place the attempt is settled.
+	require.Eventually(t, transformed.closed.Load, time.Second, 10*time.Millisecond,
+		"drain panic must still finalize the attempt")
+}
+
+func TestApplyPassThroughStream_DrainPanicSurvivesAPanickingClose(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	state := newPassThroughDrainState(make(chan *httpclient.StreamEvent), cancel)
+	outbound := &PersistentOutboundTransformer{state: state}
+
+	transformed := &panicStream{panicOnCloseErr: true}
+
+	mw := applyPassThroughStream(outbound, nil)
+	result, err := mw.OnInboundRawStream(ctx, transformed)
+	require.NoError(t, err)
+
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		for result.Next() { //nolint:revive // intentional drain
+		}
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("drain panic did not unblock the pass-through consumer")
+	}
+
+	require.ErrorContains(t, result.Err(), "pass-through pipeline drain panic")
+	require.Eventually(t, transformed.closed.Load, time.Second, 10*time.Millisecond)
 }
 
 type doneStream struct {

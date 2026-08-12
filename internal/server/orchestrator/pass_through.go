@@ -481,6 +481,8 @@ func applyPassThroughStream(outbound *PersistentOutboundTransformer, systemServi
 					if cancel != nil {
 						cancel()
 					}
+
+					closeDrainedStream(ctx, stream, channel.Name)
 				}
 			}()
 
@@ -493,6 +495,29 @@ func applyPassThroughStream(outbound *PersistentOutboundTransformer, systemServi
 
 		return &passThroughChannelStream{ctx: ctx, ch: rawCh, errs: streamErrs, cancel: cancel}, nil
 	})
+}
+
+// closeDrainedStream finalizes the drained pipeline stream after the drain
+// goroutine panicked. OutboundPersistentStream.Close is the only place an
+// attempt is settled, so skipping it leaves request_execution pending forever
+// with no chunks and no usage. A second panic here must not take the process
+// down with it, since the client has already been unblocked at this point.
+func closeDrainedStream(ctx context.Context, stream streams.Stream[*httpclient.StreamEvent], channelName string) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Warn(ctx, "pass-through stream finalization panicked after a drain panic",
+				log.Any("panic", r),
+				log.String("channel", channelName),
+			)
+		}
+	}()
+
+	if err := stream.Close(); err != nil {
+		log.Warn(ctx, "Failed to finalize pass-through stream after a drain panic",
+			log.Cause(err),
+			log.String("channel", channelName),
+		)
+	}
 }
 
 // passThroughChannelStream wraps a channel as a Stream.

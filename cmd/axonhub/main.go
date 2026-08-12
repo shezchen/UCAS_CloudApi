@@ -233,8 +233,10 @@ func validateConfig(config conf.Config) []string {
 		errors = append(errors, "server.cors.allowed_origins cannot be empty when CORS is enabled")
 	}
 
-	// Wildcard origin combined with credentials lets any site send
-	// authenticated cross-origin requests, defeating the same-origin policy.
+	// Browsers reject a wildcard origin on a credentialed request outright, so
+	// this combination does not open anything up -- it silently breaks every
+	// cross-origin call that carries cookies, while reading like a permissive
+	// setting that works.
 	if config.APIServer.CORS.Enabled && config.APIServer.CORS.AllowCredentials &&
 		slices.Contains(config.APIServer.CORS.AllowedOrigins, "*") {
 		errors = append(errors,

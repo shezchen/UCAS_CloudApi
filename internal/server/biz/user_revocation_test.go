@@ -28,16 +28,16 @@ type revocationFixture struct {
 func TestUserService_DeactivationDisablesAPIKeys(t *testing.T) {
 	fixture := setupRevocationFixture(t)
 
-	owner, apiKey := fixture.createUserWithAPIKey(t, user.StatusActivated)
+	owner, apiKey, rawKey := fixture.createUserWithAPIKey(t, user.StatusActivated)
 
-	authenticated, err := fixture.auth.AuthenticateAPIKey(fixture.ctx, apiKey.Key)
+	authenticated, err := fixture.auth.AuthenticateAPIKey(fixture.ctx, rawKey)
 	require.NoError(t, err)
 	require.Equal(t, apiKey.ID, authenticated.ID)
 
 	_, err = fixture.users.UpdateUserStatus(fixture.ctx, owner.ID, user.StatusDeactivated)
 	require.NoError(t, err)
 
-	_, err = fixture.auth.AuthenticateAPIKey(fixture.ctx, apiKey.Key)
+	_, err = fixture.auth.AuthenticateAPIKey(fixture.ctx, rawKey)
 	require.ErrorIs(t, err, ErrInvalidAPIKey)
 
 	stored, err := fixture.client.APIKey.Get(fixture.ctx, apiKey.ID)
@@ -50,7 +50,7 @@ func TestUserService_DeactivationDisablesAPIKeys(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Eventually(t, func() bool {
-		_, err := fixture.auth.AuthenticateAPIKey(fixture.ctx, apiKey.Key)
+		_, err := fixture.auth.AuthenticateAPIKey(fixture.ctx, rawKey)
 
 		return err != nil
 	}, 5*time.Second, 50*time.Millisecond, "a disabled key must stop working once the cache is invalidated")
@@ -59,9 +59,9 @@ func TestUserService_DeactivationDisablesAPIKeys(t *testing.T) {
 func TestUserService_DeletionDisablesAPIKeys(t *testing.T) {
 	fixture := setupRevocationFixture(t)
 
-	owner, apiKey := fixture.createUserWithAPIKey(t, user.StatusActivated)
+	owner, apiKey, rawKey := fixture.createUserWithAPIKey(t, user.StatusActivated)
 
-	_, err := fixture.auth.AuthenticateAPIKey(fixture.ctx, apiKey.Key)
+	_, err := fixture.auth.AuthenticateAPIKey(fixture.ctx, rawKey)
 	require.NoError(t, err)
 
 	_, err = fixture.users.GetUserByID(fixture.ctx, owner.ID)
@@ -69,7 +69,7 @@ func TestUserService_DeletionDisablesAPIKeys(t *testing.T) {
 
 	require.NoError(t, fixture.users.DeleteUser(fixture.asSystemOwner(t), owner.ID))
 
-	_, err = fixture.auth.AuthenticateAPIKey(fixture.ctx, apiKey.Key)
+	_, err = fixture.auth.AuthenticateAPIKey(fixture.ctx, rawKey)
 	require.ErrorIs(t, err, ErrInvalidAPIKey)
 
 	stored, err := fixture.client.APIKey.Get(fixture.ctx, apiKey.ID)
@@ -88,7 +88,7 @@ func TestUserService_DeactivationWithoutAPIKeyService(t *testing.T) {
 	fixture := setupRevocationFixture(t)
 	fixture.users.APIKeyService = nil
 
-	owner, apiKey := fixture.createUserWithAPIKey(t, user.StatusActivated)
+	owner, apiKey, _ := fixture.createUserWithAPIKey(t, user.StatusActivated)
 
 	_, err := fixture.users.UpdateUserStatus(fixture.ctx, owner.ID, user.StatusDeactivated)
 	require.NoError(t, err)
@@ -156,7 +156,10 @@ func (f *revocationFixture) asSystemOwner(t *testing.T) context.Context {
 	return contexts.WithUser(f.ctx, owner)
 }
 
-func (f *revocationFixture) createUserWithAPIKey(t *testing.T, status user.Status) (*ent.User, *ent.APIKey) {
+// createUserWithAPIKey also hands back the raw key: the stored column is a
+// display value in deployments that hash key material, so a test must keep the
+// secret it generated rather than read it back.
+func (f *revocationFixture) createUserWithAPIKey(t *testing.T, status user.Status) (*ent.User, *ent.APIKey, string) {
 	t.Helper()
 
 	owner, err := f.client.User.Create().
@@ -184,5 +187,5 @@ func (f *revocationFixture) createUserWithAPIKey(t *testing.T, status user.Statu
 		Save(f.ctx)
 	require.NoError(t, err)
 
-	return owner, created
+	return owner, created, key
 }

@@ -24,6 +24,7 @@ type apiKeyAuthFixture struct {
 	auth   *biz.AuthService
 	client *ent.Client
 	key    string
+	keyID  int
 }
 
 func setupAPIKeyAuthFixture(t *testing.T, allowNoAuth bool) *apiKeyAuthFixture {
@@ -50,7 +51,7 @@ func setupAPIKeyAuthFixture(t *testing.T, allowNoAuth bool) *apiKeyAuthFixture {
 
 	key, err := biz.GenerateAPIKey("ah")
 	require.NoError(t, err)
-	_, err = client.APIKey.Create().
+	created, err := client.APIKey.Create().
 		SetName("Test Key").
 		SetKey(key).
 		SetUserID(owner.ID).
@@ -99,7 +100,7 @@ func setupAPIKeyAuthFixture(t *testing.T, allowNoAuth bool) *apiKeyAuthFixture {
 		AllowNoAuth: allowNoAuth,
 	})
 
-	return &apiKeyAuthFixture{auth: authService, client: client, key: key}
+	return &apiKeyAuthFixture{auth: authService, client: client, key: key, keyID: created.ID}
 }
 
 func (f *apiKeyAuthFixture) call(t *testing.T, authorization string) (*httptest.ResponseRecorder, *ent.APIKey) {
@@ -135,7 +136,7 @@ func TestWithAPIKeyConfig_AcceptsValidKey(t *testing.T) {
 	response, authenticated := fixture.call(t, "Bearer "+fixture.key)
 	require.Equal(t, http.StatusOK, response.Code)
 	require.NotNil(t, authenticated)
-	require.Equal(t, fixture.key, authenticated.Key)
+	require.Equal(t, fixture.keyID, authenticated.ID)
 }
 
 func TestWithAPIKeyConfig_RejectsUnknownKeyWhenNoAuthDisabled(t *testing.T) {
@@ -156,12 +157,12 @@ func TestWithAPIKeyConfig_FallsBackToNoAuthForUnusableKey(t *testing.T) {
 	response, authenticated := fixture.call(t, "Bearer sk-dummy")
 	require.Equal(t, http.StatusOK, response.Code)
 	require.NotNil(t, authenticated)
-	require.Equal(t, biz.NoAuthAPIKeyValue, authenticated.Key)
+	require.Equal(t, apikey.TypeNoauth, authenticated.Type)
 
 	missing, missingKey := fixture.call(t, "")
 	require.Equal(t, http.StatusOK, missing.Code)
 	require.NotNil(t, missingKey)
-	require.Equal(t, biz.NoAuthAPIKeyValue, missingKey.Key)
+	require.Equal(t, apikey.TypeNoauth, missingKey.Type)
 }
 
 func TestWithAPIKeyConfig_RejectsNoAuthKeyEvenWhenNoAuthEnabled(t *testing.T) {

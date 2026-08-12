@@ -857,7 +857,7 @@ func TestAuthService_AuthenticateAPIKey_OwnerMustBeActivated(t *testing.T) {
 
 	apiKeyString, err := GenerateAPIKey("ah")
 	require.NoError(t, err)
-	_, err = client.APIKey.Create().
+	created, err := client.APIKey.Create().
 		SetKey(apiKeyString).
 		SetName("Deactivated Owner Key").
 		SetUserID(owner.ID).
@@ -876,7 +876,7 @@ func TestAuthService_AuthenticateAPIKey_OwnerMustBeActivated(t *testing.T) {
 
 	authenticated, err := authService.AuthenticateAPIKey(ctx, apiKeyString)
 	require.NoError(t, err)
-	require.Equal(t, apiKeyString, authenticated.Key)
+	require.Equal(t, created.ID, authenticated.ID)
 }
 
 func TestAuthService_AuthenticateAPIKey_WithoutUserServiceIsRefused(t *testing.T) {

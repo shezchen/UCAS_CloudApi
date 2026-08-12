@@ -56,6 +56,11 @@ type DeviceFlowConfig struct {
 // TokenExchanger defines the interface for exchanging OAuth access tokens
 // for provider-specific tokens (e.g., Copilot token exchange).
 // This is optional - if not set, GetToken returns the access_token directly.
+//
+// Implementations own caching and deduplication of exchanged tokens, because
+// only they know the provider's expiry semantics and how much slack a token
+// needs to survive a long request. DeviceFlowProvider calls Exchange for every
+// token request and must not add a second cache on top.
 type TokenExchanger interface {
 	// Exchange exchanges an OAuth access token for a provider-specific token.
 	// Returns the exchanged token, expiration timestamp, and any error.
@@ -84,13 +89,6 @@ type DeviceFlowProvider struct {
 	// OAuth credentials (access_token, refresh_token, etc.)
 	mu    sync.RWMutex
 	creds *OAuthCredentials
-
-	// Cached exchanged token (TokenExchanger flows only). The cache is keyed
-	// by the access token that produced it so credential updates invalidate it.
-	exchangedMu        sync.RWMutex
-	exchangedToken     string
-	exchangedExpiresAt time.Time
-	exchangedFor       string
 
 	// Singleflight for deduplicating concurrent token requests
 	sf singleflight.Group
@@ -291,54 +289,14 @@ func (p *DeviceFlowProvider) GetToken(ctx context.Context) (string, error) {
 	return p.getAccessTokenWithRefresh(ctx)
 }
 
-// exchangedTokenExpirySkew treats a cached exchanged token as expired slightly
-// before its reported expiry, so callers never receive a token that expires
-// mid-request.
-const exchangedTokenExpirySkew = 1 * time.Minute
-
-// getExchangedToken exchanges the access token using the TokenExchanger.
-// Exchanged tokens are cached until shortly before their reported expiry to
-// avoid one upstream exchange per request.
+// getExchangedToken exchanges the access token using the TokenExchanger,
+// preferring the provider's HTTP client (which may carry proxy or TLS
+// settings) over the exchanger's default client.
 func (p *DeviceFlowProvider) getExchangedToken(ctx context.Context, accessToken string) (string, error) {
-	if token, ok := p.cachedExchangedToken(accessToken, time.Now()); ok {
-		return token, nil
-	}
-
-	v, err, _ := p.sf.Do("exchange", func() (any, error) {
-		// Re-check the cache inside singleflight: a concurrent caller may have
-		// already refreshed it.
-		if token, ok := p.cachedExchangedToken(accessToken, time.Now()); ok {
-			return token, nil
-		}
-
-		token, expiresAt, err := p.exchangeToken(ctx, accessToken)
-		if err != nil {
-			return nil, err
-		}
-
-		p.storeExchangedToken(accessToken, token, expiresAt)
-
-		return token, nil
-	})
-	if err != nil {
-		return "", err
-	}
-
-	token, ok := v.(string)
-	if !ok {
-		return "", fmt.Errorf("singleflight returned unexpected type %T", v)
-	}
-
-	return token, nil
-}
-
-// exchangeToken performs the exchange, preferring the provider's HTTP client
-// (which may carry proxy or TLS settings) over the exchanger's default client.
-func (p *DeviceFlowProvider) exchangeToken(ctx context.Context, accessToken string) (string, int64, error) {
 	if p.httpClient != nil {
-		token, expiresAt, err := p.tokenExchanger.ExchangeWithClient(ctx, p.httpClient, accessToken)
+		token, _, err := p.tokenExchanger.ExchangeWithClient(ctx, p.httpClient, accessToken)
 		if err == nil {
-			return token, expiresAt, nil
+			return token, nil
 		}
 
 		// The provider client may carry proxy settings; falling back silently
@@ -347,41 +305,12 @@ func (p *DeviceFlowProvider) exchangeToken(ctx context.Context, accessToken stri
 			slog.Any("error", err))
 	}
 
-	token, expiresAt, err := p.tokenExchanger.Exchange(ctx, accessToken)
+	token, _, err := p.tokenExchanger.Exchange(ctx, accessToken)
 	if err != nil {
-		return "", 0, fmt.Errorf("token exchange failed: %w", err)
+		return "", fmt.Errorf("token exchange failed: %w", err)
 	}
 
-	return token, expiresAt, nil
-}
-
-func (p *DeviceFlowProvider) cachedExchangedToken(accessToken string, now time.Time) (string, bool) {
-	p.exchangedMu.RLock()
-	defer p.exchangedMu.RUnlock()
-
-	if p.exchangedToken == "" || p.exchangedFor != accessToken {
-		return "", false
-	}
-
-	if !now.Add(exchangedTokenExpirySkew).Before(p.exchangedExpiresAt) {
-		return "", false
-	}
-
-	return p.exchangedToken, true
-}
-
-func (p *DeviceFlowProvider) storeExchangedToken(accessToken, token string, expiresAt int64) {
-	// Without expiry information the token cannot be safely reused.
-	if expiresAt <= 0 {
-		return
-	}
-
-	p.exchangedMu.Lock()
-	defer p.exchangedMu.Unlock()
-
-	p.exchangedToken = token
-	p.exchangedExpiresAt = time.Unix(expiresAt, 0)
-	p.exchangedFor = accessToken
+	return token, nil
 }
 
 // getAccessTokenWithRefresh returns the access token, refreshing if needed.

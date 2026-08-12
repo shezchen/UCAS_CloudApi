@@ -31,6 +31,23 @@ func TestIsPublicAPIPath(t *testing.T) {
 		{path: "/oauth/callback", want: false},
 		{path: "/health", want: false},
 		{path: "/", want: false},
+		{path: "", want: false},
+
+		// Trailing slashes are not routed by gin but still reach the SPA
+		// fallback, which needs the public policy.
+		{path: "/v1/models/", want: true},
+		{path: "/v1/chat/completions/", want: true},
+		{path: "/admin/graphql/", want: false},
+
+		// Non-canonical paths are served by whatever route the cleaned path
+		// resolves to, so they must not inherit the public policy.
+		{path: "/v1/../admin/graphql", want: false},
+		{path: "/v1/../admin/system/status", want: false},
+		{path: "/v1/./models", want: false},
+		{path: "/v1//models", want: false},
+		{path: "//v1/models", want: false},
+		{path: "/v1/models/..", want: false},
+		{path: "/admin/../v1/models", want: false},
 	}
 
 	for _, tt := range tests {
@@ -173,6 +190,42 @@ func TestWithCORSPublicSuccessResponseKeepsHeaders(t *testing.T) {
 
 	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "*" {
 		t.Errorf("Access-Control-Allow-Origin on 200 = %q, want *", got)
+	}
+}
+
+// A path such as /v1/../admin/system/status carries a public prefix but is not
+// what gets served, so it must be handled by the restricted policy rather than
+// handed the wildcard origin.
+func TestWithCORSNonCanonicalPathsUseRestrictedPolicy(t *testing.T) {
+	targets := []string{
+		"/v1/../admin/system/status",
+		"/v1/..%2fadmin/system/status",
+		"/v1/./models",
+		"/v1//models",
+		"/admin/../v1/models",
+	}
+
+	for _, target := range targets {
+		t.Run(target, func(t *testing.T) {
+			restrictedCalled := false
+			engine := newCORSTestEngine(func(c *gin.Context) {
+				restrictedCalled = true
+			})
+
+			req := httptest.NewRequest(http.MethodGet, target, nil)
+			req.Header.Set("Origin", "https://random-client.example")
+
+			w := httptest.NewRecorder()
+			engine.ServeHTTP(w, req)
+
+			if !restrictedCalled {
+				t.Error("restricted CORS handler was not called")
+			}
+
+			if got := w.Header().Get("Access-Control-Allow-Origin"); got == "*" {
+				t.Error("non-canonical path must not get wildcard Access-Control-Allow-Origin")
+			}
+		})
 	}
 }
 

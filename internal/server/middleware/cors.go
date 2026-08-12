@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"net/http"
+	"path"
 
 	"github.com/gin-gonic/gin"
 
@@ -39,8 +40,24 @@ const (
 // authenticate with API keys carried in request headers instead of cookies or
 // browser sessions, so they are safe to expose to any origin; management
 // surfaces (/admin, /openapi, /oauth, static frontend) are not.
-func IsPublicAPIPath(path string) bool {
-	return apipath.IsPublicModelAPI(path)
+//
+// Only canonical paths qualify. A path such as /v1/../admin/graphql has a
+// public prefix but is served by the admin router, so anything that path.Clean
+// rewrites falls through to the restricted policy. The single exception is a
+// trailing slash: gin does not route those (the redirect is disabled so this
+// middleware runs at all) and they end up in the SPA fallback, which still has
+// to answer them with the public policy.
+func IsPublicAPIPath(requestPath string) bool {
+	if requestPath == "" {
+		return false
+	}
+
+	cleaned := path.Clean(requestPath)
+	if requestPath != cleaned && requestPath != cleaned+"/" {
+		return false
+	}
+
+	return apipath.IsPublicModelAPI(cleaned)
 }
 
 // WithCORS dispatches CORS handling by route class.

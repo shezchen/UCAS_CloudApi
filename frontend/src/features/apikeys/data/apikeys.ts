@@ -631,7 +631,7 @@ export function useCreateApiKey() {
       toast.success(t('apikeys.messages.createSuccess'));
     },
     onError: (error) => {
-      handleError(error, { context: t('apikeys.dialogs.create.title') });
+      handleError(error, { operation: t('apikeys.dialogs.create.title') });
     },
   });
 }
@@ -655,7 +655,7 @@ export function useUpdateApiKey() {
       toast.success(t('apikeys.messages.updateSuccess'));
     },
     onError: (error) => {
-      handleError(error, { context: t('apikeys.dialogs.edit.title') });
+      handleError(error, { operation: t('apikeys.dialogs.edit.title') });
     },
   });
 }
@@ -789,7 +789,7 @@ export function useRotateApiKey() {
       toast.success(t('apikeys.messages.rotateSuccess'));
     },
     onError: (error) => {
-      handleError(error, { context: t('apikeys.dialogs.rotate.title') });
+      handleError(error, { operation: t('apikeys.dialogs.rotate.title') });
     },
   });
 }

@@ -226,7 +226,7 @@ export function useCreateUser() {
         const data = await graphqlRequest<{ createUser: User }>(CREATE_USER_MUTATION, { input }, headers);
         return userSchema.parse(data.createUser);
       } catch (error) {
-        handleError(error, { context: t('users.dialogs.add.title') });
+        handleError(error, { operation: t('users.dialogs.add.title') });
         throw error;
       }
     },
@@ -250,7 +250,7 @@ export function useUpdateUser() {
         const data = await graphqlRequest<{ updateUser: User }>(UPDATE_USER_MUTATION, { id, input }, headers);
         return userSchema.parse(data.updateUser);
       } catch (error) {
-        handleError(error, { context: t('users.dialogs.edit.title') });
+        handleError(error, { operation: t('users.dialogs.edit.title') });
         throw error;
       }
     },
@@ -274,7 +274,7 @@ export function useUpdateUserStatus() {
         const data = await graphqlRequest<{ updateUserStatus: boolean }>(UPDATE_USER_STATUS_MUTATION, { id, status }, headers);
         return data.updateUserStatus;
       } catch (error) {
-        handleError(error, { context: 'Update User Status' });
+        handleError(error);
         throw error;
       }
     },
@@ -298,7 +298,7 @@ export function useDeleteUser() {
         // This is now deprecated, use useRemoveUserFromProject instead
         throw new Error('Direct deletion is not supported. Use removeUserFromProject instead.');
       } catch (error) {
-        handleError(error, { context: 'Delete User' });
+        handleError(error);
         throw error;
       }
     },
@@ -338,7 +338,7 @@ export function useAddUserToProject() {
         );
         return data.addUserToProject;
       } catch (error) {
-        handleError(error, { context: 'Add User to Project' });
+        handleError(error);
         throw error;
       }
     },
@@ -375,7 +375,7 @@ export function useRemoveUserFromProject() {
         );
         return data.removeUserFromProject;
       } catch (error) {
-        handleError(error, { context: 'Remove User from Project' });
+        handleError(error);
         throw error;
       }
     },
@@ -422,7 +422,7 @@ export function useUpdateProjectUser() {
         );
         return data.updateProjectUser;
       } catch (error) {
-        handleError(error, { context: 'Update Project User' });
+        handleError(error);
         throw error;
       }
     },

@@ -154,7 +154,7 @@ export function useCreateRole() {
         const data = await graphqlRequest<{ createRole: Role }>(CREATE_ROLE_MUTATION, { input: inputWithProjectId });
         return roleSchema.parse(data.createRole);
       } catch (error) {
-        handleError(error, { context: t('roles.dialogs.create.title') });
+        handleError(error, { operation: t('roles.dialogs.create.title') });
         throw error;
       }
     },
@@ -176,7 +176,7 @@ export function useUpdateRole() {
         const data = await graphqlRequest<{ updateRole: Role }>(UPDATE_ROLE_MUTATION, { id, input });
         return roleSchema.parse(data.updateRole);
       } catch (error) {
-        handleError(error, { context: t('roles.dialogs.edit.title') });
+        handleError(error, { operation: t('roles.dialogs.edit.title') });
         throw error;
       }
     },

@@ -973,7 +973,7 @@ export function useSaveChannelModelPrices() {
         });
         return data.saveChannelModelPrices.map((p) => channelModelPriceSchema.parse(p));
       } catch (error) {
-        handleError(error, { context: 'Save Channel Model Prices' });
+        handleError(error);
         throw error;
       }
     },
@@ -1284,7 +1284,7 @@ export function useCreateChannel() {
       toast.success(t(isOwner ? 'channels.messages.createSuccess' : 'channels.donation.messages.success'));
     },
     onError: (error) => {
-      handleError(error, { context: t(isOwner ? 'channels.dialogs.create.title' : 'channels.donation.dialog.title') });
+      handleError(error, { operation: t(isOwner ? 'channels.dialogs.create.title' : 'channels.donation.dialog.title') });
     },
   });
 }
@@ -1304,7 +1304,7 @@ export function useDuplicateChannel() {
       toast.success(t('common.success.duplicated'));
     },
     onError: (error) => {
-      handleError(error, { context: t('common.actions.duplicate') });
+      handleError(error, { operation: t('common.actions.duplicate') });
     },
   });
 }
@@ -1335,7 +1335,7 @@ export function useBulkCreateChannels() {
         const data = await graphqlRequest<{ bulkCreateChannels: Channel[] }>(BULK_CREATE_CHANNELS_MUTATION, { input });
         return data.bulkCreateChannels.map((ch) => channelSchema.parse(ch));
       } catch (error) {
-        handleError(error, { context: 'Batch Create Channels' });
+        handleError(error);
         throw error;
       }
     },
@@ -1362,7 +1362,7 @@ export function useUpdateChannel() {
       toast.success(t('channels.messages.updateSuccess'));
     },
     onError: (error) => {
-      handleError(error, { context: t('channels.dialogs.edit.title') });
+      handleError(error, { operation: t('channels.dialogs.edit.title') });
     },
   });
 }
@@ -1388,7 +1388,7 @@ export function useSaveChannelEndpoints() {
       toast.success(t('channels.messages.updateSuccess'));
     },
     onError: (error) => {
-      handleError(error, { context: t('channels.dialogs.edit.title') });
+      handleError(error, { operation: t('channels.dialogs.edit.title') });
     },
   });
 }
@@ -1407,7 +1407,7 @@ export function useClearChannelErrorMessage() {
         });
         return channelSchema.parse(data.updateChannel);
       } catch (error) {
-        handleError(error, { context: 'Clear Channel Error' });
+        handleError(error);
         throw error;
       }
     },
@@ -1434,7 +1434,7 @@ export function useUpdateChannelStatus() {
         });
         return data.updateChannelStatus;
       } catch (error) {
-        handleError(error, { context: 'Update Channel Status' });
+        handleError(error);
         throw error;
       }
     },
@@ -1465,7 +1465,7 @@ export function useBulkArchiveChannels() {
         const data = await graphqlRequest<{ bulkArchiveChannels: boolean }>(BULK_ARCHIVE_CHANNELS_MUTATION, { ids });
         return data.bulkArchiveChannels;
       } catch (error) {
-        handleError(error, { context: 'Bulk Archive Channels' });
+        handleError(error);
         throw error;
       }
     },
@@ -1487,7 +1487,7 @@ export function useBulkDisableChannels() {
         const data = await graphqlRequest<{ bulkDisableChannels: boolean }>(BULK_DISABLE_CHANNELS_MUTATION, { ids });
         return data.bulkDisableChannels;
       } catch (error) {
-        handleError(error, { context: 'Bulk Disable Channels' });
+        handleError(error);
         throw error;
       }
     },
@@ -1509,7 +1509,7 @@ export function useBulkEnableChannels() {
         const data = await graphqlRequest<{ bulkEnableChannels: boolean }>(BULK_ENABLE_CHANNELS_MUTATION, { ids });
         return data.bulkEnableChannels;
       } catch (error) {
-        handleError(error, { context: 'Bulk Enable Channels' });
+        handleError(error);
         throw error;
       }
     },
@@ -1531,7 +1531,7 @@ export function useBulkRecoverChannels() {
         const data = await graphqlRequest<{ bulkRecoverChannels: boolean }>(BULK_RECOVER_CHANNELS_MUTATION, { ids });
         return data.bulkRecoverChannels;
       } catch (error) {
-        handleError(error, { context: 'Bulk Recover Channels' });
+        handleError(error);
         throw error;
       }
     },
@@ -1554,7 +1554,7 @@ export function useDeleteChannel() {
         const data = await graphqlRequest<{ deleteChannel: boolean }>(DELETE_CHANNEL_MUTATION, { id });
         return data.deleteChannel;
       } catch (error) {
-        handleError(error, { context: 'Delete Channel' });
+        handleError(error);
         throw error;
       }
     },
@@ -1576,7 +1576,7 @@ export function useBulkDeleteChannels() {
         const data = await graphqlRequest<{ bulkDeleteChannels: boolean }>(BULK_DELETE_CHANNELS_MUTATION, { ids });
         return data.bulkDeleteChannels;
       } catch (error) {
-        handleError(error, { context: 'Bulk Delete Channels' });
+        handleError(error);
         throw error;
       }
     },
@@ -1614,7 +1614,7 @@ export function useTestChannel(options?: { silent?: boolean }) {
         return data.testChannel;
       } catch (error) {
         if (!silent) {
-          handleError(error, { context: 'Test Channel' });
+          handleError(error);
         }
         throw error;
       }
@@ -1650,7 +1650,7 @@ export function useTestChannelAPIKeys(options?: { silent?: boolean }) {
         return testChannelAPIKeysPayloadSchema.parse(data.testChannelAPIKeys);
       } catch (error) {
         if (!silent) {
-          handleError(error, { context: 'Test Channel API Keys' });
+          handleError(error);
         }
         throw error;
       }
@@ -1694,7 +1694,7 @@ export function useBulkImportChannels() {
         const data = await graphqlRequest<{ bulkImportChannels: BulkImportChannelsResult }>(BULK_IMPORT_CHANNELS_MUTATION, { input });
         return bulkImportChannelsResultSchema.parse(data.bulkImportChannels);
       } catch (error) {
-        handleError(error, { context: 'Bulk Import Channels' });
+        handleError(error);
         throw error;
       }
     },
@@ -1760,7 +1760,7 @@ export function useBulkUpdateChannelOrdering() {
         );
         return bulkUpdateChannelOrderingResultSchema.parse(data.bulkUpdateChannelOrdering);
       } catch (error) {
-        handleError(error, { context: 'Update Channel Ordering' });
+        handleError(error);
         throw error;
       }
     },
@@ -1801,7 +1801,7 @@ export function useSyncChannelModels() {
         const data = await graphqlRequest<{ syncChannelModels: unknown }>(SYNC_CHANNEL_MODELS_MUTATION, input);
         return syncChannelModelsPayloadSchema.parse(data.syncChannelModels);
       } catch (error) {
-        handleError(error, { context: 'Sync Channel Models' });
+        handleError(error);
         throw error;
       }
     },
@@ -1827,7 +1827,7 @@ export function useFetchModels() {
         }>(FETCH_MODELS_QUERY, { input });
         return data.fetchModels;
       } catch (error) {
-        handleError(error, { context: 'Fetch Models' });
+        handleError(error);
         throw error;
       }
     },
@@ -2010,7 +2010,7 @@ export function useDisableChannelAPIKey() {
         });
         return data.disableChannelAPIKey;
       } catch (error) {
-        handleError(error, { context: 'Disable Channel API Key' });
+        handleError(error);
         throw error;
       }
     },
@@ -2036,7 +2036,7 @@ export function useEnableChannelAPIKey() {
         });
         return data.enableChannelAPIKey;
       } catch (error) {
-        handleError(error, { context: 'Enable Channel API Key' });
+        handleError(error);
         throw error;
       }
     },
@@ -2061,7 +2061,7 @@ export function useEnableAllChannelAPIKeys() {
         });
         return data.enableAllChannelAPIKeys;
       } catch (error) {
-        handleError(error, { context: 'Enable All Channel API Keys' });
+        handleError(error);
         throw error;
       }
     },
@@ -2087,7 +2087,7 @@ export function useEnableSelectedChannelAPIKeys() {
         });
         return data.enableSelectedChannelAPIKeys;
       } catch (error) {
-        handleError(error, { context: 'Enable Selected API Keys' });
+        handleError(error);
         throw error;
       }
     },
@@ -2113,7 +2113,7 @@ export function useDeleteDisabledChannelAPIKeys() {
         );
         return data.deleteDisabledChannelAPIKeys;
       } catch (error) {
-        handleError(error, { context: 'Delete Disabled API Keys' });
+        handleError(error);
         throw error;
       }
     },

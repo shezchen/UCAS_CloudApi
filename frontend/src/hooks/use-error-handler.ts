@@ -12,8 +12,10 @@ import {
 } from '@/lib/error-parser';
 
 export interface ErrorHandlerOptions {
-  /** Context/operation name for the error (e.g., "Create API Key") */
-  context?: string;
+  /** Already localized operation name, rendered as a "<operation>: <error>" prefix */
+  operation?: string;
+  /** Already localized message, rendered only when the error carries no message of its own */
+  fallbackMessage?: string;
   /** Specific error code to handle differently */
   onDuplicate?: (info: { resource?: string; field?: string; value?: string }) => void;
   /** Callback for specific error codes */
@@ -29,14 +31,14 @@ export function useErrorHandler() {
     (error: unknown, options?: string | ErrorHandlerOptions) => {
       // Normalize options
       const opts: ErrorHandlerOptions = typeof options === 'string' 
-        ? { context: options } 
+        ? { fallbackMessage: options } 
         : options || {};
       
-      const { context, onDuplicate, onErrorCode, showToast = true } = opts;
+      const { operation, fallbackMessage, onDuplicate, onErrorCode, showToast = true } = opts;
 
-      // Prefix the user-facing message with the operation context (e.g. "Create API Key")
-      // when provided, so the toast tells the user which action failed.
-      const withContext = (message: string) => (context ? `${context}: ${message}` : message);
+      // Only already localized operation names may be prefixed, otherwise a
+      // zh-CN toast would end up carrying an English label.
+      const withOperation = (message: string) => (operation ? `${operation}: ${message}` : message);
 
       // Handle Zod validation errors
       if (error instanceof ZodError) {
@@ -51,7 +53,7 @@ export function useErrorHandler() {
         const message = t('common.errors.validationFailed', { details: fieldErrors });
 
         if (showToast) {
-          toast.error(withContext(t('common.errors.validationError')), {
+          toast.error(withOperation(t('common.errors.validationError')), {
             description: message,
             duration: 5000,
           });
@@ -104,7 +106,7 @@ export function useErrorHandler() {
 
         if (showToast) {
           // 直接展示具体错误消息
-          toast.error(withContext(message), { duration: 5000 });
+          toast.error(withOperation(message), { duration: 5000 });
         }
 
         return { 
@@ -116,11 +118,14 @@ export function useErrorHandler() {
       }
 
       // Handle generic errors
-      const errorMessage = error instanceof Error ? error.message : t('common.errors.unknownError');
+      const errorMessage =
+        error instanceof Error && error.message
+          ? error.message
+          : fallbackMessage ?? t('common.errors.unknownError');
 
       if (showToast) {
         // 直接展示具体错误消息
-        toast.error(withContext(errorMessage), { duration: 5000 });
+        toast.error(withOperation(errorMessage), { duration: 5000 });
       }
 
       return { type: 'unknown', message: errorMessage };

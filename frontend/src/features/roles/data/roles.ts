@@ -96,7 +96,7 @@ export function useRoles(
         const data = await graphqlRequest<{ roles: RoleConnection }>(ROLES_QUERY, queryVariables);
         return roleConnectionSchema.parse(data?.roles);
       } catch (error) {
-        handleError(error, { context: 'Load Roles' });
+        handleError(error);
         throw error;
       }
     },
@@ -118,7 +118,7 @@ export function useRole(id: string) {
         }
         return roleSchema.parse(role);
       } catch (error) {
-        handleError(error, { context: 'Load Role Detail' });
+        handleError(error);
         throw error;
       }
     },
@@ -138,7 +138,7 @@ export function useCreateRole() {
         const data = await graphqlRequest<{ createRole: Role }>(CREATE_ROLE_MUTATION, { input });
         return roleSchema.parse(data.createRole);
       } catch (error) {
-        handleError(error, { context: t('roles.dialogs.create.title') });
+        handleError(error, { operation: t('roles.dialogs.create.title') });
         throw error;
       }
     },
@@ -160,7 +160,7 @@ export function useUpdateRole() {
         const data = await graphqlRequest<{ updateRole: Role }>(UPDATE_ROLE_MUTATION, { id, input });
         return roleSchema.parse(data.updateRole);
       } catch (error) {
-        handleError(error, { context: t('roles.dialogs.edit.title') });
+        handleError(error, { operation: t('roles.dialogs.edit.title') });
         throw error;
       }
     },
@@ -181,7 +181,7 @@ export function useDeleteRole() {
       try {
         await graphqlRequest(DELETE_ROLE_MUTATION, { id });
       } catch (error) {
-        handleError(error, { context: 'Delete Role' });
+        handleError(error);
         throw error;
       }
     },

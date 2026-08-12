@@ -164,7 +164,7 @@ export function useArchiveDataStorage() {
 
         return dataStorageSchema.pick({ id: true, status: true }).parse(data.updateDataStorage);
       } catch (error) {
-        handleError(error, { context: 'Archive Data Storage' });
+        handleError(error);
         throw error;
       }
     },
@@ -191,7 +191,7 @@ export function useCreateDataStorage() {
         // Validate response data
         return dataStorageSchema.parse(data.createDataStorage);
       } catch (error) {
-        handleError(error, { context: t('dataStorages.dialogs.create.title') });
+        handleError(error, { operation: t('dataStorages.dialogs.create.title') });
         throw error;
       }
     },
@@ -219,7 +219,7 @@ export function useUpdateDataStorage() {
         // Use schema that includes credentials since this is for update
         return dataStorageWithCredentialsSchema.parse(data.updateDataStorage);
       } catch (error) {
-        handleError(error, { context: t('dataStorages.dialogs.edit.title') });
+        handleError(error, { operation: t('dataStorages.dialogs.edit.title') });
         throw error;
       }
     },

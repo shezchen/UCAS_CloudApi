@@ -211,6 +211,21 @@ func TestSignInLimiter_PrunesExpiredEntries(t *testing.T) {
 	require.Empty(t, limiter.clientAccounts)
 }
 
+// An unattributable client never reaches the lockout tables, so recording a
+// failure has to prune as well or nothing ever would.
+func TestSignInLimiter_PrunesOnFailurePath(t *testing.T) {
+	limiter, clock := newTestSignInLimiter()
+
+	limiter.recordFailure("stale@example.com", "")
+	require.Len(t, limiter.accounts, 1)
+
+	clock.advance(signInFailureWindow + signInPruneInterval)
+	limiter.recordFailure("fresh@example.com", "")
+
+	require.Len(t, limiter.accounts, 1)
+	require.NotContains(t, limiter.accounts, signInAccountKey("stale@example.com"))
+}
+
 func TestSignInLimiter_KeysHaveFixedSize(t *testing.T) {
 	limiter, _ := newTestSignInLimiter()
 

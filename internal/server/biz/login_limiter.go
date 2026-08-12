@@ -138,6 +138,11 @@ func (l *signInLimiter) recordFailure(email, source string) time.Duration {
 
 	now := l.now()
 
+	// Pruning happens on the write path as well: check returns early for an
+	// unattributable client, so the tables would otherwise only ever shrink
+	// once they hit the eviction cap.
+	l.pruneLocked(now)
+
 	accountFailures := recordSignInFailureLocked(l.accounts, signInAccountKey(email), 0, now)
 	if source != "" {
 		recordSignInFailureLocked(l.clients, source, signInMaxClientFailures, now)

@@ -770,6 +770,20 @@ func (svc *BackupService) restoreModels(ctx context.Context, db *ent.Client, mod
 	return nil
 }
 
+// backupAPIKeyHash returns the SHA-256 handle identifying a backed-up API
+// key, or "" when the backup carries nothing that can authenticate.
+//
+// A raw key wins over a stored hash: it is the value users hold, and the
+// APIKey schema hook will derive the hash from it on write regardless of what
+// the backup claims.
+func backupAPIKeyHash(akData *BackupAPIKey) string {
+	if akData.Key != "" && !xapikey.IsRedacted(akData.Key) {
+		return xapikey.Hash(akData.Key)
+	}
+
+	return akData.KeyHash
+}
+
 func (svc *BackupService) restoreAPIKeys(ctx context.Context, db *ent.Client, apiKeys []*BackupAPIKey, opts RestoreOptions, channelIDMap map[int]int) error {
 	user, ok := contexts.GetUser(ctx)
 	if !ok || user == nil {
@@ -783,19 +797,23 @@ func (svc *BackupService) restoreAPIKeys(ctx context.Context, db *ent.Client, ap
 
 		remapAPIKeyProfilesChannelIDs(akData.Profiles, channelIDMap)
 
-		// Identify the key by hash when available: new backups ship the hash
-		// directly, and raw keys from old backups are hashed on the fly. The
-		// redacted display value is only a last-resort match for new-format
-		// backups that predate hash export.
-		keyHash := akData.KeyHash
-		if keyHash == "" && !xapikey.IsRedacted(akData.Key) {
-			keyHash = xapikey.Hash(akData.Key)
+		// Identify the key by hash: old backups still carry the raw key, new
+		// ones carry the hash next to a redacted display value.
+		keyHash := backupAPIKeyHash(akData)
+
+		// Neither form is present. Importing the row would leave its public
+		// display value as the only thing that could ever match it, which the
+		// legacy lookup would then accept as a credential. Refuse instead.
+		if keyHash == "" {
+			log.Error(ctx, "API key in backup has no usable key material",
+				log.String("name", akData.Name))
+
+			return fmt.Errorf(
+				"API key %q in backup has neither a raw key nor a key_hash and cannot be restored",
+				akData.Name)
 		}
 
 		matchPredicate := apikey.KeyHashEQ(keyHash)
-		if keyHash == "" {
-			matchPredicate = apikey.Key(akData.Key)
-		}
 
 		existing, err := db.APIKey.Query().
 			Where(matchPredicate).

@@ -797,3 +797,42 @@ func TestBackupService_Restore_UsageStatsWithRequestLogs(t *testing.T) {
 	require.NotNil(t, usageLogs[0].TotalCost)
 	require.Equal(t, *usage.TotalCost, *usageLogs[0].TotalCost)
 }
+
+// TestBackupService_Restore_APIKeys_RejectsRedactedWithoutHash guards the
+// input that produces an unauthenticatable row: a redacted display value with
+// no hash behind it. Importing it would leave the public display value as the
+// only handle that could ever match the row.
+func TestBackupService_Restore_APIKeys_RejectsRedactedWithoutHash(t *testing.T) {
+	client, service, ctx := setupBackupTest(t)
+	defer client.Close()
+
+	_, err := client.Project.Create().
+		SetName("Default").
+		SetDescription("Default project").
+		Save(ctx)
+	require.NoError(t, err)
+
+	backupData := BackupData{
+		Version: BackupVersion,
+		APIKeys: []*BackupAPIKey{
+			{
+				APIKey: ent.APIKey{
+					Key:  xapikey.Redact("sk-a-key-that-is-long-enough"),
+					Name: "no hash behind it",
+					Type: apikey.TypeUser,
+				},
+			},
+		},
+	}
+
+	data, err := json.Marshal(backupData)
+	require.NoError(t, err)
+
+	err = service.Restore(ctx, data, RestoreOptions{IncludeAPIKeys: true})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "no hash behind it")
+
+	count, err := client.APIKey.Query().Count(ctx)
+	require.NoError(t, err)
+	require.Zero(t, count, "the rejected key must not have been created")
+}

@@ -178,6 +178,14 @@ func (s *APIKeyService) loadAPIKeyByKey(ctx context.Context, cacheKey string) (*
 // instances during a rolling deploy; the startup data migration handles the
 // bulk of existing rows.
 func (s *APIKeyService) loadAndRepairLegacyAPIKey(ctx context.Context, rawKey, keyHash string) (*ent.APIKey, error) {
+	// The key column holds redacted display values for every migrated row,
+	// and those values are readable by anyone with read_api_keys. Matching
+	// one here would let the display value authenticate — and the repair
+	// below would then make it a permanent credential.
+	if xapikey.IsRedacted(rawKey) {
+		return nil, live.ErrKeyNotFound
+	}
+
 	client := s.entFromContext(ctx)
 
 	item, err := client.APIKey.Query().

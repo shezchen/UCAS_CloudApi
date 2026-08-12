@@ -18,6 +18,7 @@ import (
 	"github.com/looplj/axonhub/internal/ent/project"
 	"github.com/looplj/axonhub/internal/ent/user"
 	"github.com/looplj/axonhub/internal/objects"
+	"github.com/looplj/axonhub/internal/pkg/xapikey"
 	"github.com/looplj/axonhub/internal/pkg/xcache"
 	"github.com/looplj/axonhub/internal/pkg/xredis"
 	"github.com/looplj/axonhub/internal/scopes"
@@ -1736,4 +1737,97 @@ func TestAPIKeyService_RotateAPIKey(t *testing.T) {
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to get API key")
 	})
+}
+
+// TestAPIKeyService_RedactedKeyCannotAuthenticate pins the boundary of the
+// legacy plaintext fallback. The key column holds redacted display values that
+// are readable by anyone with read_api_keys, so accepting one as a bearer
+// token would hand out a working credential — and the fallback's read-repair
+// would make it permanent.
+func TestAPIKeyService_RedactedKeyCannotAuthenticate(t *testing.T) {
+	apiKeyService, client := setupTestAPIKeyService(t, xcache.Config{Mode: xcache.ModeMemory})
+	defer apiKeyService.Stop()
+	defer client.Close()
+
+	ctx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+
+	testProject, err := client.Project.Create().
+		SetName(uuid.NewString()).
+		SetDescription("redaction test").
+		SetStatus(project.StatusActive).
+		Save(ctx)
+	require.NoError(t, err)
+
+	rawKey, err := GenerateAPIKey("ah")
+	require.NoError(t, err)
+
+	redacted := xapikey.Redact(rawKey)
+
+	// The schema hook writes redacted values through untouched, which is
+	// exactly the shape a degenerate backup restore would produce: a display
+	// value with no hash behind it.
+	unusable, err := client.APIKey.Create().
+		SetKey(redacted).
+		SetName("no hash behind it").
+		SetProject(testProject).
+		Save(ctx)
+	require.NoError(t, err)
+	require.Empty(t, unusable.KeyHash)
+
+	_, err = apiKeyService.GetAPIKey(ctx, redacted)
+	require.Error(t, err, "the redacted display value must not authenticate")
+	require.ErrorIs(t, err, ErrInvalidAPIKey)
+
+	// The rejected attempt must not have repaired the row into a valid one.
+	reloaded, err := client.APIKey.Get(ctx, unusable.ID)
+	require.NoError(t, err)
+	require.Empty(t, reloaded.KeyHash)
+
+	_, err = apiKeyService.GetAPIKey(ctx, redacted)
+	require.Error(t, err, "a second attempt must not succeed either")
+}
+
+// TestAPIKeyService_LegacyPlaintextKeyStillRepairs guards the other side of
+// the same predicate: rows written by a not-yet-upgraded instance must keep
+// authenticating and get their hash backfilled in place.
+func TestAPIKeyService_LegacyPlaintextKeyStillRepairs(t *testing.T) {
+	apiKeyService, client := setupTestAPIKeyService(t, xcache.Config{Mode: xcache.ModeMemory})
+	defer apiKeyService.Stop()
+	defer client.Close()
+
+	ctx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+
+	testProject, err := client.Project.Create().
+		SetName(uuid.NewString()).
+		SetDescription("legacy repair test").
+		SetStatus(project.StatusActive).
+		Save(ctx)
+	require.NoError(t, err)
+
+	rawKey, err := GenerateAPIKey("ah")
+	require.NoError(t, err)
+
+	created, err := client.APIKey.Create().
+		SetKey(rawKey).
+		SetName("legacy").
+		SetProject(testProject).
+		Save(ctx)
+	require.NoError(t, err)
+
+	// Put the row back into its pre-upgrade shape.
+	_, err = client.APIKey.UpdateOneID(created.ID).
+		SetKey(rawKey).
+		SetKeyHash("").
+		SetKeyPrefix("").
+		Save(ctx)
+	require.NoError(t, err)
+
+	resolved, err := apiKeyService.GetAPIKey(ctx, rawKey)
+	require.NoError(t, err)
+	require.Equal(t, created.ID, resolved.ID)
+
+	repaired, err := client.APIKey.Get(ctx, created.ID)
+	require.NoError(t, err)
+	require.Equal(t, xapikey.Hash(rawKey), repaired.KeyHash)
+	require.Equal(t, xapikey.Redact(rawKey), repaired.Key)
 }

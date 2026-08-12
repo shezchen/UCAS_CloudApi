@@ -167,11 +167,40 @@ ingress:
 
 ## Upgrading
 
-To upgrade the chart:
+Every upgrade has to pass the database credential again, because the chart no
+longer has a default for it:
 
 ```bash
-helm upgrade axonhub ./deploy/helm -f values-production.yaml
+helm upgrade axonhub ./deploy/helm -f values-production.yaml \
+  --set postgresql.auth.password="$DB_PASSWORD" \
+  --set axonhub.env.AXONHUB_DB_DSN="postgres://axonhub:${DB_PASSWORD}@axonhub-postgresql:5432/axonhub?sslmode=disable"
 ```
+
+### Upgrading from a release installed with the old defaults
+
+Releases created before this change were initialised with the password that
+used to be committed to the chart. PostgreSQL reads `POSTGRES_PASSWORD` only
+while creating a new data directory, so the existing PVC keeps that credential:
+passing a different one here restarts the pod with a StatefulSet the database
+does not accept, and AxonHub reports `password authentication failed for user
+"axonhub"`.
+
+Either pass the credential the volume was created with, or change it inside
+PostgreSQL first:
+
+```bash
+NEW_PASSWORD="$(openssl rand -base64 24 | tr -d '/+=')"
+
+kubectl exec -it statefulset/axonhub-postgresql -- \
+  psql -U axonhub -d axonhub -c "ALTER USER axonhub WITH PASSWORD '${NEW_PASSWORD}';"
+
+helm upgrade axonhub ./deploy/helm \
+  --set postgresql.auth.password="$NEW_PASSWORD" \
+  --set axonhub.env.AXONHUB_DB_DSN="postgres://axonhub:${NEW_PASSWORD}@axonhub-postgresql:5432/axonhub?sslmode=disable"
+```
+
+Deleting the PVC to reinitialise from scratch also works, and destroys all
+stored data.
 
 ## Uninstalling
 

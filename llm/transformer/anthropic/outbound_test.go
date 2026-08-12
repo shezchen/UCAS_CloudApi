@@ -1099,6 +1099,81 @@ func TestOutboundTransformer_WebSearchBetaHeader(t *testing.T) {
 		require.Equal(t, "web-search-2025-03-05", result.Headers.Get("Anthropic-Beta"))
 	})
 
+	t.Run("Bedrock carries the beta in the request body", func(t *testing.T) {
+		transformer, err := NewOutboundTransformerWithConfig(&Config{
+			Type:           PlatformBedrock,
+			BaseURL:        "https://bedrock-runtime.us-east-1.amazonaws.com",
+			APIKeyProvider: auth.NewStaticKeyProvider("test-key"),
+		})
+		require.NoError(t, err)
+
+		chatReq := &llm.Request{
+			Model:     "anthropic.claude-sonnet-4-20250514-v1:0",
+			MaxTokens: func() *int64 { v := int64(1024); return &v }(),
+			Messages: []llm.Message{
+				{
+					Role: "user",
+					Content: llm.MessageContent{
+						Content: func() *string { s := "What's the weather?"; return &s }(),
+					},
+				},
+			},
+			Tools: []llm.Tool{
+				{
+					Type: llm.ToolTypeWebSearch,
+				},
+			},
+		}
+
+		result, err := transformer.TransformRequest(t.Context(), chatReq)
+		require.NoError(t, err)
+
+		// Bedrock has no Anthropic-Beta header; the flag only counts if it
+		// reaches the marshalled body.
+		require.Empty(t, result.Headers.Get("Anthropic-Beta"))
+		require.Contains(t, string(result.Body), `"anthropic_beta":["web-search-2025-03-05"]`)
+
+		var anthropicReq MessageRequest
+
+		require.NoError(t, json.Unmarshal(result.Body, &anthropicReq))
+		require.Equal(t, []string{"web-search-2025-03-05"}, anthropicReq.AnthropicBeta)
+	})
+
+	t.Run("Bedrock omits the beta without a web_search tool", func(t *testing.T) {
+		transformer, err := NewOutboundTransformerWithConfig(&Config{
+			Type:           PlatformBedrock,
+			BaseURL:        "https://bedrock-runtime.us-east-1.amazonaws.com",
+			APIKeyProvider: auth.NewStaticKeyProvider("test-key"),
+		})
+		require.NoError(t, err)
+
+		chatReq := &llm.Request{
+			Model:     "anthropic.claude-sonnet-4-20250514-v1:0",
+			MaxTokens: func() *int64 { v := int64(1024); return &v }(),
+			Messages: []llm.Message{
+				{
+					Role: "user",
+					Content: llm.MessageContent{
+						Content: func() *string { s := "Hello"; return &s }(),
+					},
+				},
+			},
+			Tools: []llm.Tool{
+				{
+					Type: "function",
+					Function: llm.Function{
+						Name:        "calculator",
+						Description: "Perform calculations",
+					},
+				},
+			},
+		}
+
+		result, err := transformer.TransformRequest(t.Context(), chatReq)
+		require.NoError(t, err)
+		require.NotContains(t, string(result.Body), "anthropic_beta")
+	})
+
 	t.Run("Direct Anthropic API with web_search_20250305 type input", func(t *testing.T) {
 		transformer, err := NewOutboundTransformer("https://api.anthropic.com", "test-api-key")
 		require.NoError(t, err)

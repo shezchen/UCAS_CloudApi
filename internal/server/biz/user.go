@@ -313,7 +313,8 @@ func (s *UserService) UpdateUser(ctx context.Context, id int, input ent.UpdateUs
 			return nil, err
 		}
 
-		mut.SetPassword(hashedPassword)
+		mut.SetPassword(hashedPassword).
+			AddAuthVersion(1)
 	}
 
 	if input.Scopes != nil {
@@ -388,7 +389,8 @@ func (s *UserService) UpdateOwnProfile(ctx context.Context, input ent.UpdateUser
 				return nil, err
 			}
 
-			mut.SetPassword(hashedPassword)
+			mut.SetPassword(hashedPassword).
+				AddAuthVersion(1)
 		}
 
 		user, err := mut.Save(ctx)

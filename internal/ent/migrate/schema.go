@@ -297,6 +297,7 @@ var (
 		{Name: "id", Type: field.TypeInt, Increment: true},
 		{Name: "created_at", Type: field.TypeTime, Default: schema.Expr("CURRENT_TIMESTAMP")},
 		{Name: "updated_at", Type: field.TypeTime, Default: schema.Expr("CURRENT_TIMESTAMP")},
+		{Name: "purpose", Type: field.TypeEnum, Enums: []string{"registration", "password_reset"}, Default: "registration"},
 		{Name: "email", Type: field.TypeString, Size: 320},
 		{Name: "code_digest", Type: field.TypeString, Size: 64},
 		{Name: "source_hash", Type: field.TypeString, Size: 64},
@@ -311,24 +312,24 @@ var (
 		PrimaryKey: []*schema.Column{EmailVerificationChallengesColumns[0]},
 		Indexes: []*schema.Index{
 			{
-				Name:    "emailverificationchallenge_email_created_at",
+				Name:    "emailverificationchallenge_email_purpose_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{EmailVerificationChallengesColumns[3], EmailVerificationChallengesColumns[1]},
+				Columns: []*schema.Column{EmailVerificationChallengesColumns[4], EmailVerificationChallengesColumns[3], EmailVerificationChallengesColumns[1]},
 			},
 			{
-				Name:    "emailverificationchallenge_source_hash_created_at",
+				Name:    "emailverificationchallenge_source_hash_purpose_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{EmailVerificationChallengesColumns[5], EmailVerificationChallengesColumns[1]},
+				Columns: []*schema.Column{EmailVerificationChallengesColumns[6], EmailVerificationChallengesColumns[3], EmailVerificationChallengesColumns[1]},
 			},
 			{
 				Name:    "emailverificationchallenge_expires_at",
 				Unique:  false,
-				Columns: []*schema.Column{EmailVerificationChallengesColumns[6]},
+				Columns: []*schema.Column{EmailVerificationChallengesColumns[7]},
 			},
 			{
-				Name:    "emailverificationchallenge_email_consumed_at_expires_at",
+				Name:    "emailverificationchallenge_email_purpose_consumed_at_expires_at",
 				Unique:  false,
-				Columns: []*schema.Column{EmailVerificationChallengesColumns[3], EmailVerificationChallengesColumns[8], EmailVerificationChallengesColumns[6]},
+				Columns: []*schema.Column{EmailVerificationChallengesColumns[4], EmailVerificationChallengesColumns[3], EmailVerificationChallengesColumns[9], EmailVerificationChallengesColumns[7]},
 			},
 		},
 	}
@@ -919,11 +920,11 @@ var (
 			},
 		},
 		Indexes: []*schema.Index{
-				{
-					Name:    "usage_logs_by_request_id",
-					Unique:  false,
-					Columns: []*schema.Column{UsageLogsColumns[28]},
-				},
+			{
+				Name:    "usage_logs_by_request_id",
+				Unique:  false,
+				Columns: []*schema.Column{UsageLogsColumns[28]},
+			},
 			{
 				Name:    "usage_logs_by_created_at",
 				Unique:  false,
@@ -966,6 +967,7 @@ var (
 		{Name: "last_name", Type: field.TypeString, Default: ""},
 		{Name: "avatar", Type: field.TypeString, Nullable: true, SchemaType: map[string]string{"mysql": "mediumtext"}},
 		{Name: "is_owner", Type: field.TypeBool, Default: false},
+		{Name: "auth_version", Type: field.TypeInt64, Default: 0},
 		{Name: "daily_token_limit", Type: field.TypeInt64, Default: 200000000},
 		{Name: "scopes", Type: field.TypeJSON, Nullable: true},
 	}

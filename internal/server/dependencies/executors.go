@@ -19,7 +19,7 @@ type RejectionHandler struct{}
 
 func (h *RejectionHandler) RejectExecution(runnable executors.Runnable, e executors.Executor) error {
 	log.Error(context.Background(), "runnable rejection by executor", log.String("runnable", reflect.ValueOf(runnable).String()))
-	return nil
+	return executors.ErrRejectedExecution
 }
 
 func NewExecutors(logger *log.Logger) executors.ScheduledExecutor {

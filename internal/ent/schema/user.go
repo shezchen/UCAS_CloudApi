@@ -51,6 +51,12 @@ func (User) Fields() []ent.Field {
 			},
 		),
 		field.Bool("is_owner").Default(false),
+		// Incrementing auth_version revokes every previously issued browser JWT.
+		// Version 0 remains compatible with tokens issued before this field existed.
+		field.Int64("auth_version").
+			Default(0).
+			Min(0).
+			Annotations(entgql.Skip()),
 		// Retained only for backward-compatible storage. Campus sharing quota is
 		// global and is enforced from UserDailyQuotaSettings for every account;
 		// this legacy per-user value must not be exposed as a configurable field.

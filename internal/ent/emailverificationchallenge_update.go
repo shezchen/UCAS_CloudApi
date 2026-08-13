@@ -35,6 +35,20 @@ func (_u *EmailVerificationChallengeUpdate) SetUpdatedAt(v time.Time) *EmailVeri
 	return _u
 }
 
+// SetPurpose sets the "purpose" field.
+func (_u *EmailVerificationChallengeUpdate) SetPurpose(v emailverificationchallenge.Purpose) *EmailVerificationChallengeUpdate {
+	_u.mutation.SetPurpose(v)
+	return _u
+}
+
+// SetNillablePurpose sets the "purpose" field if the given value is not nil.
+func (_u *EmailVerificationChallengeUpdate) SetNillablePurpose(v *emailverificationchallenge.Purpose) *EmailVerificationChallengeUpdate {
+	if v != nil {
+		_u.SetPurpose(*v)
+	}
+	return _u
+}
+
 // SetEmail sets the "email" field.
 func (_u *EmailVerificationChallengeUpdate) SetEmail(v string) *EmailVerificationChallengeUpdate {
 	_u.mutation.SetEmail(v)
@@ -181,6 +195,11 @@ func (_u *EmailVerificationChallengeUpdate) defaults() error {
 
 // check runs all checks and user-defined validators on the builder.
 func (_u *EmailVerificationChallengeUpdate) check() error {
+	if v, ok := _u.mutation.Purpose(); ok {
+		if err := emailverificationchallenge.PurposeValidator(v); err != nil {
+			return &ValidationError{Name: "purpose", err: fmt.Errorf(`ent: validator failed for field "EmailVerificationChallenge.purpose": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.Email(); ok {
 		if err := emailverificationchallenge.EmailValidator(v); err != nil {
 			return &ValidationError{Name: "email", err: fmt.Errorf(`ent: validator failed for field "EmailVerificationChallenge.email": %w`, err)}
@@ -224,6 +243,9 @@ func (_u *EmailVerificationChallengeUpdate) sqlSave(ctx context.Context) (_node 
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(emailverificationchallenge.FieldUpdatedAt, field.TypeTime, value)
+	}
+	if value, ok := _u.mutation.Purpose(); ok {
+		_spec.SetField(emailverificationchallenge.FieldPurpose, field.TypeEnum, value)
 	}
 	if value, ok := _u.mutation.Email(); ok {
 		_spec.SetField(emailverificationchallenge.FieldEmail, field.TypeString, value)
@@ -274,6 +296,20 @@ type EmailVerificationChallengeUpdateOne struct {
 // SetUpdatedAt sets the "updated_at" field.
 func (_u *EmailVerificationChallengeUpdateOne) SetUpdatedAt(v time.Time) *EmailVerificationChallengeUpdateOne {
 	_u.mutation.SetUpdatedAt(v)
+	return _u
+}
+
+// SetPurpose sets the "purpose" field.
+func (_u *EmailVerificationChallengeUpdateOne) SetPurpose(v emailverificationchallenge.Purpose) *EmailVerificationChallengeUpdateOne {
+	_u.mutation.SetPurpose(v)
+	return _u
+}
+
+// SetNillablePurpose sets the "purpose" field if the given value is not nil.
+func (_u *EmailVerificationChallengeUpdateOne) SetNillablePurpose(v *emailverificationchallenge.Purpose) *EmailVerificationChallengeUpdateOne {
+	if v != nil {
+		_u.SetPurpose(*v)
+	}
 	return _u
 }
 
@@ -436,6 +472,11 @@ func (_u *EmailVerificationChallengeUpdateOne) defaults() error {
 
 // check runs all checks and user-defined validators on the builder.
 func (_u *EmailVerificationChallengeUpdateOne) check() error {
+	if v, ok := _u.mutation.Purpose(); ok {
+		if err := emailverificationchallenge.PurposeValidator(v); err != nil {
+			return &ValidationError{Name: "purpose", err: fmt.Errorf(`ent: validator failed for field "EmailVerificationChallenge.purpose": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.Email(); ok {
 		if err := emailverificationchallenge.EmailValidator(v); err != nil {
 			return &ValidationError{Name: "email", err: fmt.Errorf(`ent: validator failed for field "EmailVerificationChallenge.email": %w`, err)}
@@ -496,6 +537,9 @@ func (_u *EmailVerificationChallengeUpdateOne) sqlSave(ctx context.Context) (_no
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(emailverificationchallenge.FieldUpdatedAt, field.TypeTime, value)
+	}
+	if value, ok := _u.mutation.Purpose(); ok {
+		_spec.SetField(emailverificationchallenge.FieldPurpose, field.TypeEnum, value)
 	}
 	if value, ok := _u.mutation.Email(); ok {
 		_spec.SetField(emailverificationchallenge.FieldEmail, field.TypeString, value)

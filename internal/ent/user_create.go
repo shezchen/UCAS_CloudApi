@@ -182,6 +182,20 @@ func (_c *UserCreate) SetNillableIsOwner(v *bool) *UserCreate {
 	return _c
 }
 
+// SetAuthVersion sets the "auth_version" field.
+func (_c *UserCreate) SetAuthVersion(v int64) *UserCreate {
+	_c.mutation.SetAuthVersion(v)
+	return _c
+}
+
+// SetNillableAuthVersion sets the "auth_version" field if the given value is not nil.
+func (_c *UserCreate) SetNillableAuthVersion(v *int64) *UserCreate {
+	if v != nil {
+		_c.SetAuthVersion(*v)
+	}
+	return _c
+}
+
 // SetDailyTokenLimit sets the "daily_token_limit" field.
 func (_c *UserCreate) SetDailyTokenLimit(v int64) *UserCreate {
 	_c.mutation.SetDailyTokenLimit(v)
@@ -401,6 +415,10 @@ func (_c *UserCreate) defaults() error {
 		v := user.DefaultIsOwner
 		_c.mutation.SetIsOwner(v)
 	}
+	if _, ok := _c.mutation.AuthVersion(); !ok {
+		v := user.DefaultAuthVersion
+		_c.mutation.SetAuthVersion(v)
+	}
 	if _, ok := _c.mutation.DailyTokenLimit(); !ok {
 		v := user.DefaultDailyTokenLimit
 		_c.mutation.SetDailyTokenLimit(v)
@@ -450,6 +468,14 @@ func (_c *UserCreate) check() error {
 	}
 	if _, ok := _c.mutation.IsOwner(); !ok {
 		return &ValidationError{Name: "is_owner", err: errors.New(`ent: missing required field "User.is_owner"`)}
+	}
+	if _, ok := _c.mutation.AuthVersion(); !ok {
+		return &ValidationError{Name: "auth_version", err: errors.New(`ent: missing required field "User.auth_version"`)}
+	}
+	if v, ok := _c.mutation.AuthVersion(); ok {
+		if err := user.AuthVersionValidator(v); err != nil {
+			return &ValidationError{Name: "auth_version", err: fmt.Errorf(`ent: validator failed for field "User.auth_version": %w`, err)}
+		}
 	}
 	if _, ok := _c.mutation.DailyTokenLimit(); !ok {
 		return &ValidationError{Name: "daily_token_limit", err: errors.New(`ent: missing required field "User.daily_token_limit"`)}
@@ -533,6 +559,10 @@ func (_c *UserCreate) createSpec() (*User, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.IsOwner(); ok {
 		_spec.SetField(user.FieldIsOwner, field.TypeBool, value)
 		_node.IsOwner = value
+	}
+	if value, ok := _c.mutation.AuthVersion(); ok {
+		_spec.SetField(user.FieldAuthVersion, field.TypeInt64, value)
+		_node.AuthVersion = value
 	}
 	if value, ok := _c.mutation.DailyTokenLimit(); ok {
 		_spec.SetField(user.FieldDailyTokenLimit, field.TypeInt64, value)
@@ -874,6 +904,24 @@ func (u *UserUpsert) UpdateIsOwner() *UserUpsert {
 	return u
 }
 
+// SetAuthVersion sets the "auth_version" field.
+func (u *UserUpsert) SetAuthVersion(v int64) *UserUpsert {
+	u.Set(user.FieldAuthVersion, v)
+	return u
+}
+
+// UpdateAuthVersion sets the "auth_version" field to the value that was provided on create.
+func (u *UserUpsert) UpdateAuthVersion() *UserUpsert {
+	u.SetExcluded(user.FieldAuthVersion)
+	return u
+}
+
+// AddAuthVersion adds v to the "auth_version" field.
+func (u *UserUpsert) AddAuthVersion(v int64) *UserUpsert {
+	u.Add(user.FieldAuthVersion, v)
+	return u
+}
+
 // SetDailyTokenLimit sets the "daily_token_limit" field.
 func (u *UserUpsert) SetDailyTokenLimit(v int64) *UserUpsert {
 	u.Set(user.FieldDailyTokenLimit, v)
@@ -1120,6 +1168,27 @@ func (u *UserUpsertOne) SetIsOwner(v bool) *UserUpsertOne {
 func (u *UserUpsertOne) UpdateIsOwner() *UserUpsertOne {
 	return u.Update(func(s *UserUpsert) {
 		s.UpdateIsOwner()
+	})
+}
+
+// SetAuthVersion sets the "auth_version" field.
+func (u *UserUpsertOne) SetAuthVersion(v int64) *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.SetAuthVersion(v)
+	})
+}
+
+// AddAuthVersion adds v to the "auth_version" field.
+func (u *UserUpsertOne) AddAuthVersion(v int64) *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.AddAuthVersion(v)
+	})
+}
+
+// UpdateAuthVersion sets the "auth_version" field to the value that was provided on create.
+func (u *UserUpsertOne) UpdateAuthVersion() *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateAuthVersion()
 	})
 }
 
@@ -1541,6 +1610,27 @@ func (u *UserUpsertBulk) SetIsOwner(v bool) *UserUpsertBulk {
 func (u *UserUpsertBulk) UpdateIsOwner() *UserUpsertBulk {
 	return u.Update(func(s *UserUpsert) {
 		s.UpdateIsOwner()
+	})
+}
+
+// SetAuthVersion sets the "auth_version" field.
+func (u *UserUpsertBulk) SetAuthVersion(v int64) *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.SetAuthVersion(v)
+	})
+}
+
+// AddAuthVersion adds v to the "auth_version" field.
+func (u *UserUpsertBulk) AddAuthVersion(v int64) *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.AddAuthVersion(v)
+	})
+}
+
+// UpdateAuthVersion sets the "auth_version" field to the value that was provided on create.
+func (u *UserUpsertBulk) UpdateAuthVersion() *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateAuthVersion()
 	})
 }
 

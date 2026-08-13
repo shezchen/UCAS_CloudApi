@@ -19,10 +19,17 @@ import (
 
 const verificationSubject = "【AxonHub】邮箱验证码"
 
+type VerificationPurpose string
+
+const (
+	VerificationPurposeRegistration  VerificationPurpose = "registration"
+	VerificationPurposePasswordReset VerificationPurpose = "password_reset"
+)
+
 // VerificationSender sends one-time verification codes. Implementations must not retain or
 // log the plaintext code after SendVerificationCode returns.
 type VerificationSender interface {
-	SendVerificationCode(ctx context.Context, to, code string, ttl time.Duration) error
+	SendVerificationCode(ctx context.Context, to, code string, ttl time.Duration, purpose VerificationPurpose) error
 }
 
 type smtpSender struct {
@@ -41,7 +48,12 @@ func NewVerificationSender(config Config) (VerificationSender, error) {
 	return &smtpSender{config: config}, nil
 }
 
-func (s *smtpSender) SendVerificationCode(ctx context.Context, to, code string, ttl time.Duration) error {
+func (s *smtpSender) SendVerificationCode(
+	ctx context.Context,
+	to, code string,
+	ttl time.Duration,
+	purpose VerificationPurpose,
+) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -56,8 +68,11 @@ func (s *smtpSender) SendVerificationCode(ctx context.Context, to, code string, 
 	if ttl <= 0 {
 		return fmt.Errorf("verification code ttl must be greater than zero")
 	}
+	if purpose != VerificationPurposeRegistration && purpose != VerificationPurposePasswordReset {
+		return fmt.Errorf("unsupported verification purpose")
+	}
 
-	message, err := buildVerificationMessage(s.config, recipient, code, ttl, time.Now())
+	message, err := buildVerificationMessage(s.config, recipient, code, ttl, purpose, time.Now())
 	if err != nil {
 		return fmt.Errorf("build verification email: %w", err)
 	}
@@ -202,11 +217,22 @@ func validateVerificationCode(code string) error {
 	return nil
 }
 
-func buildVerificationMessage(config Config, to, code string, ttl time.Duration, sentAt time.Time) ([]byte, error) {
+func buildVerificationMessage(
+	config Config,
+	to, code string,
+	ttl time.Duration,
+	purpose VerificationPurpose,
+	sentAt time.Time,
+) ([]byte, error) {
 	from := (&stdmail.Address{Name: config.SenderName, Address: config.From}).String()
 	subject := mime.QEncoding.Encode("UTF-8", verificationSubject)
+	purposeText := "完成账户注册"
+	if purpose == VerificationPurposePasswordReset {
+		purposeText = "重置账户密码"
+	}
 	body := fmt.Sprintf(
-		"您好：\r\n\r\n您的 AxonHub 校内共享邮箱验证码是：\r\n\r\n    %s\r\n\r\n验证码将在 %s 后失效，且仅可使用一次。请勿向任何人透露此验证码。\r\n如非本人操作，请忽略此邮件。\r\n",
+		"您好：\r\n\r\n您正在使用此邮箱%s，验证码是：\r\n\r\n    %s\r\n\r\n验证码将在 %s 后失效，且仅可使用一次。请勿向任何人透露此验证码。\r\n如非本人操作，请忽略此邮件。\r\n",
+		purposeText,
 		code,
 		formatDurationChinese(ttl),
 	)

@@ -9,11 +9,14 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/zhenzou/executors"
 	"go.uber.org/fx"
 	"golang.org/x/crypto/bcrypt"
 
@@ -36,6 +39,14 @@ type CampusEmailVerificationConfig struct {
 	SourceHourlyLimit int           `conf:"source_hourly_limit" yaml:"source_hourly_limit" json:"source_hourly_limit"`
 	GlobalHourlyLimit int           `conf:"global_hourly_limit" yaml:"global_hourly_limit" json:"global_hourly_limit"`
 	MaxAttempts       int           `conf:"max_attempts"        yaml:"max_attempts"        json:"max_attempts"`
+}
+
+type issuedEmailVerification struct {
+	ID        int
+	Code      string
+	Email     string
+	ExpiresAt time.Time
+	Secret    string
 }
 
 func (c CampusEmailVerificationConfig) withDefaults() CampusEmailVerificationConfig {
@@ -99,7 +110,17 @@ type AuthServiceParams struct {
 	Ent                     *ent.Client
 	EmailVerificationConfig CampusEmailVerificationConfig
 	VerificationSender      servermail.VerificationSender
+	VerificationExecutor    PasswordResetVerificationExecutor
 	AllowNoAuth             bool `name:"allow_no_auth"`
+}
+
+// PasswordResetVerificationExecutor moves account lookup and SMTP delivery
+// off the public request path, so response latency cannot reveal whether an
+// address belongs to an account.
+type PasswordResetVerificationExecutor func(func(context.Context)) error
+
+func NewPasswordResetVerificationExecutor(exec executors.ScheduledExecutor) PasswordResetVerificationExecutor {
+	return exec.ExecuteFunc
 }
 
 func NewAuthService(params AuthServiceParams) *AuthService {
@@ -113,6 +134,7 @@ func NewAuthService(params AuthServiceParams) *AuthService {
 		OIDCService:             params.OIDCService,
 		EmailVerificationConfig: params.EmailVerificationConfig.withDefaults(),
 		VerificationSender:      params.VerificationSender,
+		VerificationExecutor:    params.VerificationExecutor,
 		AllowNoAuth:             params.AllowNoAuth,
 		now:                     time.Now,
 	}
@@ -127,6 +149,7 @@ type AuthService struct {
 	OIDCService             *OIDCService
 	EmailVerificationConfig CampusEmailVerificationConfig
 	VerificationSender      servermail.VerificationSender
+	VerificationExecutor    PasswordResetVerificationExecutor
 	AllowNoAuth             bool
 
 	verificationMu sync.Mutex
@@ -178,22 +201,30 @@ func (s *AuthService) verificationSecret(ctx context.Context) (string, error) {
 	return secret, nil
 }
 
-// RequestCampusEmailVerification persists a rate-limited one-time challenge
-// before sending it. Neither the plaintext code nor the client address is
-// stored in the database or written to logs.
-func (s *AuthService) RequestCampusEmailVerification(ctx context.Context, email, source string) error {
-	normalizedEmail, err := normalizeCampusRegistrationEmail(email)
-	if err != nil {
-		return err
+func verificationDigestPurposes(purpose emailverificationchallenge.Purpose) (source, code string) {
+	if purpose == emailverificationchallenge.PurposePasswordReset {
+		return "password-reset-source", "password-reset-code"
 	}
 
+	return "registration-source", "registration-code"
+}
+
+// issueEmailVerification persists a rate-limited one-time challenge. Neither
+// the plaintext code nor the client address is stored in the database or
+// written to logs. Purpose is part of every lookup and digest domain, so a code
+// created for registration can never authorize a password reset (or vice versa).
+func (s *AuthService) issueEmailVerification(
+	ctx context.Context,
+	normalizedEmail, source string,
+	purpose emailverificationchallenge.Purpose,
+) (*issuedEmailVerification, error) {
 	secret, err := s.verificationSecret(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	code, err := generateEmailVerificationCode()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	config := s.EmailVerificationConfig
@@ -201,8 +232,11 @@ func (s *AuthService) RequestCampusEmailVerification(ctx context.Context, email,
 	if strings.TrimSpace(source) == "" {
 		source = "unknown"
 	}
-	sourceHash := verificationDigest(secret, "registration-source", "", source)
-	codeDigest := verificationDigest(secret, "registration-code", normalizedEmail, code)
+	sourcePurpose, codePurpose := verificationDigestPurposes(purpose)
+	sourceHash := verificationDigest(secret, sourcePurpose, "", source)
+	codeDigest := verificationDigest(secret, codePurpose, normalizedEmail, code)
+	expiresAt := now.Add(config.CodeTTL)
+	var challenge *ent.EmailVerificationChallenge
 
 	// Serialize check-and-create within this process. Database rows keep the
 	// limits durable across restarts; the mutex closes the common concurrent
@@ -211,13 +245,16 @@ func (s *AuthService) RequestCampusEmailVerification(ctx context.Context, email,
 		s.verificationMu.Lock()
 		defer s.verificationMu.Unlock()
 
-		err = authz.RunWithSystemBypassVoid(ctx, "campus-email-verification-request", func(bypassCtx context.Context) error {
+		err = authz.RunWithSystemBypassVoid(ctx, "email-verification-request", func(bypassCtx context.Context) error {
 			return s.RunInTransaction(bypassCtx, func(txCtx context.Context) error {
 				client := s.entFromContext(txCtx)
 				hourAgo := now.Add(-time.Hour)
 
 				latest, queryErr := client.EmailVerificationChallenge.Query().
-					Where(emailverificationchallenge.EmailEQ(normalizedEmail)).
+					Where(
+						emailverificationchallenge.EmailEQ(normalizedEmail),
+						emailverificationchallenge.PurposeEQ(purpose),
+					).
 					Order(ent.Desc(emailverificationchallenge.FieldCreatedAt)).
 					First(txCtx)
 				if queryErr != nil && !ent.IsNotFound(queryErr) {
@@ -230,6 +267,7 @@ func (s *AuthService) RequestCampusEmailVerification(ctx context.Context, email,
 				emailCount, queryErr := client.EmailVerificationChallenge.Query().
 					Where(
 						emailverificationchallenge.EmailEQ(normalizedEmail),
+						emailverificationchallenge.PurposeEQ(purpose),
 						emailverificationchallenge.CreatedAtGTE(hourAgo),
 					).
 					Count(txCtx)
@@ -243,6 +281,7 @@ func (s *AuthService) RequestCampusEmailVerification(ctx context.Context, email,
 				sourceCount, queryErr := client.EmailVerificationChallenge.Query().
 					Where(
 						emailverificationchallenge.SourceHashEQ(sourceHash),
+						emailverificationchallenge.PurposeEQ(purpose),
 						emailverificationchallenge.CreatedAtGTE(hourAgo),
 					).
 					Count(txCtx)
@@ -253,6 +292,8 @@ func (s *AuthService) RequestCampusEmailVerification(ctx context.Context, email,
 					return ErrVerificationRateLimit
 				}
 
+				// The global limit is deliberately shared across purposes because all
+				// verification messages consume the same SMTP resource.
 				globalCount, queryErr := client.EmailVerificationChallenge.Query().
 					Where(emailverificationchallenge.CreatedAtGTE(hourAgo)).
 					Count(txCtx)
@@ -263,14 +304,15 @@ func (s *AuthService) RequestCampusEmailVerification(ctx context.Context, email,
 					return ErrVerificationRateLimit
 				}
 
-				_, createErr := client.EmailVerificationChallenge.Create().
+				challenge, queryErr = client.EmailVerificationChallenge.Create().
+					SetPurpose(purpose).
 					SetEmail(normalizedEmail).
 					SetCodeDigest(codeDigest).
 					SetSourceHash(sourceHash).
-					SetExpiresAt(now.Add(config.CodeTTL)).
+					SetExpiresAt(expiresAt).
 					Save(txCtx)
-				if createErr != nil {
-					return fmt.Errorf("create email verification challenge: %w", createErr)
+				if queryErr != nil {
+					return fmt.Errorf("create email verification challenge: %w", queryErr)
 				}
 
 				return nil
@@ -278,12 +320,366 @@ func (s *AuthService) RequestCampusEmailVerification(ctx context.Context, email,
 		})
 	}()
 	if err != nil {
+		return nil, err
+	}
+
+	return &issuedEmailVerification{
+		ID:        challenge.ID,
+		Code:      code,
+		Email:     normalizedEmail,
+		ExpiresAt: expiresAt,
+		Secret:    secret,
+	}, nil
+}
+
+// RequestCampusEmailVerification creates and sends a registration-only code.
+func (s *AuthService) RequestCampusEmailVerification(ctx context.Context, email, source string) error {
+	normalizedEmail, err := normalizeCampusRegistrationEmail(email)
+	if err != nil {
 		return err
 	}
 
-	if err := s.VerificationSender.SendVerificationCode(ctx, normalizedEmail, code, config.CodeTTL); err != nil {
+	issued, err := s.issueEmailVerification(
+		ctx,
+		normalizedEmail,
+		source,
+		emailverificationchallenge.PurposeRegistration,
+	)
+	if err != nil {
+		return err
+	}
+
+	if err := s.VerificationSender.SendVerificationCode(
+		ctx,
+		issued.Email,
+		issued.Code,
+		s.EmailVerificationConfig.CodeTTL,
+		servermail.VerificationPurposeRegistration,
+	); err != nil {
 		return fmt.Errorf("%w: failed to send verification email", ErrVerificationUnavailable)
 	}
+
+	return nil
+}
+
+func normalizeAccountEmail(email string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(email))
+	if normalized == "" || len(normalized) > 320 || !utf8.ValidString(normalized) {
+		return "", ErrInvalidEmail
+	}
+	for _, r := range normalized {
+		// Account email addresses in AxonHub are ASCII. Reject whitespace,
+		// controls, display names and Unicode lookalikes at the service boundary.
+		if r < 33 || r > 126 {
+			return "", ErrInvalidEmail
+		}
+	}
+	local, domain, ok := strings.Cut(normalized, "@")
+	if !ok || local == "" || domain == "" || strings.Contains(domain, "@") {
+		return "", ErrInvalidEmail
+	}
+
+	return normalized, nil
+}
+
+func validateResetPassword(password string) error {
+	if password == OIDC_ONLY_PLACEHOLDER || utf8.RuneCountInString(password) < 8 || len([]byte(password)) > 72 {
+		return ErrInvalidNewPassword
+	}
+
+	return nil
+}
+
+func passwordResetChallengeToken(issue *issuedEmailVerification) string {
+	payload := fmt.Sprintf("v1.%d.%d", issue.ID, issue.ExpiresAt.Unix())
+	signature := verificationDigest(
+		issue.Secret,
+		"password-reset-challenge-token",
+		issue.Email,
+		payload,
+	)
+
+	return payload + "." + signature
+}
+
+func parsePasswordResetChallengeToken(secret, email, token string, now time.Time) (int, error) {
+	if len(token) > 256 {
+		return 0, ErrVerificationInvalid
+	}
+	parts := strings.Split(strings.TrimSpace(token), ".")
+	if len(parts) != 4 || parts[0] != "v1" {
+		return 0, ErrVerificationInvalid
+	}
+
+	challengeID, err := strconv.Atoi(parts[1])
+	if err != nil || challengeID <= 0 {
+		return 0, ErrVerificationInvalid
+	}
+	expiresUnix, err := strconv.ParseInt(parts[2], 10, 64)
+	if err != nil || expiresUnix <= now.Unix() {
+		return 0, ErrVerificationInvalid
+	}
+
+	payload := strings.Join(parts[:3], ".")
+	expectedSignature := verificationDigest(secret, "password-reset-challenge-token", email, payload)
+	if !hmac.Equal([]byte(parts[3]), []byte(expectedSignature)) {
+		return 0, ErrVerificationInvalid
+	}
+
+	return challengeID, nil
+}
+
+func (s *AuthService) passwordResetAccountExists(ctx context.Context, email string) (bool, error) {
+	return authz.RunWithSystemBypass(ctx, "password-reset-account-lookup", func(bypassCtx context.Context) (bool, error) {
+		return s.entFromContext(bypassCtx).User.Query().
+			Where(
+				user.EmailEqualFold(email),
+				user.StatusEQ(user.StatusActivated),
+			).
+			Exist(bypassCtx)
+	})
+}
+
+func (s *AuthService) consumePasswordResetChallenge(ctx context.Context, challengeID int) error {
+	return authz.RunWithSystemBypassVoid(ctx, "password-reset-challenge-invalidate", func(bypassCtx context.Context) error {
+		_, err := s.entFromContext(bypassCtx).EmailVerificationChallenge.Update().
+			Where(
+				emailverificationchallenge.IDEQ(challengeID),
+				emailverificationchallenge.PurposeEQ(emailverificationchallenge.PurposePasswordReset),
+				emailverificationchallenge.ConsumedAtIsNil(),
+			).
+			SetConsumedAt(s.now()).
+			Save(bypassCtx)
+
+		return err
+	})
+}
+
+func (s *AuthService) invalidateUndeliveredPasswordResetChallenge(ctx context.Context, challengeID int, cause error) {
+	if consumeErr := s.consumePasswordResetChallenge(ctx, challengeID); consumeErr != nil {
+		log.Error(ctx, "failed to invalidate undelivered password reset challenge",
+			log.Int("challenge_id", challengeID), log.Cause(consumeErr))
+	}
+	if cause != nil {
+		log.Warn(ctx, "password reset verification was not delivered",
+			log.Int("challenge_id", challengeID), log.Cause(cause))
+	}
+}
+
+func (s *AuthService) deliverPasswordResetVerification(ctx context.Context, issued *issuedEmailVerification) {
+	exists, err := s.passwordResetAccountExists(ctx, issued.Email)
+	if err != nil {
+		s.invalidateUndeliveredPasswordResetChallenge(ctx, issued.ID, fmt.Errorf("check password reset account: %w", err))
+		return
+	}
+	if !exists {
+		s.invalidateUndeliveredPasswordResetChallenge(ctx, issued.ID, nil)
+		return
+	}
+
+	if err := s.VerificationSender.SendVerificationCode(
+		ctx,
+		issued.Email,
+		issued.Code,
+		s.EmailVerificationConfig.CodeTTL,
+		servermail.VerificationPurposePasswordReset,
+	); err != nil {
+		s.invalidateUndeliveredPasswordResetChallenge(ctx, issued.ID, err)
+	}
+}
+
+// RequestPasswordResetVerification always creates and returns the same shape
+// of challenge token for syntactically valid addresses. Account lookup and
+// SMTP delivery run after the response path is decided, so neither the body
+// nor response latency discloses whether the account exists.
+func (s *AuthService) RequestPasswordResetVerification(ctx context.Context, email, source string) (string, error) {
+	normalizedEmail, err := normalizeAccountEmail(email)
+	if err != nil {
+		return "", err
+	}
+
+	issued, err := s.issueEmailVerification(
+		ctx,
+		normalizedEmail,
+		source,
+		emailverificationchallenge.PurposePasswordReset,
+	)
+	if err != nil {
+		return "", err
+	}
+	challengeToken := passwordResetChallengeToken(issued)
+
+	if err := s.VerificationExecutor(func(deliveryCtx context.Context) {
+		s.deliverPasswordResetVerification(deliveryCtx, issued)
+	}); err != nil {
+		s.invalidateUndeliveredPasswordResetChallenge(ctx, issued.ID, err)
+		return "", fmt.Errorf("%w: password reset delivery queue is unavailable", ErrVerificationUnavailable)
+	}
+
+	return challengeToken, nil
+}
+
+// ResetPassword verifies and consumes one exact password-reset challenge, then
+// atomically changes the password and advances auth_version to revoke browser
+// sessions issued before the reset. API keys remain independent credentials.
+func (s *AuthService) ResetPassword(ctx context.Context, email, challengeToken, verificationCode, newPassword string) error {
+	if err := validateResetPassword(newPassword); err != nil {
+		return err
+	}
+	normalizedEmail, err := normalizeAccountEmail(email)
+	if err != nil {
+		return err
+	}
+	code, err := normalizeVerificationCode(verificationCode)
+	if err != nil {
+		return err
+	}
+	secret, err := s.verificationSecret(ctx)
+	if err != nil {
+		return err
+	}
+	now := s.now()
+	challengeID, err := parsePasswordResetChallengeToken(secret, normalizedEmail, challengeToken, now)
+	if err != nil {
+		return err
+	}
+
+	challenge, err := authz.RunWithSystemBypass(ctx, "password-reset-challenge-lookup", func(bypassCtx context.Context) (*ent.EmailVerificationChallenge, error) {
+		return s.entFromContext(bypassCtx).EmailVerificationChallenge.Query().
+			Where(
+				emailverificationchallenge.IDEQ(challengeID),
+				emailverificationchallenge.EmailEQ(normalizedEmail),
+				emailverificationchallenge.PurposeEQ(emailverificationchallenge.PurposePasswordReset),
+				emailverificationchallenge.ConsumedAtIsNil(),
+				emailverificationchallenge.ExpiresAtGT(now),
+				emailverificationchallenge.AttemptsLT(s.EmailVerificationConfig.MaxAttempts),
+			).
+			Only(bypassCtx)
+	})
+	if err != nil {
+		if ent.IsNotFound(err) {
+			return ErrVerificationInvalid
+		}
+
+		return fmt.Errorf("query password reset challenge: %w", err)
+	}
+
+	expectedDigest := verificationDigest(secret, "password-reset-code", normalizedEmail, code)
+	if !hmac.Equal([]byte(challenge.CodeDigest), []byte(expectedDigest)) {
+		err = authz.RunWithSystemBypassVoid(ctx, "password-reset-verification-failure", func(bypassCtx context.Context) error {
+			_, updateErr := s.entFromContext(bypassCtx).EmailVerificationChallenge.Update().
+				Where(
+					emailverificationchallenge.IDEQ(challengeID),
+					emailverificationchallenge.PurposeEQ(emailverificationchallenge.PurposePasswordReset),
+					emailverificationchallenge.ConsumedAtIsNil(),
+					emailverificationchallenge.ExpiresAtGT(now),
+					emailverificationchallenge.AttemptsLT(s.EmailVerificationConfig.MaxAttempts),
+				).
+				AddAttempts(1).
+				Save(bypassCtx)
+
+			return updateErr
+		})
+		if err != nil {
+			return fmt.Errorf("record password reset verification failure: %w", err)
+		}
+
+		return ErrVerificationInvalid
+	}
+
+	hashedPassword, err := HashPassword(newPassword)
+	if err != nil {
+		return fmt.Errorf("hash reset password: %w", err)
+	}
+
+	resetUserID := 0
+	resetSucceeded := false
+	err = authz.RunWithSystemBypassVoid(ctx, "password-reset", func(resetCtx context.Context) error {
+		return s.RunInTransaction(resetCtx, func(txCtx context.Context) error {
+			client := s.entFromContext(txCtx)
+			matched, queryErr := client.EmailVerificationChallenge.Query().
+				Where(
+					emailverificationchallenge.IDEQ(challengeID),
+					emailverificationchallenge.EmailEQ(normalizedEmail),
+					emailverificationchallenge.PurposeEQ(emailverificationchallenge.PurposePasswordReset),
+					emailverificationchallenge.ConsumedAtIsNil(),
+					emailverificationchallenge.ExpiresAtGT(now),
+					emailverificationchallenge.AttemptsLT(s.EmailVerificationConfig.MaxAttempts),
+				).
+				Only(txCtx)
+			if queryErr != nil {
+				if ent.IsNotFound(queryErr) {
+					return nil
+				}
+
+				return fmt.Errorf("recheck password reset challenge: %w", queryErr)
+			}
+			if !hmac.Equal([]byte(matched.CodeDigest), []byte(expectedDigest)) {
+				return nil
+			}
+
+			updated, updateErr := client.EmailVerificationChallenge.Update().
+				Where(
+					emailverificationchallenge.IDEQ(challengeID),
+					emailverificationchallenge.ConsumedAtIsNil(),
+				).
+				SetConsumedAt(now).
+				Save(txCtx)
+			if updateErr != nil {
+				return fmt.Errorf("consume password reset challenge: %w", updateErr)
+			}
+			if updated != 1 {
+				return nil
+			}
+
+			account, queryErr := client.User.Query().
+				Where(
+					user.EmailEqualFold(normalizedEmail),
+					user.StatusEQ(user.StatusActivated),
+				).
+				Only(txCtx)
+			if queryErr != nil {
+				if ent.IsNotFound(queryErr) {
+					return nil
+				}
+
+				return fmt.Errorf("load password reset account: %w", queryErr)
+			}
+
+			updatedAccount, updateErr := client.User.UpdateOneID(account.ID).
+				SetPassword(hashedPassword).
+				AddAuthVersion(1).
+				Save(txCtx)
+			if updateErr != nil {
+				return fmt.Errorf("update reset password: %w", updateErr)
+			}
+
+			_, updateErr = client.EmailVerificationChallenge.Update().
+				Where(
+					emailverificationchallenge.EmailEQ(normalizedEmail),
+					emailverificationchallenge.PurposeEQ(emailverificationchallenge.PurposePasswordReset),
+					emailverificationchallenge.ConsumedAtIsNil(),
+				).
+				SetConsumedAt(now).
+				Save(txCtx)
+			if updateErr != nil {
+				return fmt.Errorf("consume prior password reset challenges: %w", updateErr)
+			}
+
+			resetUserID = updatedAccount.ID
+			resetSucceeded = true
+
+			return nil
+		})
+	})
+	if err != nil {
+		return err
+	}
+	if !resetSucceeded {
+		return ErrVerificationInvalid
+	}
+
+	s.UserService.invalidateUserCache(ctx, resetUserID)
 
 	return nil
 }
@@ -325,6 +721,7 @@ func (s *AuthService) RegisterCampusUser(ctx context.Context, email, password, n
 			challenges, queryErr := client.EmailVerificationChallenge.Query().
 				Where(
 					emailverificationchallenge.EmailEQ(normalizedEmail),
+					emailverificationchallenge.PurposeEQ(emailverificationchallenge.PurposeRegistration),
 					emailverificationchallenge.ConsumedAtIsNil(),
 					emailverificationchallenge.ExpiresAtGT(now),
 					emailverificationchallenge.AttemptsLT(config.MaxAttempts),
@@ -348,7 +745,10 @@ func (s *AuthService) RegisterCampusUser(ctx context.Context, email, password, n
 			if matchedID == 0 {
 				if len(challengeIDs) > 0 {
 					_, updateErr := client.EmailVerificationChallenge.Update().
-						Where(emailverificationchallenge.IDIn(challengeIDs...)).
+						Where(
+							emailverificationchallenge.IDIn(challengeIDs...),
+							emailverificationchallenge.PurposeEQ(emailverificationchallenge.PurposeRegistration),
+						).
 						AddAttempts(1).
 						Save(txCtx)
 					if updateErr != nil {
@@ -362,6 +762,7 @@ func (s *AuthService) RegisterCampusUser(ctx context.Context, email, password, n
 			updated, updateErr := client.EmailVerificationChallenge.Update().
 				Where(
 					emailverificationchallenge.IDEQ(matchedID),
+					emailverificationchallenge.PurposeEQ(emailverificationchallenge.PurposeRegistration),
 					emailverificationchallenge.ConsumedAtIsNil(),
 					emailverificationchallenge.ExpiresAtGT(now),
 					emailverificationchallenge.AttemptsLT(config.MaxAttempts),
@@ -378,6 +779,7 @@ func (s *AuthService) RegisterCampusUser(ctx context.Context, email, password, n
 			_, updateErr = client.EmailVerificationChallenge.Update().
 				Where(
 					emailverificationchallenge.EmailEQ(normalizedEmail),
+					emailverificationchallenge.PurposeEQ(emailverificationchallenge.PurposeRegistration),
 					emailverificationchallenge.ConsumedAtIsNil(),
 				).
 				SetConsumedAt(now).
@@ -434,8 +836,9 @@ func (s *AuthService) GenerateJWTToken(ctx context.Context, user *ent.User) (str
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"user_id": user.ID,
-		"exp":     time.Now().Add(time.Hour * 24 * 7).Unix(), // 7 days
+		"user_id":      user.ID,
+		"auth_version": user.AuthVersion,
+		"exp":          time.Now().Add(time.Hour * 24 * 7).Unix(), // 7 days
 	})
 
 	tokenString, err := token.SignedString([]byte(secretKey))
@@ -517,15 +920,39 @@ func (s *AuthService) AuthenticateJWTToken(ctx context.Context, tokenString stri
 		return nil, fmt.Errorf("%w: invalid token claims", ErrInvalidJWT)
 	}
 
-	u, err := authz.RunWithSystemBypass(ctx, "auth-lookup", func(bypassCtx context.Context) (*ent.User, error) {
-		return s.UserService.GetUserByID(bypassCtx, int(userID))
+	authState, err := authz.RunWithSystemBypass(ctx, "auth-state-lookup", func(bypassCtx context.Context) (*ent.User, error) {
+		return s.entFromContext(bypassCtx).User.Query().
+			Where(user.IDEQ(int(userID))).
+			Select(user.FieldID, user.FieldStatus, user.FieldAuthVersion).
+			Only(bypassCtx)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("%w: failed to get user: %w", ErrInvalidJWT, err)
 	}
 
-	if u.Status != user.StatusActivated {
+	if authState.Status != user.StatusActivated {
 		return nil, fmt.Errorf("%w: user not activated", ErrInvalidJWT)
+	}
+
+	claim, hasAuthVersion := claims["auth_version"]
+	if !hasAuthVersion {
+		// Tokens issued before auth_version existed remain valid only until the
+		// account's first password change or reset advances the database value.
+		if authState.AuthVersion != 0 {
+			return nil, fmt.Errorf("%w: token has been revoked", ErrInvalidJWT)
+		}
+	} else {
+		claimVersion, ok := claim.(float64)
+		if !ok || claimVersion < 0 || claimVersion != float64(int64(claimVersion)) || int64(claimVersion) != authState.AuthVersion {
+			return nil, fmt.Errorf("%w: token has been revoked", ErrInvalidJWT)
+		}
+	}
+
+	u, err := authz.RunWithSystemBypass(ctx, "auth-user-lookup", func(bypassCtx context.Context) (*ent.User, error) {
+		return s.UserService.GetUserByID(bypassCtx, int(userID))
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%w: failed to get user: %w", ErrInvalidJWT, err)
 	}
 
 	return u, nil

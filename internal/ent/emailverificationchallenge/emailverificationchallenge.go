@@ -3,6 +3,9 @@
 package emailverificationchallenge
 
 import (
+	"fmt"
+	"io"
+	"strconv"
 	"time"
 
 	"entgo.io/ent"
@@ -18,6 +21,8 @@ const (
 	FieldCreatedAt = "created_at"
 	// FieldUpdatedAt holds the string denoting the updated_at field in the database.
 	FieldUpdatedAt = "updated_at"
+	// FieldPurpose holds the string denoting the purpose field in the database.
+	FieldPurpose = "purpose"
 	// FieldEmail holds the string denoting the email field in the database.
 	FieldEmail = "email"
 	// FieldCodeDigest holds the string denoting the code_digest field in the database.
@@ -39,6 +44,7 @@ var Columns = []string{
 	FieldID,
 	FieldCreatedAt,
 	FieldUpdatedAt,
+	FieldPurpose,
 	FieldEmail,
 	FieldCodeDigest,
 	FieldSourceHash,
@@ -83,6 +89,32 @@ var (
 	AttemptsValidator func(int) error
 )
 
+// Purpose defines the type for the "purpose" enum field.
+type Purpose string
+
+// PurposeRegistration is the default value of the Purpose enum.
+const DefaultPurpose = PurposeRegistration
+
+// Purpose values.
+const (
+	PurposeRegistration  Purpose = "registration"
+	PurposePasswordReset Purpose = "password_reset"
+)
+
+func (pu Purpose) String() string {
+	return string(pu)
+}
+
+// PurposeValidator is a validator for the "purpose" field enum values. It is called by the builders before save.
+func PurposeValidator(pu Purpose) error {
+	switch pu {
+	case PurposeRegistration, PurposePasswordReset:
+		return nil
+	default:
+		return fmt.Errorf("emailverificationchallenge: invalid enum value for purpose field: %q", pu)
+	}
+}
+
 // OrderOption defines the ordering options for the EmailVerificationChallenge queries.
 type OrderOption func(*sql.Selector)
 
@@ -99,6 +131,11 @@ func ByCreatedAt(opts ...sql.OrderTermOption) OrderOption {
 // ByUpdatedAt orders the results by the updated_at field.
 func ByUpdatedAt(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldUpdatedAt, opts...).ToFunc()
+}
+
+// ByPurpose orders the results by the purpose field.
+func ByPurpose(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldPurpose, opts...).ToFunc()
 }
 
 // ByEmail orders the results by the email field.
@@ -129,4 +166,22 @@ func ByAttempts(opts ...sql.OrderTermOption) OrderOption {
 // ByConsumedAt orders the results by the consumed_at field.
 func ByConsumedAt(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldConsumedAt, opts...).ToFunc()
+}
+
+// MarshalGQL implements graphql.Marshaler interface.
+func (e Purpose) MarshalGQL(w io.Writer) {
+	io.WriteString(w, strconv.Quote(e.String()))
+}
+
+// UnmarshalGQL implements graphql.Unmarshaler interface.
+func (e *Purpose) UnmarshalGQL(val interface{}) error {
+	str, ok := val.(string)
+	if !ok {
+		return fmt.Errorf("enum %T must be a string", val)
+	}
+	*e = Purpose(str)
+	if err := PurposeValidator(*e); err != nil {
+		return fmt.Errorf("%s is not a valid Purpose", str)
+	}
+	return nil
 }

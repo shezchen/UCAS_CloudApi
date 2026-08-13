@@ -42,6 +42,8 @@ type User struct {
 	Avatar string `json:"avatar,omitempty"`
 	// IsOwner holds the value of the "is_owner" field.
 	IsOwner bool `json:"is_owner,omitempty"`
+	// AuthVersion holds the value of the "auth_version" field.
+	AuthVersion int64 `json:"auth_version,omitempty"`
 	// Deprecated legacy value; ignored by runtime quota enforcement
 	DailyTokenLimit int64 `json:"daily_token_limit,omitempty"`
 	// User scopes in system level: write_channels, read_channels, add_users, read_users, etc.
@@ -167,7 +169,7 @@ func (*User) scanValues(columns []string) ([]any, error) {
 			values[i] = new([]byte)
 		case user.FieldIsOwner:
 			values[i] = new(sql.NullBool)
-		case user.FieldID, user.FieldDeletedAt, user.FieldDailyTokenLimit:
+		case user.FieldID, user.FieldDeletedAt, user.FieldAuthVersion, user.FieldDailyTokenLimit:
 			values[i] = new(sql.NullInt64)
 		case user.FieldEmail, user.FieldStatus, user.FieldPreferLanguage, user.FieldPassword, user.FieldNickname, user.FieldFirstName, user.FieldLastName, user.FieldAvatar:
 			values[i] = new(sql.NullString)
@@ -265,6 +267,12 @@ func (_m *User) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field is_owner", values[i])
 			} else if value.Valid {
 				_m.IsOwner = value.Bool
+			}
+		case user.FieldAuthVersion:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field auth_version", values[i])
+			} else if value.Valid {
+				_m.AuthVersion = value.Int64
 			}
 		case user.FieldDailyTokenLimit:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
@@ -390,6 +398,9 @@ func (_m *User) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("is_owner=")
 	builder.WriteString(fmt.Sprintf("%v", _m.IsOwner))
+	builder.WriteString(", ")
+	builder.WriteString("auth_version=")
+	builder.WriteString(fmt.Sprintf("%v", _m.AuthVersion))
 	builder.WriteString(", ")
 	builder.WriteString("daily_token_limit=")
 	builder.WriteString(fmt.Sprintf("%v", _m.DailyTokenLimit))

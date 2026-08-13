@@ -21,6 +21,8 @@ type EmailVerificationChallenge struct {
 	CreatedAt time.Time `json:"created_at,omitempty"`
 	// UpdatedAt holds the value of the "updated_at" field.
 	UpdatedAt time.Time `json:"updated_at,omitempty"`
+	// Purpose holds the value of the "purpose" field.
+	Purpose emailverificationchallenge.Purpose `json:"purpose,omitempty"`
 	// Email holds the value of the "email" field.
 	Email string `json:"email,omitempty"`
 	// CodeDigest holds the value of the "code_digest" field.
@@ -43,7 +45,7 @@ func (*EmailVerificationChallenge) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case emailverificationchallenge.FieldID, emailverificationchallenge.FieldAttempts:
 			values[i] = new(sql.NullInt64)
-		case emailverificationchallenge.FieldEmail, emailverificationchallenge.FieldCodeDigest, emailverificationchallenge.FieldSourceHash:
+		case emailverificationchallenge.FieldPurpose, emailverificationchallenge.FieldEmail, emailverificationchallenge.FieldCodeDigest, emailverificationchallenge.FieldSourceHash:
 			values[i] = new(sql.NullString)
 		case emailverificationchallenge.FieldCreatedAt, emailverificationchallenge.FieldUpdatedAt, emailverificationchallenge.FieldExpiresAt, emailverificationchallenge.FieldConsumedAt:
 			values[i] = new(sql.NullTime)
@@ -79,6 +81,12 @@ func (_m *EmailVerificationChallenge) assignValues(columns []string, values []an
 				return fmt.Errorf("unexpected type %T for field updated_at", values[i])
 			} else if value.Valid {
 				_m.UpdatedAt = value.Time
+			}
+		case emailverificationchallenge.FieldPurpose:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field purpose", values[i])
+			} else if value.Valid {
+				_m.Purpose = emailverificationchallenge.Purpose(value.String)
 			}
 		case emailverificationchallenge.FieldEmail:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -158,6 +166,9 @@ func (_m *EmailVerificationChallenge) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("updated_at=")
 	builder.WriteString(_m.UpdatedAt.Format(time.ANSIC))
+	builder.WriteString(", ")
+	builder.WriteString("purpose=")
+	builder.WriteString(fmt.Sprintf("%v", _m.Purpose))
 	builder.WriteString(", ")
 	builder.WriteString("email=")
 	builder.WriteString(_m.Email)

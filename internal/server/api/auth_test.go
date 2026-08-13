@@ -27,9 +27,10 @@ import (
 )
 
 type apiCapturedVerification struct {
-	to   string
-	code string
-	ttl  time.Duration
+	to      string
+	code    string
+	ttl     time.Duration
+	purpose servermail.VerificationPurpose
 }
 
 type apiVerificationSender struct {
@@ -40,14 +41,19 @@ type apiVerificationSender struct {
 
 var _ servermail.VerificationSender = (*apiVerificationSender)(nil)
 
-func (s *apiVerificationSender) SendVerificationCode(_ context.Context, to, code string, ttl time.Duration) error {
+func (s *apiVerificationSender) SendVerificationCode(
+	_ context.Context,
+	to, code string,
+	ttl time.Duration,
+	purpose servermail.VerificationPurpose,
+) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if s.sendErr != nil {
 		return s.sendErr
 	}
-	s.messages = append(s.messages, apiCapturedVerification{to: to, code: code, ttl: ttl})
+	s.messages = append(s.messages, apiCapturedVerification{to: to, code: code, ttl: ttl, purpose: purpose})
 
 	return nil
 }
@@ -63,6 +69,25 @@ func (s *apiVerificationSender) latestCode(t *testing.T, email string) string {
 		}
 	}
 	t.Fatalf("no verification message captured for requested email")
+
+	return ""
+}
+
+func (s *apiVerificationSender) latestCodeForPurpose(
+	t *testing.T,
+	email string,
+	purpose servermail.VerificationPurpose,
+) string {
+	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for i := len(s.messages) - 1; i >= 0; i-- {
+		if s.messages[i].to == email && s.messages[i].purpose == purpose {
+			return s.messages[i].code
+		}
+	}
+	t.Fatalf("no %s verification message captured for requested email", purpose)
 
 	return ""
 }
@@ -98,6 +123,10 @@ func setupCampusSignUpHandler(
 		Ent:                     client,
 		EmailVerificationConfig: config,
 		VerificationSender:      sender,
+		VerificationExecutor: func(task func(context.Context)) error {
+			task(context.Background())
+			return nil
+		},
 	})
 	setupCtx := ent.NewContext(authz.WithTestBypass(t.Context()), client)
 
@@ -159,6 +188,52 @@ func performCampusSignUp(
 	c.Request.Header.Set("Content-Type", "application/json")
 
 	handler.SignUp(c)
+
+	return recorder
+}
+
+func performPasswordResetVerification(
+	t *testing.T,
+	handler *AuthHandlers,
+	email, sourceIP string,
+) *httptest.ResponseRecorder {
+	t.Helper()
+
+	body, err := json.Marshal(PasswordResetVerificationRequest{Email: email})
+	require.NoError(t, err)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/admin/auth/password-reset/verification", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.RemoteAddr = sourceIP + ":42517"
+
+	handler.RequestPasswordResetVerification(c)
+
+	return recorder
+}
+
+func performPasswordReset(
+	t *testing.T,
+	handler *AuthHandlers,
+	email, challengeToken, verificationCode, newPassword string,
+) *httptest.ResponseRecorder {
+	t.Helper()
+
+	body, err := json.Marshal(PasswordResetRequest{
+		Email:            email,
+		ChallengeToken:   challengeToken,
+		VerificationCode: verificationCode,
+		NewPassword:      newPassword,
+	})
+	require.NoError(t, err)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/admin/auth/password-reset", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.ResetPassword(c)
 
 	return recorder
 }
@@ -298,6 +373,103 @@ func TestAuthHandlers_RequestSignUpVerification_RejectsNonUCASEmail(t *testing.T
 	response := performCampusVerification(t, fixture.handler, "student@example.com", "198.51.100.46")
 	require.Equal(t, http.StatusBadRequest, response.Code)
 	require.Contains(t, decodeAPIError(t, response).Error.Message, biz.ErrCampusEmailRequired.Error())
+}
+
+func TestAuthHandlers_PasswordReset_ExistingAndUnknownResponsesDoNotEnumerateAccounts(t *testing.T) {
+	fixture := setupCampusSignUpHandler(t, true, biz.CampusEmailVerificationConfig{})
+	defer fixture.client.Close()
+
+	hash, err := biz.HashPassword("owner-old-password")
+	require.NoError(t, err)
+	_, err = fixture.client.User.Create().
+		SetEmail("541955254@qq.com").
+		SetPassword(hash).
+		SetIsOwner(true).
+		Save(fixture.setupCtx)
+	require.NoError(t, err)
+
+	existing := performPasswordResetVerification(t, fixture.handler, "541955254@QQ.COM", "198.51.100.48")
+	unknown := performPasswordResetVerification(t, fixture.handler, "unknown@example.com", "198.51.100.49")
+	require.Equal(t, http.StatusAccepted, existing.Code)
+	require.Equal(t, http.StatusAccepted, unknown.Code)
+
+	var existingResponse, unknownResponse PasswordResetVerificationResponse
+	require.NoError(t, json.Unmarshal(existing.Body.Bytes(), &existingResponse))
+	require.NoError(t, json.Unmarshal(unknown.Body.Bytes(), &unknownResponse))
+	require.Equal(t, existingResponse.Message, unknownResponse.Message)
+	require.NotEmpty(t, existingResponse.ChallengeToken)
+	require.NotEmpty(t, unknownResponse.ChallengeToken)
+	require.NotEqual(t, existingResponse.ChallengeToken, unknownResponse.ChallengeToken)
+	require.Positive(t, existingResponse.ResendAfterSeconds)
+	require.Equal(t, existingResponse.ResendAfterSeconds, unknownResponse.ResendAfterSeconds)
+
+	code := fixture.sender.latestCodeForPurpose(
+		t,
+		"541955254@qq.com",
+		servermail.VerificationPurposePasswordReset,
+	)
+	reset := performPasswordReset(
+		t,
+		fixture.handler,
+		"541955254@qq.com",
+		existingResponse.ChallengeToken,
+		code,
+		"owner-new-password",
+	)
+	require.Equal(t, http.StatusOK, reset.Code, reset.Body.String())
+}
+
+func TestAuthHandlers_PasswordReset_StatusMapping(t *testing.T) {
+	t.Run("invalid verification is generic", func(t *testing.T) {
+		fixture := setupCampusSignUpHandler(t, true, biz.CampusEmailVerificationConfig{})
+		defer fixture.client.Close()
+
+		response := performPasswordReset(
+			t,
+			fixture.handler,
+			"student@mails.ucas.ac.cn",
+			"invalid-token",
+			"000000",
+			"new-password-123",
+		)
+		require.Equal(t, http.StatusBadRequest, response.Code)
+		apiErr := decodeAPIError(t, response).Error
+		require.Equal(t, biz.ErrVerificationInvalid.Error(), apiErr.Message)
+		require.Equal(t, "invalid_verification", apiErr.Code)
+	})
+
+	t.Run("request is rate limited", func(t *testing.T) {
+		fixture := setupCampusSignUpHandler(t, true, biz.CampusEmailVerificationConfig{EmailHourlyLimit: 1})
+		defer fixture.client.Close()
+
+		email := "reset-rate-limit@mails.ucas.ac.cn"
+		first := performPasswordResetVerification(t, fixture.handler, email, "198.51.100.50")
+		require.Equal(t, http.StatusAccepted, first.Code)
+		limited := performPasswordResetVerification(t, fixture.handler, email, "198.51.100.50")
+		require.Equal(t, http.StatusTooManyRequests, limited.Code)
+		require.Equal(t, biz.ErrVerificationRateLimit.Error(), decodeAPIError(t, limited).Error.Message)
+	})
+
+	t.Run("smtp failure remains non-enumerating", func(t *testing.T) {
+		fixture := setupCampusSignUpHandler(t, true, biz.CampusEmailVerificationConfig{})
+		defer fixture.client.Close()
+		hash, err := biz.HashPassword("smtp-old-password")
+		require.NoError(t, err)
+		_, err = fixture.client.User.Create().
+			SetEmail("smtp-reset@mails.ucas.ac.cn").
+			SetPassword(hash).
+			Save(fixture.setupCtx)
+		require.NoError(t, err)
+		fixture.sender.sendErr = errors.New("smtp unavailable")
+
+		response := performPasswordResetVerification(
+			t,
+			fixture.handler,
+			"smtp-reset@mails.ucas.ac.cn",
+			"198.51.100.51",
+		)
+		require.Equal(t, http.StatusAccepted, response.Code)
+	})
 }
 
 func TestAuthHandlers_SignUp_FailsWithoutActiveProject(t *testing.T) {

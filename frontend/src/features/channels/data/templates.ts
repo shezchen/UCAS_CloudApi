@@ -262,7 +262,7 @@ export function useCreateChannelOverrideTemplate() {
         });
         return channelOverrideTemplateSchema.parse(data.createChannelOverrideTemplate);
       } catch (error) {
-        handleError(error, { context: 'Create Channel Template' });
+        handleError(error);
         throw error;
       }
     },
@@ -287,7 +287,7 @@ export function useUpdateChannelOverrideTemplate() {
         });
         return channelOverrideTemplateSchema.parse(data.updateChannelOverrideTemplate);
       } catch (error) {
-        handleError(error, { context: 'Update Channel Template' });
+        handleError(error);
         throw error;
       }
     },
@@ -309,7 +309,7 @@ export function useDeleteChannelOverrideTemplate() {
         const data = await graphqlRequest<{ deleteChannelOverrideTemplate: boolean }>(DELETE_CHANNEL_OVERRIDE_TEMPLATE, { id });
         return data.deleteChannelOverrideTemplate;
       } catch (error) {
-        handleError(error, { context: 'Delete Channel Template' });
+        handleError(error);
         throw error;
       }
     },
@@ -334,7 +334,7 @@ export function useApplyChannelOverrideTemplate() {
         );
         return applyChannelOverrideTemplatePayloadSchema.parse(data.applyChannelOverrideTemplate);
       } catch (error) {
-        handleError(error, { context: 'Apply Channel Template' });
+        handleError(error);
         throw error;
       }
     },
@@ -359,7 +359,7 @@ export function useClearChannelOverrideTemplates() {
         );
         return clearChannelOverrideTemplatesPayloadSchema.parse(data.clearChannelOverrideTemplates);
       } catch (error) {
-        handleError(error, { context: 'Clear Channel Templates' });
+        handleError(error);
         throw error;
       }
     },

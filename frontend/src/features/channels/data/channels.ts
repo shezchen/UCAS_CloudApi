@@ -9,10 +9,13 @@ import { useAuthStore } from '@/stores/authStore';
 import {
   Channel,
   ChannelConnection,
+  ChannelCredentials,
   ChannelSummaryConnection,
   CreateChannelInput,
   UpdateChannelInput,
   channelConnectionSchema,
+  channelCredentialsSchema,
+  channelLimiterStatsSchema,
   channelSchema,
   channelEndpointsResponseSchema,
   BulkImportChannelsInput,
@@ -822,15 +825,6 @@ const QUERY_CHANNELS_QUERY = `
           policies {
             stream
           }
-          credentials {
-            apiKey
-            apiKeys
-            gcp {
-              region
-              projectID
-              jsonData
-            }
-          }
           supportedModels
           autoSyncSupportedModels
           autoSyncModelPattern
@@ -924,16 +918,7 @@ const QUERY_CHANNELS_QUERY = `
             transport
           }
           disabledAPIKeys {
-            key
             disabledAt
-            errorCode
-            reason
-          }
-          liveLimiterStats {
-            inFlight
-            waiting
-            capacity
-            queueSize
           }
         }
         cursor
@@ -985,7 +970,7 @@ export function useSaveChannelModelPrices() {
         });
         return data.saveChannelModelPrices.map((p) => channelModelPriceSchema.parse(p));
       } catch (error) {
-        handleError(error, { context: 'Save Channel Model Prices' });
+        handleError(error);
         throw error;
       }
     },
@@ -1049,10 +1034,6 @@ export function useQueryChannels(
         throw error;
       }
     },
-    // Poll so the live limiter snapshot (in-flight / queue) stays roughly fresh.
-    // 5s is light traffic; pause when the tab is hidden.
-    refetchInterval: 5000,
-    refetchIntervalInBackground: false,
   });
 }
 
@@ -1100,6 +1081,186 @@ export function useAllChannelNames(options?: { enabled?: boolean }) {
   });
 }
 
+// Lightweight channel list for pickers (Playground etc.). Deliberately excludes
+// credentials, settings and other admin-only payloads.
+const QUERY_CHANNEL_OPTIONS_QUERY = `
+  query QueryChannelOptions($input: QueryChannelInput!) {
+    queryChannels(input: $input) {
+      edges {
+        node {
+          id
+          name
+          supportedModels
+        }
+        cursor
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+`;
+
+const channelOptionsConnectionSchema = z.object({
+  edges: z.array(
+    z.object({
+      node: z.object({
+        id: z.string(),
+        name: z.string(),
+        supportedModels: z.array(z.string()),
+      }),
+      cursor: z.string(),
+    })
+  ),
+  pageInfo: pageInfoSchema.pick({
+    hasNextPage: true,
+    endCursor: true,
+  }),
+});
+
+export function useChannelOptions(variables?: {
+  first?: number;
+  where?: Record<string, unknown>;
+  orderBy?: {
+    field: ChannelOrderField;
+    direction: 'ASC' | 'DESC';
+  };
+}) {
+  const { handleError } = useErrorHandler();
+  const { t } = useTranslation();
+  const viewerCacheKey = useChannelViewerCacheKey();
+
+  return useQuery({
+    queryKey: [
+      'channels',
+      viewerCacheKey,
+      'options',
+      variables?.where,
+      variables?.orderBy?.field,
+      variables?.orderBy?.direction,
+      variables?.first,
+    ],
+    queryFn: async () => {
+      try {
+        const data = await graphqlRequest<{ queryChannels: unknown }>(QUERY_CHANNEL_OPTIONS_QUERY, { input: variables });
+        return channelOptionsConnectionSchema.parse(data?.queryChannels);
+      } catch (error) {
+        handleError(error, t('common.errors.internalServerError'));
+        throw error;
+      }
+    },
+  });
+}
+
+// Live limiter snapshot poll. Kept separate from the main channel query so the
+// 5s refresh only carries id + limiter fields instead of full channel objects.
+const CHANNEL_LIMITER_STATS_QUERY = `
+  query ChannelLimiterStats($input: QueryChannelInput!) {
+    queryChannels(input: $input) {
+      edges {
+        node {
+          id
+          liveLimiterStats {
+            inFlight
+            waiting
+            capacity
+            queueSize
+          }
+        }
+        cursor
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+`;
+
+const channelLimiterStatsConnectionSchema = z.object({
+  edges: z.array(
+    z.object({
+      node: z.object({
+        id: z.string(),
+        liveLimiterStats: channelLimiterStatsSchema.optional().nullable(),
+      }),
+      cursor: z.string(),
+    })
+  ),
+  pageInfo: pageInfoSchema.pick({
+    hasNextPage: true,
+    endCursor: true,
+  }),
+});
+
+export function useChannelLimiterStats(channelIDs: string[], options?: { enabled?: boolean }) {
+  const viewerCacheKey = useChannelViewerCacheKey();
+
+  return useQuery({
+    queryKey: ['channelLimiterStats', viewerCacheKey, channelIDs],
+    queryFn: async () => {
+      const data = await graphqlRequest<{ queryChannels: unknown }>(CHANNEL_LIMITER_STATS_QUERY, {
+        input: {
+          first: channelIDs.length,
+          where: { idIn: channelIDs },
+        },
+      });
+      return channelLimiterStatsConnectionSchema.parse(data?.queryChannels).edges.map((edge) => edge.node);
+    },
+    enabled: channelIDs.length > 0 && options?.enabled !== false,
+    // Polling failures stay silent on purpose: a stale snapshot is acceptable and
+    // the next tick retries anyway, so errors must not spam toasts.
+    refetchInterval: 5000,
+    refetchIntervalInBackground: false,
+    retry: false,
+  });
+}
+
+// Credentials are excluded from list queries; fetch them on demand for a single
+// channel right before editing/duplicating it or testing its keys.
+const GET_CHANNEL_CREDENTIALS_QUERY = `
+  query GetChannelCredentials($id: ID!) {
+    node(id: $id) {
+      ... on Channel {
+        id
+        credentials {
+          apiKey
+          apiKeys
+          gcp {
+            region
+            projectID
+            jsonData
+          }
+        }
+      }
+    }
+  }
+`;
+
+export function useChannelCredentials(channelId: string, options?: { enabled?: boolean }) {
+  const viewerCacheKey = useChannelViewerCacheKey();
+
+  return useQuery({
+    // Keyed under 'channels' so channel mutations' invalidations also refresh it.
+    queryKey: ['channels', viewerCacheKey, 'credentials', channelId],
+    queryFn: async () => {
+      const data = await graphqlRequest<{ node: { id: string; credentials?: ChannelCredentials | null } | null }>(
+        GET_CHANNEL_CREDENTIALS_QUERY,
+        { id: channelId }
+      );
+      // Null when the viewer may not read this channel's secrets.
+      return data.node?.credentials ? channelCredentialsSchema.parse(data.node.credentials) : null;
+    },
+    enabled: !!channelId && options?.enabled !== false,
+    // Plaintext keys must not outlive the dialog that asked for them.
+    gcTime: 0,
+    // The caller renders a retryable error state, so fail fast instead of
+    // running the global retry policy.
+    retry: 1,
+  });
+}
+
 // Mutation hooks
 export function useCreateChannel() {
   const queryClient = useQueryClient();
@@ -1117,7 +1278,7 @@ export function useCreateChannel() {
       toast.success(t(isOwner ? 'channels.messages.createSuccess' : 'channels.donation.messages.success'));
     },
     onError: (error) => {
-      handleError(error, { context: t(isOwner ? 'channels.dialogs.create.title' : 'channels.donation.dialog.title') });
+      handleError(error, { operation: t(isOwner ? 'channels.dialogs.create.title' : 'channels.donation.dialog.title') });
     },
   });
 }
@@ -1137,7 +1298,7 @@ export function useDuplicateChannel() {
       toast.success(t('common.success.duplicated'));
     },
     onError: (error) => {
-      handleError(error, { context: t('common.actions.duplicate') });
+      handleError(error, { operation: t('common.actions.duplicate') });
     },
   });
 }
@@ -1168,7 +1329,7 @@ export function useBulkCreateChannels() {
         const data = await graphqlRequest<{ bulkCreateChannels: Channel[] }>(BULK_CREATE_CHANNELS_MUTATION, { input });
         return data.bulkCreateChannels.map((ch) => channelSchema.parse(ch));
       } catch (error) {
-        handleError(error, { context: 'Batch Create Channels' });
+        handleError(error);
         throw error;
       }
     },
@@ -1195,7 +1356,7 @@ export function useUpdateChannel() {
       toast.success(t('channels.messages.updateSuccess'));
     },
     onError: (error) => {
-      handleError(error, { context: t('channels.dialogs.edit.title') });
+      handleError(error, { operation: t('channels.dialogs.edit.title') });
     },
   });
 }
@@ -1221,7 +1382,7 @@ export function useSaveChannelEndpoints() {
       toast.success(t('channels.messages.updateSuccess'));
     },
     onError: (error) => {
-      handleError(error, { context: t('channels.dialogs.edit.title') });
+      handleError(error, { operation: t('channels.dialogs.edit.title') });
     },
   });
 }
@@ -1240,7 +1401,7 @@ export function useClearChannelErrorMessage() {
         });
         return channelSchema.parse(data.updateChannel);
       } catch (error) {
-        handleError(error, { context: 'Clear Channel Error' });
+        handleError(error);
         throw error;
       }
     },
@@ -1267,7 +1428,7 @@ export function useUpdateChannelStatus() {
         });
         return data.updateChannelStatus;
       } catch (error) {
-        handleError(error, { context: 'Update Channel Status' });
+        handleError(error);
         throw error;
       }
     },
@@ -1298,7 +1459,7 @@ export function useBulkArchiveChannels() {
         const data = await graphqlRequest<{ bulkArchiveChannels: boolean }>(BULK_ARCHIVE_CHANNELS_MUTATION, { ids });
         return data.bulkArchiveChannels;
       } catch (error) {
-        handleError(error, { context: 'Bulk Archive Channels' });
+        handleError(error);
         throw error;
       }
     },
@@ -1320,7 +1481,7 @@ export function useBulkDisableChannels() {
         const data = await graphqlRequest<{ bulkDisableChannels: boolean }>(BULK_DISABLE_CHANNELS_MUTATION, { ids });
         return data.bulkDisableChannels;
       } catch (error) {
-        handleError(error, { context: 'Bulk Disable Channels' });
+        handleError(error);
         throw error;
       }
     },
@@ -1342,7 +1503,7 @@ export function useBulkEnableChannels() {
         const data = await graphqlRequest<{ bulkEnableChannels: boolean }>(BULK_ENABLE_CHANNELS_MUTATION, { ids });
         return data.bulkEnableChannels;
       } catch (error) {
-        handleError(error, { context: 'Bulk Enable Channels' });
+        handleError(error);
         throw error;
       }
     },
@@ -1364,7 +1525,7 @@ export function useBulkRecoverChannels() {
         const data = await graphqlRequest<{ bulkRecoverChannels: boolean }>(BULK_RECOVER_CHANNELS_MUTATION, { ids });
         return data.bulkRecoverChannels;
       } catch (error) {
-        handleError(error, { context: 'Bulk Recover Channels' });
+        handleError(error);
         throw error;
       }
     },
@@ -1387,7 +1548,7 @@ export function useDeleteChannel() {
         const data = await graphqlRequest<{ deleteChannel: boolean }>(DELETE_CHANNEL_MUTATION, { id });
         return data.deleteChannel;
       } catch (error) {
-        handleError(error, { context: 'Delete Channel' });
+        handleError(error);
         throw error;
       }
     },
@@ -1409,7 +1570,7 @@ export function useBulkDeleteChannels() {
         const data = await graphqlRequest<{ bulkDeleteChannels: boolean }>(BULK_DELETE_CHANNELS_MUTATION, { ids });
         return data.bulkDeleteChannels;
       } catch (error) {
-        handleError(error, { context: 'Bulk Delete Channels' });
+        handleError(error);
         throw error;
       }
     },
@@ -1447,7 +1608,7 @@ export function useTestChannel(options?: { silent?: boolean }) {
         return data.testChannel;
       } catch (error) {
         if (!silent) {
-          handleError(error, { context: 'Test Channel' });
+          handleError(error);
         }
         throw error;
       }
@@ -1483,7 +1644,7 @@ export function useTestChannelAPIKeys(options?: { silent?: boolean }) {
         return testChannelAPIKeysPayloadSchema.parse(data.testChannelAPIKeys);
       } catch (error) {
         if (!silent) {
-          handleError(error, { context: 'Test Channel API Keys' });
+          handleError(error);
         }
         throw error;
       }
@@ -1527,7 +1688,7 @@ export function useBulkImportChannels() {
         const data = await graphqlRequest<{ bulkImportChannels: BulkImportChannelsResult }>(BULK_IMPORT_CHANNELS_MUTATION, { input });
         return bulkImportChannelsResultSchema.parse(data.bulkImportChannels);
       } catch (error) {
-        handleError(error, { context: 'Bulk Import Channels' });
+        handleError(error);
         throw error;
       }
     },
@@ -1593,7 +1754,7 @@ export function useBulkUpdateChannelOrdering() {
         );
         return bulkUpdateChannelOrderingResultSchema.parse(data.bulkUpdateChannelOrdering);
       } catch (error) {
-        handleError(error, { context: 'Update Channel Ordering' });
+        handleError(error);
         throw error;
       }
     },
@@ -1634,7 +1795,7 @@ export function useSyncChannelModels() {
         const data = await graphqlRequest<{ syncChannelModels: unknown }>(SYNC_CHANNEL_MODELS_MUTATION, input);
         return syncChannelModelsPayloadSchema.parse(data.syncChannelModels);
       } catch (error) {
-        handleError(error, { context: 'Sync Channel Models' });
+        handleError(error);
         throw error;
       }
     },
@@ -1660,7 +1821,7 @@ export function useFetchModels() {
         }>(FETCH_MODELS_QUERY, { input });
         return data.fetchModels;
       } catch (error) {
-        handleError(error, { context: 'Fetch Models' });
+        handleError(error);
         throw error;
       }
     },
@@ -1843,7 +2004,7 @@ export function useDisableChannelAPIKey() {
         });
         return data.disableChannelAPIKey;
       } catch (error) {
-        handleError(error, { context: 'Disable Channel API Key' });
+        handleError(error);
         throw error;
       }
     },
@@ -1869,7 +2030,7 @@ export function useEnableChannelAPIKey() {
         });
         return data.enableChannelAPIKey;
       } catch (error) {
-        handleError(error, { context: 'Enable Channel API Key' });
+        handleError(error);
         throw error;
       }
     },
@@ -1894,7 +2055,7 @@ export function useEnableAllChannelAPIKeys() {
         });
         return data.enableAllChannelAPIKeys;
       } catch (error) {
-        handleError(error, { context: 'Enable All Channel API Keys' });
+        handleError(error);
         throw error;
       }
     },
@@ -1920,7 +2081,7 @@ export function useEnableSelectedChannelAPIKeys() {
         });
         return data.enableSelectedChannelAPIKeys;
       } catch (error) {
-        handleError(error, { context: 'Enable Selected API Keys' });
+        handleError(error);
         throw error;
       }
     },
@@ -1946,7 +2107,7 @@ export function useDeleteDisabledChannelAPIKeys() {
         );
         return data.deleteDisabledChannelAPIKeys;
       } catch (error) {
-        handleError(error, { context: 'Delete Disabled API Keys' });
+        handleError(error);
         throw error;
       }
     },

@@ -523,7 +523,7 @@ export function useCreateModel() {
       toast.success(t('models.messages.createSuccess'));
     },
     onError: (error) => {
-      handleError(error, { context: t('models.dialogs.create.title') });
+      handleError(error, { operation: t('models.dialogs.create.title') });
     },
   });
 }
@@ -543,7 +543,7 @@ export function useBulkCreateModels() {
       toast.success(t('models.messages.bulkCreateSuccess', { count: variables.length }));
     },
     onError: (error) => {
-      handleError(error, { context: 'Bulk Create Models' });
+      handleError(error);
     },
   });
 }
@@ -563,7 +563,7 @@ export function useUpdateModel() {
       toast.success(t('models.messages.updateSuccess'));
     },
     onError: (error) => {
-      handleError(error, { context: t('models.dialogs.edit.title') });
+      handleError(error, { operation: t('models.dialogs.edit.title') });
     },
   });
 }
@@ -582,7 +582,7 @@ export function useDeleteModel() {
       toast.success(t('models.messages.deleteSuccess'));
     },
     onError: (error) => {
-      handleError(error, { context: 'Delete Model' });
+      handleError(error);
     },
   });
 }
@@ -609,8 +609,8 @@ export function useUpdateModelStatus() {
       toast.success(t(`models.messages.${statusKey}`));
     },
     onError: (error, variables) => {
-      const contextKey = variables.status === 'archived' ? 'archiveTitle' : 'restoreTitle';
-      handleError(error, { context: t(`models.dialogs.status.${contextKey}`) });
+      const operationKey = variables.status === 'archived' ? 'archiveTitle' : 'restoreTitle';
+      handleError(error, { operation: t(`models.dialogs.status.${operationKey}`) });
     },
   });
 }
@@ -626,7 +626,7 @@ export function useBulkDisableModels() {
         const data = await graphqlRequest<{ bulkDisableModels: boolean }>(BULK_DISABLE_MODELS_MUTATION, { ids });
         return data.bulkDisableModels;
       } catch (error) {
-        handleError(error, { context: 'Bulk Disable Models' });
+        handleError(error);
         throw error;
       }
     },
@@ -648,7 +648,7 @@ export function useBulkEnableModels() {
         const data = await graphqlRequest<{ bulkEnableModels: boolean }>(BULK_ENABLE_MODELS_MUTATION, { ids });
         return data.bulkEnableModels;
       } catch (error) {
-        handleError(error, { context: 'Bulk Enable Models' });
+        handleError(error);
         throw error;
       }
     },

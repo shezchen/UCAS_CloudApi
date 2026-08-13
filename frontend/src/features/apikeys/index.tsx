@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useDebounce } from '@/hooks/use-debounce';
 import { usePaginationSearch } from '@/hooks/use-pagination-search';
 import { usePermissions } from '@/hooks/usePermissions';
-import { type DateTimeRangeValue } from '@/utils/date-range';
+import { buildDateRangeWhereClause, type DateTimeRangeValue } from '@/utils/date-range';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Header } from '@/components/layout/header';
 import { Main } from '@/components/layout/main';
@@ -60,9 +60,18 @@ function ApiKeysContent() {
     if (userFilter.length > 0 && userFilter[0]) {
       where.userID = userFilter[0]; // API expects single userID
     }
+
+    // Apply the created-at date range filter server-side (see date-range helper)
+    const dateWhere = buildDateRangeWhereClause(dateRange);
+    if (dateWhere.createdAtGTE) {
+      where.createdAtGTE = dateWhere.createdAtGTE;
+    }
+    if (dateWhere.createdAtLTE) {
+      where.createdAtLTE = dateWhere.createdAtLTE;
+    }
     
     // Add AND condition to combine OR search with other filters
-    if (where.or && (where.typeIn || where.statusIn || where.userID)) {
+    if (where.or && (where.typeIn || where.statusIn || where.userID || where.createdAtGTE || where.createdAtLTE)) {
       const orCondition = where.or;
       delete where.or;
       return {

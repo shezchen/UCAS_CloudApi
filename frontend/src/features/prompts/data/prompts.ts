@@ -188,7 +188,7 @@ export function useCreatePrompt() {
       toast.success(t('prompts.messages.createSuccess'));
     },
     onError: (error) => {
-      handleError(error, { context: t('prompts.dialogs.create.title') });
+      handleError(error, { operation: t('prompts.dialogs.create.title') });
     },
   });
 }
@@ -210,7 +210,7 @@ export function useUpdatePrompt() {
       toast.success(t('prompts.messages.updateSuccess'));
     },
     onError: (error) => {
-      handleError(error, { context: t('prompts.dialogs.edit.title') });
+      handleError(error, { operation: t('prompts.dialogs.edit.title') });
     },
   });
 }
@@ -310,7 +310,7 @@ export function useBulkEnablePrompts() {
         const data = await graphqlRequest<{ bulkEnablePrompts: boolean }>(BULK_ENABLE_PROMPTS_MUTATION, { ids }, headers);
         return data.bulkEnablePrompts;
       } catch (error) {
-        handleError(error, { context: 'Bulk Enable Prompts' });
+        handleError(error);
         throw error;
       }
     },

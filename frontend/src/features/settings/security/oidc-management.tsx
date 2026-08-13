@@ -27,7 +27,7 @@ export default function OidcManagement({ providers }: OidcManagementProps) {
         window.location.href = res.data.url;
       }
     } catch (error: any) {
-      toast.error(t('security.oidc.linkError', 'Failed to initiate linking: ') + error.message);
+      toast.error(t('security.oidc.linkError') + error.message);
     }
   };
 
@@ -37,13 +37,13 @@ export default function OidcManagement({ providers }: OidcManagementProps) {
     setIsUnlinking(true);
     try {
       await graphqlRequest(UNLINK_OIDC_IDENTITY_MUTATION, { id: unlinkTarget.identityId });
-      toast.success(t('security.oidc.unlinkSuccess', 'Successfully unlinked provider.'));
+      toast.success(t('security.oidc.unlinkSuccess'));
       // Invalidate providers query and me query to refresh UI
       queryClient.invalidateQueries({ queryKey: ['oidc-providers'] });
       queryClient.invalidateQueries({ queryKey: ['me'] });
       setUnlinkTarget(null);
     } catch (error: any) {
-      toast.error(t('security.oidc.unlinkError', 'Failed to unlink provider: ') + error.message);
+      toast.error(t('security.oidc.unlinkError') + error.message);
     } finally {
       setIsUnlinking(false);
     }
@@ -52,9 +52,9 @@ export default function OidcManagement({ providers }: OidcManagementProps) {
   return (
     <div className='space-y-4'>
       <div>
-        <h3 className='text-lg font-medium'>{t('security.oidc.title', 'Unified OIDC Management')}</h3>
+        <h3 className='text-lg font-medium'>{t('security.oidc.title')}</h3>
         <p className='text-muted-foreground text-sm'>
-          {t('security.oidc.description', 'Manage your OIDC providers below. You can link or unlink providers to enable SSO login.')}
+          {t('security.oidc.description')}
         </p>
       </div>
 
@@ -102,7 +102,7 @@ export default function OidcManagement({ providers }: OidcManagementProps) {
                     type='button'
                   >
                     <Unlink className='w-4 h-4 mr-2' />
-                    {t('common.unlink', 'Unlink')}
+                    {t('common.unlink')}
                   </Button>
                 ) : (
                   <Button 
@@ -113,7 +113,7 @@ export default function OidcManagement({ providers }: OidcManagementProps) {
                     type='button'
                   >
                     <LinkIcon className='w-4 h-4 mr-2' />
-                    {t('common.link', 'Link')}
+                    {t('common.link')}
                   </Button>
                 )}
               </div>
@@ -130,15 +130,15 @@ export default function OidcManagement({ providers }: OidcManagementProps) {
             setUnlinkTarget(null);
           }
         }}
-        title={t('security.oidc.confirmUnlinkTitle', 'Unlink Provider')}
+        title={t('security.oidc.confirmUnlinkTitle')}
         desc={
           <span>
-            {t('security.oidc.confirmUnlink', 'Are you sure you want to unlink this provider?')}
+            {t('security.oidc.confirmUnlink')}
             {unlinkTarget?.providerName ? ` (${unlinkTarget.providerName})` : ''}
           </span>
         }
-        cancelBtnText={t('common.cancel', 'Cancel')}
-        confirmText={isUnlinking ? t('common.loading', 'Loading...') : t('common.unlink', 'Unlink')}
+        cancelBtnText={t('common.cancel')}
+        confirmText={isUnlinking ? t('common.loading') : t('common.unlink')}
         handleConfirm={handleUnlink}
         destructive
         isLoading={isUnlinking}

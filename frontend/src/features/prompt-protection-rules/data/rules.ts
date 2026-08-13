@@ -163,7 +163,7 @@ export function useCreatePromptProtectionRule() {
         const data = await graphqlRequest<{ createPromptProtectionRule: PromptProtectionRule }>(CREATE_RULE_MUTATION, { input });
         return promptProtectionRuleSchema.parse(data.createPromptProtectionRule);
       } catch (error) {
-        handleError(error, { context: t('promptProtectionRules.dialogs.create.title') });
+        handleError(error, { operation: t('promptProtectionRules.dialogs.create.title') });
         throw error;
       }
     },
@@ -185,7 +185,7 @@ export function useUpdatePromptProtectionRule() {
         const data = await graphqlRequest<{ updatePromptProtectionRule: PromptProtectionRule }>(UPDATE_RULE_MUTATION, { id, input });
         return promptProtectionRuleSchema.parse(data.updatePromptProtectionRule);
       } catch (error) {
-        handleError(error, { context: t('promptProtectionRules.dialogs.edit.title') });
+        handleError(error, { operation: t('promptProtectionRules.dialogs.edit.title') });
         throw error;
       }
     },
@@ -206,7 +206,7 @@ export function useDeletePromptProtectionRule() {
       try {
         await graphqlRequest(DELETE_RULE_MUTATION, { id });
       } catch (error) {
-        handleError(error, { context: 'Delete Prompt Protection Rule' });
+        handleError(error);
         throw error;
       }
     },
@@ -227,7 +227,7 @@ export function useUpdatePromptProtectionRuleStatus() {
       try {
         await graphqlRequest(UPDATE_RULE_STATUS_MUTATION, { id, status });
       } catch (error) {
-        handleError(error, { context: 'Update Prompt Protection Rule Status' });
+        handleError(error);
         throw error;
       }
     },
@@ -248,7 +248,7 @@ export function useBulkDeletePromptProtectionRules() {
       try {
         await graphqlRequest(BULK_DELETE_RULES_MUTATION, { ids });
       } catch (error) {
-        handleError(error, { context: 'Bulk Delete Prompt Protection Rules' });
+        handleError(error);
         throw error;
       }
     },
@@ -269,7 +269,7 @@ export function useBulkEnablePromptProtectionRules() {
       try {
         await graphqlRequest(BULK_ENABLE_RULES_MUTATION, { ids });
       } catch (error) {
-        handleError(error, { context: 'Bulk Enable Prompt Protection Rules' });
+        handleError(error);
         throw error;
       }
     },
@@ -299,7 +299,7 @@ export function useBulkDisablePromptProtectionRules() {
       try {
         await graphqlRequest(BULK_DISABLE_RULES_MUTATION, { ids });
       } catch (error) {
-        handleError(error, { context: 'Bulk Disable Prompt Protection Rules' });
+        handleError(error);
         throw error;
       }
     },

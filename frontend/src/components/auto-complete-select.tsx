@@ -1,12 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Command as CommandPrimitive } from 'cmdk';
 import { Check } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
 import { TruncatedText } from './truncated-text';
 import { Command, CommandEmpty, CommandGroup, CommandItem, CommandList } from './ui/command';
 import { Input } from './ui/input';
 import { Popover, PopoverAnchor, PopoverContent } from './ui/popover';
 import { Skeleton } from './ui/skeleton';
+
+// Cap the number of rendered options so lists with thousands of items (e.g. the
+// Playground model picker) don't mount thousands of DOM nodes at once. Users
+// narrow the list by typing; the remaining count is surfaced as a hint.
+const MAX_RENDERED_ITEMS = 100;
 
 type Props<T extends string> = {
   selectedValue: T;
@@ -32,6 +38,7 @@ export function AutoCompleteSelect<T extends string>({
   portalContainer,
   inputClassName,
 }: Props<T>) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [searchValue, setSearchValue] = useState('');
 
@@ -54,6 +61,17 @@ export function AutoCompleteSelect<T extends string>({
     const q = searchValue.toLowerCase();
     return items.filter((it) => it.label.toLowerCase().includes(q));
   }, [items, searchValue]);
+
+  // Only render a bounded slice; the rest stay reachable via search. The
+  // selected item is pinned so it stays visible even when it sorts past the cap
+  // and the search box was cleared on open.
+  const visibleItems = useMemo(() => {
+    if (filtered.length <= MAX_RENDERED_ITEMS) return filtered;
+    const selectedIndex = filtered.findIndex((item) => item.value === selectedValue);
+    if (selectedIndex < 0 || selectedIndex < MAX_RENDERED_ITEMS) return filtered.slice(0, MAX_RENDERED_ITEMS);
+    return [filtered[selectedIndex], ...filtered.slice(0, MAX_RENDERED_ITEMS - 1)];
+  }, [filtered, selectedValue]);
+  const hiddenCount = filtered.length - visibleItems.length;
 
   const onInputBlur = (e: React.FocusEvent<HTMLInputElement>) => {
     // Strict mode: on blur, revert input text to the selected label
@@ -121,9 +139,9 @@ export function AutoCompleteSelect<T extends string>({
                   </div>
                 </CommandPrimitive.Loading>
               )}
-              {filtered.length > 0 && !isLoading ? (
+              {visibleItems.length > 0 && !isLoading ? (
                 <CommandGroup>
-                  {filtered.map((option) => (
+                  {visibleItems.map((option) => (
                     <CommandItem
                       key={option.value}
                       value={option.value}
@@ -135,6 +153,11 @@ export function AutoCompleteSelect<T extends string>({
                       <TruncatedText className='min-w-0 flex-1'>{option.label}</TruncatedText>
                     </CommandItem>
                   ))}
+                  {hiddenCount > 0 && (
+                    <div className='text-muted-foreground px-2 py-1.5 text-center text-xs'>
+                      {t('common.autoComplete.moreResults', { count: hiddenCount })}
+                    </div>
+                  )}
                 </CommandGroup>
               ) : null}
               {!isLoading ? <CommandEmpty>{emptyMessage ?? 'No items.'}</CommandEmpty> : null}

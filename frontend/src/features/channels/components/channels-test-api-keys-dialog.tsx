@@ -11,12 +11,22 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useChannels } from '../context/channels-context';
-import { useDeleteDisabledChannelAPIKeys, useDisableChannelAPIKey, useTestChannelAPIKey, useUpdateChannel } from '../data/channels';
-import { TestAPIKeyResult } from '../data/schema';
+import {
+  useChannelDisabledAPIKeys,
+  useDeleteDisabledChannelAPIKeys,
+  useDisableChannelAPIKey,
+  useTestChannelAPIKey,
+  useUpdateChannel,
+} from '../data/channels';
+import { Channel, ChannelCredentials, TestAPIKeyResult } from '../data/schema';
 
 interface ChannelsTestAPIKeysDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  currentRow: Channel;
+  // Fetched on demand by the caller; null when the viewer may not read this
+  // channel's secrets, which reads differently from "no keys configured".
+  credentials: ChannelCredentials | null;
 }
 
 function maskAPIKey(key: string) {
@@ -26,9 +36,9 @@ function maskAPIKey(key: string) {
   return `${key.slice(0, 4)}****${key.slice(-4)}`;
 }
 
-export function ChannelsTestAPIKeysDialog({ open, onOpenChange }: ChannelsTestAPIKeysDialogProps) {
+export function ChannelsTestAPIKeysDialog({ open, onOpenChange, currentRow, credentials }: ChannelsTestAPIKeysDialogProps) {
   const { t } = useTranslation();
-  const { currentRow, setOpen } = useChannels();
+  const { setOpen } = useChannels();
   const [results, setResults] = useState<TestAPIKeyResult[]>([]);
   const [testedKeys, setTestedKeys] = useState<string[]>([]);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
@@ -41,11 +51,20 @@ export function ChannelsTestAPIKeysDialog({ open, onOpenChange }: ChannelsTestAP
   const updateChannel = useUpdateChannel();
   const deleteDisabledAPIKeys = useDeleteDisabledChannelAPIKeys();
 
-  const allKeys = useMemo(() => currentRow?.credentials?.apiKeys ?? [], [currentRow?.credentials?.apiKeys]);
-  const disabledKeySet = useMemo(
-    () => new Set(currentRow?.disabledAPIKeys?.map((item) => item.key) ?? []),
-    [currentRow?.disabledAPIKeys]
-  );
+  const allKeys = useMemo(() => credentials?.apiKeys ?? [], [credentials?.apiKeys]);
+  // Channel rows only carry the disabled key count, so the keys themselves are
+  // fetched on demand.
+  const { data: disabledKeys = [] } = useChannelDisabledAPIKeys(currentRow.id, { enabled: open });
+  const disabledKeySet = useMemo(() => new Set(disabledKeys.map((item) => item.key)), [disabledKeys]);
+
+  // An empty key list has three very different causes, and the action is
+  // reachable for all of them because the row carries no key count.
+  const emptyStateKey =
+    credentials === null
+      ? 'channels.dialogs.testAPIKeys.credentialsUnavailable'
+      : credentials?.apiKey
+        ? 'channels.dialogs.testAPIKeys.oauthOnly'
+        : 'channels.dialogs.testAPIKeys.noKeys';
 
   const isTested = results.length > 0;
   const isTesting = testingKey !== null;
@@ -89,10 +108,6 @@ export function ChannelsTestAPIKeysDialog({ open, onOpenChange }: ChannelsTestAP
   const isSomeSelected = [...selectableKeys].some((key) => selectedKeys.has(key)) && !isAllSelected;
 
   const isPending = isTesting || disableAPIKey.isPending || updateChannel.isPending || deleteDisabledAPIKeys.isPending;
-
-  if (!currentRow) {
-    return null;
-  }
 
   const handleClose = () => {
     abortRef.current = true;
@@ -210,15 +225,15 @@ export function ChannelsTestAPIKeysDialog({ open, onOpenChange }: ChannelsTestAP
     }
 
     try {
-      const disabledKeys = failedKeysToDelete.filter((key) => disabledKeySet.has(key));
-      const activeKeys = failedKeysToDelete.filter((key) => !disabledKeys.includes(key));
+      const disabledKeysToDelete = failedKeysToDelete.filter((key) => disabledKeySet.has(key));
+      const activeKeys = failedKeysToDelete.filter((key) => !disabledKeysToDelete.includes(key));
 
-      if (disabledKeys.length > 0) {
-        await deleteDisabledAPIKeys.mutateAsync({ channelID: currentRow.id, keys: disabledKeys });
+      if (disabledKeysToDelete.length > 0) {
+        await deleteDisabledAPIKeys.mutateAsync({ channelID: currentRow.id, keys: disabledKeysToDelete });
       }
 
       if (activeKeys.length > 0) {
-        const remainingKeys = (currentRow.credentials?.apiKeys ?? []).filter((key) => !activeKeys.includes(key));
+        const remainingKeys = allKeys.filter((key) => !activeKeys.includes(key));
         await updateChannel.mutateAsync({
           id: currentRow.id,
           input: {
@@ -307,7 +322,7 @@ export function ChannelsTestAPIKeysDialog({ open, onOpenChange }: ChannelsTestAP
                   {allKeys.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={4} className='h-32 text-center text-sm text-muted-foreground'>
-                        {t('channels.dialogs.testAPIKeys.noKeys')}
+                        {t(emptyStateKey)}
                       </TableCell>
                     </TableRow>
                   ) : isTested ? (

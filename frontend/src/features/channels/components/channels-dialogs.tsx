@@ -21,7 +21,7 @@ import { ChannelsProxyDialog } from './channels-proxy-dialog';
 import { ChannelsStatusDialog } from './channels-status-dialog';
 import { ChannelsTestDialog } from './channels-test-dialog';
 import { ChannelsTestHistoryDrawer } from './channels-test-history-drawer';
-import { ChannelsTestAPIKeysDialog } from './channels-test-api-keys-dialog';
+import { ChannelsCredentialDialogs } from './channels-credential-dialogs';
 import { ChannelsRateLimitDialog } from './channels-rate-limit-dialog';
 import { ChannelsTransformOptionsDialog } from './channels-transform-options-dialog';
 import { ChannelsEndpointsDialog } from './channels-endpoints-dialog';
@@ -30,6 +30,7 @@ import { ChannelsSystemSettingsDialog } from './channels-system-settings-dialog'
 export function ChannelsDialogs() {
   const { isOwner } = usePermissions();
   const { open, setOpen, currentRow, setCurrentRow, selectedChannels } = useChannels();
+
   return (
     <>
       {isOwner && <ChannelsSystemSettingsDialog />}
@@ -56,54 +57,7 @@ export function ChannelsDialogs() {
 
       {currentRow && (
         <>
-          <ChannelsActionDialog
-            key={`channel-edit-${currentRow.id}`}
-            open={open === 'edit'}
-            onOpenChange={(isOpen) => {
-              if (isOpen) {
-                setOpen('edit');
-              } else {
-                setOpen(null);
-                setTimeout(() => {
-                  setCurrentRow(null);
-                }, 500);
-              }
-            }}
-            currentRow={currentRow}
-          />
-
-          <ChannelsActionDialog
-            key={`channel-duplicate-${currentRow.id}`}
-            open={open === 'duplicate'}
-            onOpenChange={(isOpen) => {
-              if (isOpen) {
-                setOpen('duplicate');
-              } else {
-                setOpen(null);
-                setTimeout(() => {
-                  setCurrentRow(null);
-                }, 500);
-              }
-            }}
-            duplicateFromRow={currentRow}
-          />
-
-          <ChannelsActionDialog
-            key={`channel-view-models-${currentRow.id}`}
-            open={open === 'viewModels'}
-            onOpenChange={(isOpen) => {
-              if (isOpen) {
-                setOpen('viewModels');
-              } else {
-                setOpen(null);
-                setTimeout(() => {
-                  setCurrentRow(null);
-                }, 500);
-              }
-            }}
-            currentRow={currentRow}
-            showModelsPanel={true}
-          />
+          <ChannelsCredentialDialogs key={`channel-credentials-${currentRow.id}`} channel={currentRow} />
 
           <ChannelsDeleteDialog
             key={`channel-delete-${currentRow.id}`}
@@ -291,19 +245,6 @@ export function ChannelsDialogs() {
           <ChannelsDisabledAPIKeysDialog
             key={`channel-disabled-api-keys-${currentRow.id}`}
             open={open === 'disabledAPIKeys'}
-            onOpenChange={(isOpen) => {
-              if (!isOpen) {
-                setOpen(null);
-                setTimeout(() => {
-                  setCurrentRow(null);
-                }, 500);
-              }
-            }}
-          />
-
-          <ChannelsTestAPIKeysDialog
-            key={`channel-test-api-keys-${currentRow.id}`}
-            open={open === 'testAPIKeys'}
             onOpenChange={(isOpen) => {
               if (!isOpen) {
                 setOpen(null);

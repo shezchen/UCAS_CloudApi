@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { graphqlRequest } from '@/gql/graphql';
 import { getTokenFromStorage } from '@/stores/authStore';
@@ -636,11 +637,13 @@ export function useProviderQuotaStatuses() {
       return (await response.json()) as ProviderQuotaViewResponse;
     },
     refetchInterval: 60000,
-    refetchIntervalInBackground: true,
     enabled: !!selectedProjectId,
   });
 
-  const channels = (query.data?.channels ?? []).filter(hasProviderQuotaStatus).map(parseChannelNode);
+  const channels = useMemo(
+    () => (query.data?.channels ?? []).filter(hasProviderQuotaStatus).map(parseChannelNode),
+    [query.data]
+  );
 
   return {
     channels,

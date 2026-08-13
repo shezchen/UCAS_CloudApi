@@ -61,13 +61,13 @@ export default function SecurityForm() {
         },
       });
 
-      toast.success(t('security.messages.passwordChangeSuccess', 'Password changed successfully'));
+      toast.success(t('security.messages.passwordChangeSuccess'));
       form.reset();
     } catch (error: any) {
       console.error('Failed to change password:', error);
       toast.error(
-        t('security.messages.passwordChangeError', 'Failed to change password: ') +
-          (error.response?.errors?.[0]?.message || error.message || t('common.errors.unknown')),
+        t('security.messages.passwordChangeError') +
+          (error.response?.errors?.[0]?.message || error.message || t('common.errors.unknownError')),
       );
     } finally {
       setIsUpdating(false);
@@ -79,7 +79,7 @@ export default function SecurityForm() {
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className='space-y-6'>
           <h3 className='text-lg font-medium'>
-            {hasPassword ? t('security.password.changeTitle', 'Change Password') : t('security.password.setTitle', 'Set Initial Password')}
+            {hasPassword ? t('security.password.changeTitle') : t('security.password.setTitle')}
           </h3>
           
           {hasPassword && (
@@ -88,7 +88,7 @@ export default function SecurityForm() {
               name='oldPassword'
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>{t('security.password.oldPassword', 'Current Password')}</FormLabel>
+                  <FormLabel>{t('security.password.oldPassword')}</FormLabel>
                   <FormControl>
                     <Input type='password' placeholder='********' {...field} />
                   </FormControl>
@@ -103,7 +103,7 @@ export default function SecurityForm() {
             name='newPassword'
             render={({ field }) => (
               <FormItem>
-                <FormLabel>{t('security.password.newPassword', 'New Password')}</FormLabel>
+                <FormLabel>{t('security.password.newPassword')}</FormLabel>
                 <FormControl>
                   <Input type='password' placeholder='********' {...field} />
                 </FormControl>
@@ -117,7 +117,7 @@ export default function SecurityForm() {
             name='confirmPassword'
             render={({ field }) => (
               <FormItem>
-                <FormLabel>{t('security.password.confirmPassword', 'Confirm New Password')}</FormLabel>
+                <FormLabel>{t('security.password.confirmPassword')}</FormLabel>
                 <FormControl>
                   <Input type='password' placeholder='********' {...field} />
                 </FormControl>
@@ -129,10 +129,10 @@ export default function SecurityForm() {
           <div>
             <Button type='submit' disabled={isUpdating}>
               {isUpdating 
-                ? t('common.saving', 'Saving...') 
+                ? t('common.saving') 
                 : (hasPassword 
-                    ? t('security.password.changeButton', 'Change Password') 
-                    : t('security.password.setButton', 'Set Password'))}
+                    ? t('security.password.changeButton') 
+                    : t('security.password.setButton'))}
             </Button>
           </div>
         </form>

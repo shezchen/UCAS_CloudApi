@@ -51,12 +51,15 @@ type ProviderInfo struct {
 }
 
 type OIDCProvider struct {
-	ID              string   `conf:"id" yaml:"id" json:"id"`
-	Name            string   `conf:"name" yaml:"name" json:"name"`
-	DisplayName     string   `conf:"display_name" yaml:"display_name" json:"display_name"`
-	IssuerURL       string   `conf:"issuer_url" yaml:"issuer_url" json:"issuer_url"`
-	ClientID        string   `conf:"client_id" yaml:"client_id" json:"client_id"`
-	ClientSecret    string   `conf:"client_secret" yaml:"client_secret" json:"client_secret"`
+	ID          string `conf:"id" yaml:"id" json:"id"`
+	Name        string `conf:"name" yaml:"name" json:"name"`
+	DisplayName string `conf:"display_name" yaml:"display_name" json:"display_name"`
+	IssuerURL   string `conf:"issuer_url" yaml:"issuer_url" json:"issuer_url"`
+	ClientID    string `conf:"client_id" yaml:"client_id" json:"client_id"`
+	// ClientSecret is excluded from JSON and YAML serialization so the config
+	// debug log in conf.Load and `axonhub config preview` cannot expose it.
+	// Loaders still populate it through the conf tag.
+	ClientSecret    string   `conf:"client_secret" yaml:"-" json:"-"`
 	ExtraScopes     []string `conf:"extra_scopes" yaml:"extra_scopes" json:"extra_scopes"`
 	JITEnabled      bool     `conf:"jit_enabled" yaml:"jit_enabled" json:"jit_enabled"`
 	AutoLinkByEmail bool     `conf:"auto_link_by_email" yaml:"auto_link_by_email" json:"auto_link_by_email"`

@@ -17,6 +17,7 @@ import (
 	"github.com/looplj/axonhub/internal/log"
 	"github.com/looplj/axonhub/internal/server/assets"
 	"github.com/looplj/axonhub/internal/server/biz"
+	"github.com/looplj/axonhub/llm/httpclient"
 )
 
 type SystemHandlersParams struct {
@@ -116,12 +117,18 @@ func (h *SystemHandlers) WebhookEcho(c *gin.Context) {
 		Body:    json.RawMessage(bodyBytes),
 	}
 
+	// The body is not logged and headers are masked. MaskSensitiveHeaders only
+	// covers the credential headers in httpclient.sensitiveHeaders
+	// (Authorization, the *-Api-Key family, Cookie, Proxy-Authorization);
+	// provider signature headers such as X-Hub-Signature-256 are still logged
+	// verbatim. That list also gates outbound header forwarding and
+	// prompt-protection conditions, so it cannot be widened for logging alone.
 	log.Info(c.Request.Context(), "received webhook debug request",
 		log.String("method", resp.Method),
 		log.String("path", resp.Path),
 		log.Any("query", resp.Query),
-		log.Any("headers", resp.Headers),
-		log.Any("body", resp.Body),
+		log.Any("headers", httpclient.MaskSensitiveHeaders(c.Request.Header)),
+		log.Int("body_size", len(bodyBytes)),
 	)
 
 	c.Header("Content-Type", "application/json")
@@ -169,10 +176,11 @@ func (h *SystemHandlers) InitializeSystem(c *gin.Context) {
 		PreferLanguage: req.PreferLanguage,
 	})
 	if err != nil {
+		// Internal details go to the access log via c.Error; do not echo them to the client.
 		_ = c.Error(err)
 		c.JSON(http.StatusInternalServerError, InitializeSystemResponse{
 			Success: false,
-			Message: fmt.Sprintf("Failed to initialize system: %v", err),
+			Message: "Failed to initialize system",
 		})
 
 		return

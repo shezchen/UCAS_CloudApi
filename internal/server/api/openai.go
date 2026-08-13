@@ -651,6 +651,9 @@ func convertModelFacadeToOpenAIExtended(m biz.ModelFacade, include map[string]bo
 	return result
 }
 
+// writeOpenAIInternalError is only used by the model list/retrieve endpoints,
+// not the LLM forwarding path. Internal details go to the access log via
+// c.Error; the client only sees a generic message plus the request ID.
 func (handlers *OpenAIHandlers) writeOpenAIInternalError(c *gin.Context, requestID string, err error) {
 	_ = c.Error(err)
 
@@ -658,7 +661,7 @@ func (handlers *OpenAIHandlers) writeOpenAIInternalError(c *gin.Context, request
 		StatusCode: http.StatusInternalServerError,
 		Detail: llm.ErrorDetail{
 			Code:      openAIErrorCodeInternalServer,
-			Message:   err.Error(),
+			Message:   "internal server error",
 			Type:      openAIErrorTypeServer,
 			RequestID: requestID,
 		},

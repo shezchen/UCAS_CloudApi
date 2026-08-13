@@ -79,8 +79,10 @@ func (h *OIDCHandlers) GetAuthorizeURL(c *gin.Context) {
 
 	authURL, state, err := h.oidc.GetAuthorizeURL(c.Request.Context(), provider, baseURL)
 	if err != nil {
+		// Internal details go to the access log via c.Error; do not echo them to the client.
 		_ = c.Error(err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get authorization URL"})
+
 		return
 	}
 
@@ -114,7 +116,8 @@ func (h *OIDCHandlers) GetLinkAuthorizeURL(c *gin.Context) {
 	authURL, state, err := h.oidc.GetLinkAuthorizeURL(c.Request.Context(), provider, baseURL, userID)
 	if err != nil {
 		_ = c.Error(err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get authorization URL"})
+
 		return
 	}
 
@@ -159,8 +162,11 @@ func (h *OIDCHandlers) Callback(c *gin.Context) {
 
 	exchangeCode, intent, err := h.oidc.Callback(c.Request.Context(), provider, code, state, h.getBaseURL(c))
 	if err != nil {
+		// Internal details go to the access log via c.Error; the redirect only
+		// carries a generic description so nothing internal leaks into the URL.
+		_ = c.Error(err)
 		baseURL := h.getBaseURL(c)
-		c.Redirect(http.StatusFound, fmt.Sprintf("%s/oauth/oidc/idp-callback?error=auth_failed&error_description=%s", baseURL, url.QueryEscape(err.Error())))
+		c.Redirect(http.StatusFound, fmt.Sprintf("%s/oauth/oidc/idp-callback?error=auth_failed&error_description=%s", baseURL, url.QueryEscape("Authentication failed")))
 
 		return
 	}
@@ -208,7 +214,7 @@ func (h *OIDCHandlers) Exchange(c *gin.Context) {
 		}
 
 		_ = c.Error(err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to exchange code"})
 
 		return
 	}
@@ -216,7 +222,8 @@ func (h *OIDCHandlers) Exchange(c *gin.Context) {
 	token, err := h.auth.GenerateJWTToken(c.Request.Context(), user)
 	if err != nil {
 		_ = c.Error(err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
+
 		return
 	}
 

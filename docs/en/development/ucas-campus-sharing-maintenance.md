@@ -74,6 +74,19 @@ Public registration accepts only these exact domains, not subdomains or look-ali
 
 The client first calls `POST /admin/auth/signup/verification` for a six-digit code and then `POST /admin/auth/signup`. Public signup always creates a non-Owner member and never replaces the existing Owner identity.
 
+### 4.1 Password recovery
+
+Password recovery uses two public endpoints:
+
+1. `POST /admin/auth/password-reset/verification` accepts `email` and, when the request is accepted, returns `202`, `challengeToken`, and `resendAfterSeconds`.
+2. `POST /admin/auth/password-reset` accepts that same email together with `challengeToken`, the six-digit `verificationCode`, and `newPassword`.
+
+Recovery applies to every existing activated account email and is not restricted to the campus signup domains. This includes the existing Owner's QQ mailbox. Addresses are trimmed and normalized to lowercase; public signup itself remains restricted to the four UCAS domains above.
+
+The verification endpoint returns the same `202` status, message, and response fields for existing and unknown addresses, so neither the HTTP response nor the UI reveals account existence. Only an existing activated account receives a message; account lookup and SMTP delivery run outside the public request path. Signup and password recovery use separate `registration` and `password_reset` purposes with separate digest domains, so codes cannot cross purposes. A recovery code is bounded by expiry, attempt count, and one-time consumption; a successful reset also invalidates every other outstanding recovery challenge for that email.
+
+A successful reset increments the account's `auth_version`, immediately revoking every previously issued browser JWT. The frontend must clear local session state and require a fresh sign-in. Personal API keys are independent credentials and are not revoked by password recovery; disable or rotate them separately if an API key may be compromised.
+
 Default anti-abuse settings:
 
 | Setting | Default |
@@ -89,10 +102,12 @@ Inject the SMTP credential through `AXONHUB_SMTP_PASSWORD`. Never commit it to G
 
 Troubleshooting order:
 
-1. Confirm that the normalized lowercase address belongs to an allowed domain.
-2. Check the public endpoint status: `429` is rate limiting; `503` means verification is unavailable.
-3. Verify only the SMTP host, port, sender, and presence of the environment variable. Do not print the authorization code.
-4. Successful delivery is not successful signup. Check expiry, one-time consumption, attempt count, and project initialization next.
+1. For signup, confirm that the address belongs to an allowed domain. For recovery, confirm privately that it is the complete email of an existing activated account. Both paths normalize it to lowercase.
+2. `400` means malformed input, an invalid email, or an invalid new password. The recovery submission endpoint also provides stable `invalid_email`, `invalid_password`, or `invalid_verification` codes. `invalid_verification` deliberately covers a mismatched, expired, consumed, or exhausted code/challenge without exposing account state.
+3. `429` means the resend cooldown or an email, source, or global hourly limit was reached. Wait for the response/UI cooldown rather than attempting to bypass it through another purpose.
+4. `503` means the verification service or asynchronous delivery queue was unavailable before acceptance. Check the system secret, executor capacity, and service logs first; never interpret it as “account not found.”
+5. If recovery returned `202` but no message arrived, verify only the account's activated state, SMTP host/port/sender, presence of `AXONHUB_SMTP_PASSWORD`, and sanitized logs. Do not print the credential or plaintext code, and do not confirm account existence to the requester. An asynchronous SMTP failure invalidates that undelivered challenge; request another after the cooldown.
+6. Successful delivery is not successful signup or reset. Check purpose, expiry, one-time consumption, attempt count, and, for signup, project initialization next.
 
 ## 5. Member journey
 

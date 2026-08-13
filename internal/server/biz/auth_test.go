@@ -249,6 +249,10 @@ func setupCampusRegistrationAuthService(t *testing.T, config CampusEmailVerifica
 		Ent:                     client,
 		EmailVerificationConfig: config,
 		VerificationSender:      sender,
+		VerificationExecutor: func(task func(context.Context)) error {
+			task(context.Background())
+			return nil
+		},
 	})
 	setupCtx := ent.NewContext(authz.WithTestBypass(t.Context()), client)
 	secretKey, err := GenerateSecretKey()
@@ -783,6 +787,31 @@ func TestAuthService_PasswordReset_UnknownAndUndeliveredChallengesAreSafe(t *tes
 	})
 }
 
+func TestAuthService_PasswordReset_DeliveryRunsOutsideRequestPath(t *testing.T) {
+	fixture := setupCampusRegistrationAuthService(t, CampusEmailVerificationConfig{})
+	defer fixture.client.Close()
+	email := "async-reset@mails.ucas.ac.cn"
+	hash, err := HashPassword("async-old-password")
+	require.NoError(t, err)
+	_, err = fixture.client.User.Create().SetEmail(email).SetPassword(hash).Save(fixture.setupCtx)
+	require.NoError(t, err)
+
+	queued := make(chan func(context.Context), 2)
+	fixture.auth.VerificationExecutor = func(task func(context.Context)) error {
+		queued <- task
+		return nil
+	}
+
+	token, err := fixture.auth.RequestPasswordResetVerification(t.Context(), email, "198.51.100.39")
+	require.NoError(t, err)
+	require.NotEmpty(t, token)
+	require.Equal(t, 0, fixture.sender.count(), "SMTP must not delay the public response")
+
+	task := <-queued
+	task(t.Context())
+	require.Equal(t, 1, fixture.sender.count())
+}
+
 func TestAuthService_PasswordReset_RejectsExpiredReusedAndOversizedPasswords(t *testing.T) {
 	fixture := setupCampusRegistrationAuthService(t, CampusEmailVerificationConfig{CodeTTL: time.Minute})
 	defer fixture.client.Close()
@@ -808,6 +837,8 @@ func TestAuthService_PasswordReset_RejectsExpiredReusedAndOversizedPasswords(t *
 	require.ErrorIs(t, err, ErrVerificationInvalid)
 
 	err = fixture.auth.ResetPassword(t.Context(), email, token, code, string(make([]byte, 73)))
+	require.ErrorIs(t, err, ErrInvalidNewPassword)
+	err = fixture.auth.ResetPassword(t.Context(), email, token, code, OIDC_ONLY_PLACEHOLDER)
 	require.ErrorIs(t, err, ErrInvalidNewPassword)
 }
 
@@ -1044,6 +1075,34 @@ func TestAuthService_AuthenticateJWTToken(t *testing.T) {
 	_, err = authService.AuthenticateJWTToken(ctx, newTokenString)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "user not activated")
+}
+
+func TestAuthService_AuthenticateJWTToken_UsesAuthoritativeAuthVersion(t *testing.T) {
+	cacheConfig := xcache.Config{Mode: xcache.ModeMemory}
+	authService, client, cleanup := setupTestAuthService(t, cacheConfig)
+	defer cleanup()
+	defer client.Close()
+
+	ctx := ent.NewContext(authz.WithTestBypass(t.Context()), client)
+	hashedPassword, err := HashPassword("test-password")
+	require.NoError(t, err)
+	testUser, err := client.User.Create().
+		SetEmail("stale-auth-version@example.com").
+		SetPassword(hashedPassword).
+		SetStatus(user.StatusActivated).
+		Save(ctx)
+	require.NoError(t, err)
+
+	token, err := authService.GenerateJWTToken(ctx, testUser)
+	require.NoError(t, err)
+	_, err = authService.UserService.GetUserByID(ctx, testUser.ID)
+	require.NoError(t, err, "warm the user cache with auth_version 0")
+
+	_, err = client.User.UpdateOneID(testUser.ID).AddAuthVersion(1).Save(ctx)
+	require.NoError(t, err, "simulate a password reset committed by another instance")
+
+	_, err = authService.AuthenticateJWTToken(ctx, token)
+	require.ErrorIs(t, err, ErrInvalidJWT)
 }
 
 func TestAuthService_AuthenticateAPIKey(t *testing.T) {

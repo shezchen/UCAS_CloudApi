@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/zhenzou/executors"
 	"go.uber.org/fx"
 	"golang.org/x/crypto/bcrypt"
 
@@ -109,7 +110,17 @@ type AuthServiceParams struct {
 	Ent                     *ent.Client
 	EmailVerificationConfig CampusEmailVerificationConfig
 	VerificationSender      servermail.VerificationSender
+	VerificationExecutor    PasswordResetVerificationExecutor
 	AllowNoAuth             bool `name:"allow_no_auth"`
+}
+
+// PasswordResetVerificationExecutor moves account lookup and SMTP delivery
+// off the public request path, so response latency cannot reveal whether an
+// address belongs to an account.
+type PasswordResetVerificationExecutor func(func(context.Context)) error
+
+func NewPasswordResetVerificationExecutor(exec executors.ScheduledExecutor) PasswordResetVerificationExecutor {
+	return exec.ExecuteFunc
 }
 
 func NewAuthService(params AuthServiceParams) *AuthService {
@@ -123,6 +134,7 @@ func NewAuthService(params AuthServiceParams) *AuthService {
 		OIDCService:             params.OIDCService,
 		EmailVerificationConfig: params.EmailVerificationConfig.withDefaults(),
 		VerificationSender:      params.VerificationSender,
+		VerificationExecutor:    params.VerificationExecutor,
 		AllowNoAuth:             params.AllowNoAuth,
 		now:                     time.Now,
 	}
@@ -137,6 +149,7 @@ type AuthService struct {
 	OIDCService             *OIDCService
 	EmailVerificationConfig CampusEmailVerificationConfig
 	VerificationSender      servermail.VerificationSender
+	VerificationExecutor    PasswordResetVerificationExecutor
 	AllowNoAuth             bool
 
 	verificationMu sync.Mutex
@@ -370,7 +383,7 @@ func normalizeAccountEmail(email string) (string, error) {
 }
 
 func validateResetPassword(password string) error {
-	if utf8.RuneCountInString(password) < 8 || len([]byte(password)) > 72 {
+	if password == OIDC_ONLY_PLACEHOLDER || utf8.RuneCountInString(password) < 8 || len([]byte(password)) > 72 {
 		return ErrInvalidNewPassword
 	}
 
@@ -442,10 +455,43 @@ func (s *AuthService) consumePasswordResetChallenge(ctx context.Context, challen
 	})
 }
 
+func (s *AuthService) invalidateUndeliveredPasswordResetChallenge(ctx context.Context, challengeID int, cause error) {
+	if consumeErr := s.consumePasswordResetChallenge(ctx, challengeID); consumeErr != nil {
+		log.Error(ctx, "failed to invalidate undelivered password reset challenge",
+			log.Int("challenge_id", challengeID), log.Cause(consumeErr))
+	}
+	if cause != nil {
+		log.Warn(ctx, "password reset verification was not delivered",
+			log.Int("challenge_id", challengeID), log.Cause(cause))
+	}
+}
+
+func (s *AuthService) deliverPasswordResetVerification(ctx context.Context, issued *issuedEmailVerification) {
+	exists, err := s.passwordResetAccountExists(ctx, issued.Email)
+	if err != nil {
+		s.invalidateUndeliveredPasswordResetChallenge(ctx, issued.ID, fmt.Errorf("check password reset account: %w", err))
+		return
+	}
+	if !exists {
+		s.invalidateUndeliveredPasswordResetChallenge(ctx, issued.ID, nil)
+		return
+	}
+
+	if err := s.VerificationSender.SendVerificationCode(
+		ctx,
+		issued.Email,
+		issued.Code,
+		s.EmailVerificationConfig.CodeTTL,
+		servermail.VerificationPurposePasswordReset,
+	); err != nil {
+		s.invalidateUndeliveredPasswordResetChallenge(ctx, issued.ID, err)
+	}
+}
+
 // RequestPasswordResetVerification always creates and returns the same shape
-// of challenge token for syntactically valid addresses. A message is sent only
-// when the address belongs to an activated account, preventing the HTTP
-// response from disclosing whether an account exists.
+// of challenge token for syntactically valid addresses. Account lookup and
+// SMTP delivery run after the response path is decided, so neither the body
+// nor response latency discloses whether the account exists.
 func (s *AuthService) RequestPasswordResetVerification(ctx context.Context, email, source string) (string, error) {
 	normalizedEmail, err := normalizeAccountEmail(email)
 	if err != nil {
@@ -463,30 +509,11 @@ func (s *AuthService) RequestPasswordResetVerification(ctx context.Context, emai
 	}
 	challengeToken := passwordResetChallengeToken(issued)
 
-	exists, err := s.passwordResetAccountExists(ctx, normalizedEmail)
-	if err != nil {
-		return "", fmt.Errorf("check password reset account: %w", err)
-	}
-	if !exists {
-		return challengeToken, nil
-	}
-
-	if err := s.VerificationSender.SendVerificationCode(
-		ctx,
-		issued.Email,
-		issued.Code,
-		s.EmailVerificationConfig.CodeTTL,
-		servermail.VerificationPurposePasswordReset,
-	); err != nil {
-		// Do not reveal account existence through a sender-specific response.
-		// The undelivered code is invalidated while the request still counts
-		// toward rate limits, so SMTP failures cannot be abused for free retries.
-		if consumeErr := s.consumePasswordResetChallenge(ctx, issued.ID); consumeErr != nil {
-			log.Error(ctx, "failed to invalidate undelivered password reset challenge",
-				log.Int("challenge_id", issued.ID), log.Cause(consumeErr))
-		}
-		log.Warn(ctx, "failed to send password reset verification",
-			log.Int("challenge_id", issued.ID), log.Cause(err))
+	if err := s.VerificationExecutor(func(deliveryCtx context.Context) {
+		s.deliverPasswordResetVerification(deliveryCtx, issued)
+	}); err != nil {
+		s.invalidateUndeliveredPasswordResetChallenge(ctx, issued.ID, err)
+		return "", fmt.Errorf("%w: password reset delivery queue is unavailable", ErrVerificationUnavailable)
 	}
 
 	return challengeToken, nil
@@ -893,14 +920,17 @@ func (s *AuthService) AuthenticateJWTToken(ctx context.Context, tokenString stri
 		return nil, fmt.Errorf("%w: invalid token claims", ErrInvalidJWT)
 	}
 
-	u, err := authz.RunWithSystemBypass(ctx, "auth-lookup", func(bypassCtx context.Context) (*ent.User, error) {
-		return s.UserService.GetUserByID(bypassCtx, int(userID))
+	authState, err := authz.RunWithSystemBypass(ctx, "auth-state-lookup", func(bypassCtx context.Context) (*ent.User, error) {
+		return s.entFromContext(bypassCtx).User.Query().
+			Where(user.IDEQ(int(userID))).
+			Select(user.FieldID, user.FieldStatus, user.FieldAuthVersion).
+			Only(bypassCtx)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("%w: failed to get user: %w", ErrInvalidJWT, err)
 	}
 
-	if u.Status != user.StatusActivated {
+	if authState.Status != user.StatusActivated {
 		return nil, fmt.Errorf("%w: user not activated", ErrInvalidJWT)
 	}
 
@@ -908,14 +938,21 @@ func (s *AuthService) AuthenticateJWTToken(ctx context.Context, tokenString stri
 	if !hasAuthVersion {
 		// Tokens issued before auth_version existed remain valid only until the
 		// account's first password change or reset advances the database value.
-		if u.AuthVersion != 0 {
+		if authState.AuthVersion != 0 {
 			return nil, fmt.Errorf("%w: token has been revoked", ErrInvalidJWT)
 		}
 	} else {
 		claimVersion, ok := claim.(float64)
-		if !ok || claimVersion < 0 || claimVersion != float64(int64(claimVersion)) || int64(claimVersion) != u.AuthVersion {
+		if !ok || claimVersion < 0 || claimVersion != float64(int64(claimVersion)) || int64(claimVersion) != authState.AuthVersion {
 			return nil, fmt.Errorf("%w: token has been revoked", ErrInvalidJWT)
 		}
+	}
+
+	u, err := authz.RunWithSystemBypass(ctx, "auth-user-lookup", func(bypassCtx context.Context) (*ent.User, error) {
+		return s.UserService.GetUserByID(bypassCtx, int(userID))
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%w: failed to get user: %w", ErrInvalidJWT, err)
 	}
 
 	return u, nil

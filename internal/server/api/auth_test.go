@@ -123,6 +123,10 @@ func setupCampusSignUpHandler(
 		Ent:                     client,
 		EmailVerificationConfig: config,
 		VerificationSender:      sender,
+		VerificationExecutor: func(task func(context.Context)) error {
+			task(context.Background())
+			return nil
+		},
 	})
 	setupCtx := ent.NewContext(authz.WithTestBypass(t.Context()), client)
 
@@ -396,6 +400,8 @@ func TestAuthHandlers_PasswordReset_ExistingAndUnknownResponsesDoNotEnumerateAcc
 	require.NotEmpty(t, existingResponse.ChallengeToken)
 	require.NotEmpty(t, unknownResponse.ChallengeToken)
 	require.NotEqual(t, existingResponse.ChallengeToken, unknownResponse.ChallengeToken)
+	require.Positive(t, existingResponse.ResendAfterSeconds)
+	require.Equal(t, existingResponse.ResendAfterSeconds, unknownResponse.ResendAfterSeconds)
 
 	code := fixture.sender.latestCodeForPurpose(
 		t,
@@ -427,7 +433,9 @@ func TestAuthHandlers_PasswordReset_StatusMapping(t *testing.T) {
 			"new-password-123",
 		)
 		require.Equal(t, http.StatusBadRequest, response.Code)
-		require.Equal(t, biz.ErrVerificationInvalid.Error(), decodeAPIError(t, response).Error.Message)
+		apiErr := decodeAPIError(t, response).Error
+		require.Equal(t, biz.ErrVerificationInvalid.Error(), apiErr.Message)
+		require.Equal(t, "invalid_verification", apiErr.Code)
 	})
 
 	t.Run("request is rate limited", func(t *testing.T) {

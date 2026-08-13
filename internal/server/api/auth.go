@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/fx"
@@ -60,8 +61,9 @@ type PasswordResetVerificationRequest struct {
 }
 
 type PasswordResetVerificationResponse struct {
-	Message        string `json:"message"`
-	ChallengeToken string `json:"challengeToken"`
+	Message            string `json:"message"`
+	ChallengeToken     string `json:"challengeToken"`
+	ResendAfterSeconds int64  `json:"resendAfterSeconds"`
 }
 
 type PasswordResetRequest struct {
@@ -133,8 +135,9 @@ func (h *AuthHandlers) RequestPasswordResetVerification(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusAccepted, PasswordResetVerificationResponse{
-		Message:        "If the account exists, a password reset code has been sent.",
-		ChallengeToken: challengeToken,
+		Message:            "If the account exists, a password reset code has been sent.",
+		ChallengeToken:     challengeToken,
+		ResendAfterSeconds: int64((h.AuthService.EmailVerificationConfig.ResendCooldown + time.Second - 1) / time.Second),
 	})
 }
 
@@ -156,10 +159,12 @@ func (h *AuthHandlers) ResetPassword(c *gin.Context) {
 	)
 	if err != nil {
 		switch {
-		case errors.Is(err, biz.ErrInvalidEmail), errors.Is(err, biz.ErrInvalidNewPassword):
-			JSONError(c, http.StatusBadRequest, err)
+		case errors.Is(err, biz.ErrInvalidEmail):
+			JSONErrorWithCode(c, http.StatusBadRequest, "invalid_email", biz.ErrInvalidEmail)
+		case errors.Is(err, biz.ErrInvalidNewPassword):
+			JSONErrorWithCode(c, http.StatusBadRequest, "invalid_password", biz.ErrInvalidNewPassword)
 		case errors.Is(err, biz.ErrVerificationInvalid):
-			JSONError(c, http.StatusBadRequest, biz.ErrVerificationInvalid)
+			JSONErrorWithCode(c, http.StatusBadRequest, "invalid_verification", biz.ErrVerificationInvalid)
 		case errors.Is(err, biz.ErrVerificationUnavailable):
 			JSONError(c, http.StatusServiceUnavailable, biz.ErrVerificationUnavailable)
 		default:

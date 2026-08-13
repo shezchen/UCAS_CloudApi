@@ -55,6 +55,26 @@ type SignUpVerificationResponse struct {
 	Message string `json:"message"`
 }
 
+type PasswordResetVerificationRequest struct {
+	Email string `json:"email" binding:"required,email"`
+}
+
+type PasswordResetVerificationResponse struct {
+	Message        string `json:"message"`
+	ChallengeToken string `json:"challengeToken"`
+}
+
+type PasswordResetRequest struct {
+	Email            string `json:"email"            binding:"required,email"`
+	ChallengeToken   string `json:"challengeToken"   binding:"required"`
+	VerificationCode string `json:"verificationCode" binding:"required"`
+	NewPassword      string `json:"newPassword"      binding:"required,min=8"`
+}
+
+type PasswordResetResponse struct {
+	Message string `json:"message"`
+}
+
 // RequestSignUpVerification sends a rate-limited verification code. The
 // success response intentionally does not disclose whether an account exists.
 func (h *AuthHandlers) RequestSignUpVerification(c *gin.Context) {
@@ -82,6 +102,73 @@ func (h *AuthHandlers) RequestSignUpVerification(c *gin.Context) {
 	c.JSON(http.StatusAccepted, SignUpVerificationResponse{
 		Message: "If the address can be used for registration, a verification email has been sent.",
 	})
+}
+
+// RequestPasswordResetVerification issues a purpose-bound challenge without
+// disclosing whether the submitted address belongs to an account.
+func (h *AuthHandlers) RequestPasswordResetVerification(c *gin.Context) {
+	var req PasswordResetVerificationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		JSONError(c, http.StatusBadRequest, errors.New("Invalid password reset request"))
+		return
+	}
+
+	challengeToken, err := h.AuthService.RequestPasswordResetVerification(
+		c.Request.Context(),
+		req.Email,
+		c.ClientIP(),
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, biz.ErrInvalidEmail):
+			JSONError(c, http.StatusBadRequest, biz.ErrInvalidEmail)
+		case errors.Is(err, biz.ErrVerificationRateLimit):
+			JSONError(c, http.StatusTooManyRequests, biz.ErrVerificationRateLimit)
+		case errors.Is(err, biz.ErrVerificationUnavailable):
+			JSONError(c, http.StatusServiceUnavailable, biz.ErrVerificationUnavailable)
+		default:
+			JSONError(c, http.StatusInternalServerError, errors.New("Failed to request password reset email"))
+		}
+		return
+	}
+
+	c.JSON(http.StatusAccepted, PasswordResetVerificationResponse{
+		Message:        "If the account exists, a password reset code has been sent.",
+		ChallengeToken: challengeToken,
+	})
+}
+
+// ResetPassword changes the password only after atomically consuming the
+// exact purpose-bound challenge returned by RequestPasswordResetVerification.
+func (h *AuthHandlers) ResetPassword(c *gin.Context) {
+	var req PasswordResetRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		JSONError(c, http.StatusBadRequest, errors.New("Invalid password reset request"))
+		return
+	}
+
+	err := h.AuthService.ResetPassword(
+		c.Request.Context(),
+		req.Email,
+		req.ChallengeToken,
+		req.VerificationCode,
+		req.NewPassword,
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, biz.ErrInvalidEmail), errors.Is(err, biz.ErrInvalidNewPassword):
+			JSONError(c, http.StatusBadRequest, err)
+		case errors.Is(err, biz.ErrVerificationInvalid):
+			JSONError(c, http.StatusBadRequest, biz.ErrVerificationInvalid)
+		case errors.Is(err, biz.ErrVerificationUnavailable):
+			JSONError(c, http.StatusServiceUnavailable, biz.ErrVerificationUnavailable)
+		default:
+			JSONError(c, http.StatusInternalServerError, errors.New("Failed to reset password"))
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, PasswordResetResponse{Message: "Password reset successfully."})
 }
 
 // SignUp creates a non-owner member account restricted to UCAS email domains.

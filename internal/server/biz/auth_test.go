@@ -133,9 +133,10 @@ func setupTestAuthService(t *testing.T, cacheConfig xcache.Config) (*AuthService
 }
 
 type capturedVerificationMessage struct {
-	to   string
-	code string
-	ttl  time.Duration
+	to      string
+	code    string
+	ttl     time.Duration
+	purpose servermail.VerificationPurpose
 }
 
 type capturingVerificationSender struct {
@@ -146,14 +147,19 @@ type capturingVerificationSender struct {
 
 var _ servermail.VerificationSender = (*capturingVerificationSender)(nil)
 
-func (s *capturingVerificationSender) SendVerificationCode(_ context.Context, to, code string, ttl time.Duration) error {
+func (s *capturingVerificationSender) SendVerificationCode(
+	_ context.Context,
+	to, code string,
+	ttl time.Duration,
+	purpose servermail.VerificationPurpose,
+) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if s.sendErr != nil {
 		return s.sendErr
 	}
-	s.messages = append(s.messages, capturedVerificationMessage{to: to, code: code, ttl: ttl})
+	s.messages = append(s.messages, capturedVerificationMessage{to: to, code: code, ttl: ttl, purpose: purpose})
 
 	return nil
 }
@@ -169,6 +175,25 @@ func (s *capturingVerificationSender) latestCode(t *testing.T, email string) str
 		}
 	}
 	t.Fatalf("no verification message captured for requested email")
+
+	return ""
+}
+
+func (s *capturingVerificationSender) latestCodeForPurpose(
+	t *testing.T,
+	email string,
+	purpose servermail.VerificationPurpose,
+) string {
+	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for i := len(s.messages) - 1; i >= 0; i-- {
+		if s.messages[i].to == email && s.messages[i].purpose == purpose {
+			return s.messages[i].code
+		}
+	}
+	t.Fatalf("no %s verification message captured for requested email", purpose)
 
 	return ""
 }
@@ -539,6 +564,292 @@ func TestAuthService_RegisterCampusUser_RequiresActiveProject(t *testing.T) {
 		Only(fixture.setupCtx)
 	require.NoError(t, queryErr)
 	require.Nil(t, challenge.ConsumedAt, "challenge consumption must roll back with account creation")
+}
+
+func TestAuthService_PasswordReset_OwnerEmailRevokesOldPasswordAndJWT(t *testing.T) {
+	fixture := setupCampusRegistrationAuthService(t, CampusEmailVerificationConfig{})
+	defer fixture.client.Close()
+
+	oldPassword := "owner-old-password"
+	newPassword := "owner-new-password"
+	hashedPassword, err := HashPassword(oldPassword)
+	require.NoError(t, err)
+	account, err := fixture.client.User.Create().
+		SetEmail("541955254@qq.com").
+		SetPassword(hashedPassword).
+		SetIsOwner(true).
+		Save(fixture.setupCtx)
+	require.NoError(t, err)
+
+	// Warm the user cache before the reset so the test also proves that reset
+	// invalidates cached authentication state.
+	_, err = fixture.auth.UserService.GetUserByID(fixture.setupCtx, account.ID)
+	require.NoError(t, err)
+	oldToken, err := fixture.auth.GenerateJWTToken(fixture.setupCtx, account)
+	require.NoError(t, err)
+	secret, err := fixture.auth.SystemService.SecretKey(fixture.setupCtx)
+	require.NoError(t, err)
+	legacyToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"user_id": account.ID,
+		"exp":     time.Now().Add(time.Hour).Unix(),
+	}).SignedString([]byte(secret))
+	require.NoError(t, err)
+
+	challengeToken, err := fixture.auth.RequestPasswordResetVerification(
+		t.Context(),
+		"  541955254@QQ.COM  ",
+		"198.51.100.30",
+	)
+	require.NoError(t, err)
+	require.NotEmpty(t, challengeToken)
+	code := fixture.sender.latestCodeForPurpose(
+		t,
+		"541955254@qq.com",
+		servermail.VerificationPurposePasswordReset,
+	)
+
+	require.NoError(t, fixture.auth.ResetPassword(
+		t.Context(),
+		"541955254@qq.com",
+		challengeToken,
+		code,
+		newPassword,
+	))
+
+	updated, err := fixture.client.User.Get(fixture.setupCtx, account.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), updated.AuthVersion)
+	require.NoError(t, VerifyPassword(updated.Password, newPassword))
+	require.Error(t, VerifyPassword(updated.Password, oldPassword))
+
+	_, err = fixture.auth.AuthenticateUser(t.Context(), account.Email, oldPassword)
+	require.ErrorIs(t, err, ErrInvalidPassword)
+	authenticated, err := fixture.auth.AuthenticateUser(t.Context(), account.Email, newPassword)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), authenticated.AuthVersion)
+
+	_, err = fixture.auth.AuthenticateJWTToken(t.Context(), oldToken)
+	require.ErrorIs(t, err, ErrInvalidJWT)
+	_, err = fixture.auth.AuthenticateJWTToken(t.Context(), legacyToken)
+	require.ErrorIs(t, err, ErrInvalidJWT)
+	newToken, err := fixture.auth.GenerateJWTToken(t.Context(), authenticated)
+	require.NoError(t, err)
+	_, err = fixture.auth.AuthenticateJWTToken(t.Context(), newToken)
+	require.NoError(t, err)
+
+	cached, err := fixture.auth.UserService.GetUserByID(fixture.setupCtx, account.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), cached.AuthVersion)
+}
+
+func TestAuthService_PasswordReset_SeparatesRegistrationCodes(t *testing.T) {
+	fixture := setupCampusRegistrationAuthService(t, CampusEmailVerificationConfig{})
+	defer fixture.client.Close()
+	createCampusRegistrationProject(t, fixture)
+
+	email := "purpose@mails.ucas.ac.cn"
+	hashedPassword, err := HashPassword("purpose-old-password")
+	require.NoError(t, err)
+	_, err = fixture.client.User.Create().
+		SetEmail(email).
+		SetPassword(hashedPassword).
+		Save(fixture.setupCtx)
+	require.NoError(t, err)
+
+	require.NoError(t, fixture.auth.RequestCampusEmailVerification(t.Context(), email, "198.51.100.31"))
+	registrationCode := fixture.sender.latestCodeForPurpose(
+		t,
+		email,
+		servermail.VerificationPurposeRegistration,
+	)
+	resetToken, err := fixture.auth.RequestPasswordResetVerification(t.Context(), email, "198.51.100.31")
+	require.NoError(t, err)
+	resetCode := fixture.sender.latestCodeForPurpose(
+		t,
+		email,
+		servermail.VerificationPurposePasswordReset,
+	)
+
+	err = fixture.auth.ResetPassword(t.Context(), email, resetToken, registrationCode, "purpose-new-password")
+	require.ErrorIs(t, err, ErrVerificationInvalid)
+	require.NoError(t, fixture.auth.ResetPassword(t.Context(), email, resetToken, resetCode, "purpose-new-password"))
+
+	newEmail := "reset-code-cannot-register@mails.ucas.ac.cn"
+	issued, err := fixture.auth.issueEmailVerification(
+		t.Context(),
+		newEmail,
+		"198.51.100.32",
+		emailverificationchallenge.PurposePasswordReset,
+	)
+	require.NoError(t, err)
+	created, err := fixture.auth.RegisterCampusUser(
+		t.Context(),
+		newEmail,
+		"registration-password",
+		"用途隔离同学",
+		issued.Code,
+	)
+	require.ErrorIs(t, err, ErrVerificationInvalid)
+	require.Nil(t, created)
+}
+
+func TestAuthService_PasswordReset_MultipleChallengesRemainIndependent(t *testing.T) {
+	t.Run("new request does not invalidate an older delivered code", func(t *testing.T) {
+		fixture := setupCampusRegistrationAuthService(t, CampusEmailVerificationConfig{ResendCooldown: time.Second})
+		defer fixture.client.Close()
+		email := "independent-old@mails.ucas.ac.cn"
+		hash, err := HashPassword("independent-old-password")
+		require.NoError(t, err)
+		_, err = fixture.client.User.Create().SetEmail(email).SetPassword(hash).Save(fixture.setupCtx)
+		require.NoError(t, err)
+
+		firstToken, err := fixture.auth.RequestPasswordResetVerification(t.Context(), email, "198.51.100.33")
+		require.NoError(t, err)
+		firstCode := fixture.sender.latestCodeForPurpose(t, email, servermail.VerificationPurposePasswordReset)
+		fixture.clock.now = fixture.clock.now.Add(2 * time.Second)
+		_, err = fixture.auth.RequestPasswordResetVerification(t.Context(), email, "198.51.100.33")
+		require.NoError(t, err)
+
+		require.NoError(t, fixture.auth.ResetPassword(
+			t.Context(), email, firstToken, firstCode, "independent-new-password",
+		))
+	})
+
+	t.Run("attempts on one challenge do not exhaust another", func(t *testing.T) {
+		fixture := setupCampusRegistrationAuthService(t, CampusEmailVerificationConfig{
+			ResendCooldown: time.Second,
+			MaxAttempts:    3,
+		})
+		defer fixture.client.Close()
+		email := "independent-attempts@mails.ucas.ac.cn"
+		hash, err := HashPassword("independent-old-password")
+		require.NoError(t, err)
+		_, err = fixture.client.User.Create().SetEmail(email).SetPassword(hash).Save(fixture.setupCtx)
+		require.NoError(t, err)
+
+		firstToken, err := fixture.auth.RequestPasswordResetVerification(t.Context(), email, "198.51.100.34")
+		require.NoError(t, err)
+		firstCode := fixture.sender.latestCodeForPurpose(t, email, servermail.VerificationPurposePasswordReset)
+		fixture.clock.now = fixture.clock.now.Add(2 * time.Second)
+		secondToken, err := fixture.auth.RequestPasswordResetVerification(t.Context(), email, "198.51.100.34")
+		require.NoError(t, err)
+		secondCode := fixture.sender.latestCodeForPurpose(t, email, servermail.VerificationPurposePasswordReset)
+
+		for range 3 {
+			err = fixture.auth.ResetPassword(
+				t.Context(), email, firstToken, codeDifferentFrom(firstCode), "independent-new-password",
+			)
+			require.ErrorIs(t, err, ErrVerificationInvalid)
+		}
+		require.NoError(t, fixture.auth.ResetPassword(
+			t.Context(), email, secondToken, secondCode, "independent-new-password",
+		))
+	})
+}
+
+func TestAuthService_PasswordReset_UnknownAndUndeliveredChallengesAreSafe(t *testing.T) {
+	t.Run("unknown account receives no message", func(t *testing.T) {
+		fixture := setupCampusRegistrationAuthService(t, CampusEmailVerificationConfig{})
+		defer fixture.client.Close()
+
+		token, err := fixture.auth.RequestPasswordResetVerification(
+			t.Context(),
+			"unknown@example.com",
+			"198.51.100.35",
+		)
+		require.NoError(t, err)
+		require.NotEmpty(t, token)
+		require.Equal(t, 0, fixture.sender.count())
+	})
+
+	t.Run("smtp failure invalidates undelivered code without exposing account", func(t *testing.T) {
+		fixture := setupCampusRegistrationAuthService(t, CampusEmailVerificationConfig{})
+		defer fixture.client.Close()
+		email := "smtp-reset@mails.ucas.ac.cn"
+		hash, err := HashPassword("smtp-old-password")
+		require.NoError(t, err)
+		_, err = fixture.client.User.Create().SetEmail(email).SetPassword(hash).Save(fixture.setupCtx)
+		require.NoError(t, err)
+		fixture.sender.sendErr = errors.New("smtp unavailable")
+
+		token, err := fixture.auth.RequestPasswordResetVerification(t.Context(), email, "198.51.100.36")
+		require.NoError(t, err)
+		require.NotEmpty(t, token)
+		challenge, err := fixture.client.EmailVerificationChallenge.Query().
+			Where(emailverificationchallenge.PurposeEQ(emailverificationchallenge.PurposePasswordReset)).
+			Only(fixture.setupCtx)
+		require.NoError(t, err)
+		require.NotNil(t, challenge.ConsumedAt)
+	})
+}
+
+func TestAuthService_PasswordReset_RejectsExpiredReusedAndOversizedPasswords(t *testing.T) {
+	fixture := setupCampusRegistrationAuthService(t, CampusEmailVerificationConfig{CodeTTL: time.Minute})
+	defer fixture.client.Close()
+	email := "expiry@mails.ucas.ac.cn"
+	hash, err := HashPassword("expiry-old-password")
+	require.NoError(t, err)
+	_, err = fixture.client.User.Create().SetEmail(email).SetPassword(hash).Save(fixture.setupCtx)
+	require.NoError(t, err)
+
+	token, err := fixture.auth.RequestPasswordResetVerification(t.Context(), email, "198.51.100.37")
+	require.NoError(t, err)
+	code := fixture.sender.latestCodeForPurpose(t, email, servermail.VerificationPurposePasswordReset)
+	fixture.clock.now = fixture.clock.now.Add(time.Minute + time.Second)
+	err = fixture.auth.ResetPassword(t.Context(), email, token, code, "expiry-new-password")
+	require.ErrorIs(t, err, ErrVerificationInvalid)
+
+	fixture.clock.now = fixture.clock.now.Add(time.Minute)
+	token, err = fixture.auth.RequestPasswordResetVerification(t.Context(), email, "198.51.100.37")
+	require.NoError(t, err)
+	code = fixture.sender.latestCodeForPurpose(t, email, servermail.VerificationPurposePasswordReset)
+	require.NoError(t, fixture.auth.ResetPassword(t.Context(), email, token, code, "expiry-new-password"))
+	err = fixture.auth.ResetPassword(t.Context(), email, token, code, "another-new-password")
+	require.ErrorIs(t, err, ErrVerificationInvalid)
+
+	err = fixture.auth.ResetPassword(t.Context(), email, token, code, string(make([]byte, 73)))
+	require.ErrorIs(t, err, ErrInvalidNewPassword)
+}
+
+func TestAuthService_PasswordReset_ConcurrentConsumptionSucceedsOnce(t *testing.T) {
+	fixture := setupCampusRegistrationAuthService(t, CampusEmailVerificationConfig{})
+	defer fixture.client.Close()
+	email := "concurrent-reset@mails.ucas.ac.cn"
+	hash, err := HashPassword("concurrent-old-password")
+	require.NoError(t, err)
+	_, err = fixture.client.User.Create().SetEmail(email).SetPassword(hash).Save(fixture.setupCtx)
+	require.NoError(t, err)
+
+	token, err := fixture.auth.RequestPasswordResetVerification(t.Context(), email, "198.51.100.38")
+	require.NoError(t, err)
+	code := fixture.sender.latestCodeForPurpose(t, email, servermail.VerificationPurposePasswordReset)
+
+	results := make(chan error, 2)
+	var wg sync.WaitGroup
+	for _, password := range []string{"concurrent-new-password-a", "concurrent-new-password-b"} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results <- fixture.auth.ResetPassword(t.Context(), email, token, code, password)
+		}()
+	}
+	wg.Wait()
+	close(results)
+
+	successes := 0
+	invalid := 0
+	for result := range results {
+		switch {
+		case result == nil:
+			successes++
+		case errors.Is(result, ErrVerificationInvalid):
+			invalid++
+		default:
+			require.NoError(t, result)
+		}
+	}
+	require.Equal(t, 1, successes)
+	require.Equal(t, 1, invalid)
 }
 
 func TestAuthService_GenerateJWTToken(t *testing.T) {

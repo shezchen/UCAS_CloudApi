@@ -23,6 +23,8 @@ var (
 	ErrCampusEmailRequired     = errors.New("registration requires a UCAS email address")
 	ErrEmailAlreadyRegistered  = errors.New("email is already registered")
 	ErrInvalidNickname         = errors.New("nickname is invalid")
+	ErrInvalidEmail            = errors.New("invalid email address")
+	ErrInvalidNewPassword      = errors.New("password must be at least 8 characters and no more than 72 bytes")
 	ErrVerificationInvalid     = errors.New("verification code is invalid or expired")
 	ErrVerificationRateLimit   = errors.New("verification email requested too frequently")
 	ErrVerificationUnavailable = errors.New("email verification is temporarily unavailable")

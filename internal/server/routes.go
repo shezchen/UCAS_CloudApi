@@ -97,6 +97,8 @@ func SetupRoutes(server *Server, handlers Handlers, client *ent.Client, services
 		// Campus registration - UCAS email domains only, always non-owner.
 		unSecureAdminGroup.POST("/auth/signup/verification", handlers.Auth.RequestSignUpVerification)
 		unSecureAdminGroup.POST("/auth/signup", handlers.Auth.SignUp)
+		unSecureAdminGroup.POST("/auth/password-reset/verification", handlers.Auth.RequestPasswordResetVerification)
+		unSecureAdminGroup.POST("/auth/password-reset", handlers.Auth.ResetPassword)
 	}
 
 	oauthGroup := server.Group("/oauth", middleware.WithTimeout(server.Config.RequestTimeout))

@@ -97,7 +97,14 @@ func TestBuildVerificationMessageUTF8(t *testing.T) {
 	t.Parallel()
 
 	sentAt := time.Date(2026, time.July, 20, 12, 0, 0, 0, time.FixedZone("CST", 8*60*60))
-	raw, err := buildVerificationMessage(validConfig(), "student@mails.ucas.ac.cn", "425170", 10*time.Minute, sentAt)
+	raw, err := buildVerificationMessage(
+		validConfig(),
+		"student@mails.ucas.ac.cn",
+		"425170",
+		10*time.Minute,
+		VerificationPurposeRegistration,
+		sentAt,
+	)
 	require.NoError(t, err)
 
 	headers, body := splitMessage(t, raw)
@@ -114,8 +121,28 @@ func TestBuildVerificationMessageUTF8(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(decodedBody), "425170")
 	require.Contains(t, string(decodedBody), "10 分钟")
+	require.Contains(t, string(decodedBody), "完成账户注册")
 	require.Contains(t, string(decodedBody), "仅可使用一次")
 	require.NotContains(t, string(raw), "\nBcc:")
+}
+
+func TestBuildPasswordResetVerificationMessageNamesItsPurpose(t *testing.T) {
+	t.Parallel()
+
+	raw, err := buildVerificationMessage(
+		validConfig(),
+		"owner@example.com",
+		"425170",
+		10*time.Minute,
+		VerificationPurposePasswordReset,
+		time.Now(),
+	)
+	require.NoError(t, err)
+
+	_, body := splitMessage(t, raw)
+	decodedBody, err := io.ReadAll(quotedprintable.NewReader(bytes.NewReader(body)))
+	require.NoError(t, err)
+	require.Contains(t, string(decodedBody), "重置账户密码")
 }
 
 func TestVerificationInputRejectsHeaderAndBodyInjection(t *testing.T) {
@@ -150,7 +177,13 @@ func TestSendVerificationCodeHonorsCancelledContextBeforeDial(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	err = sender.SendVerificationCode(ctx, "student@mails.ucas.ac.cn", "425170", 10*time.Minute)
+	err = sender.SendVerificationCode(
+		ctx,
+		"student@mails.ucas.ac.cn",
+		"425170",
+		10*time.Minute,
+		VerificationPurposeRegistration,
+	)
 	require.ErrorIs(t, err, context.Canceled)
 }
 

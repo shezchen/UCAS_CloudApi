@@ -18,7 +18,13 @@ type unavailableVerificationSender struct {
 	cause error
 }
 
-func (s *unavailableVerificationSender) SendVerificationCode(context.Context, string, string, time.Duration) error {
+func (s *unavailableVerificationSender) SendVerificationCode(
+	context.Context,
+	string,
+	string,
+	time.Duration,
+	servermail.VerificationPurpose,
+) error {
 	return fmt.Errorf("email sender is unavailable: %w", s.cause)
 }
 

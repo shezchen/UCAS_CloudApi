@@ -5,7 +5,7 @@ export const API_BASE_URL = '';
 
 type ErrorResponseBody = {
   message?: string;
-  error?: string | { message?: string };
+  error?: string | { message?: string; code?: string };
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
@@ -23,7 +23,9 @@ const isErrorResponseBody = (value: unknown): value is ErrorResponseBody => {
   const hasValidError =
     error === undefined ||
     typeof error === 'string' ||
-    (isRecord(error) && (error.message === undefined || typeof error.message === 'string'));
+    (isRecord(error) &&
+      (error.message === undefined || typeof error.message === 'string') &&
+      (error.code === undefined || typeof error.code === 'string'));
 
   return hasValidMessage && hasValidError;
 };
@@ -35,11 +37,12 @@ interface ApiRequestOptions {
   requireAuth?: boolean;
 }
 
-class ApiError extends Error {
+export class ApiError extends Error {
   constructor(
     message: string,
     public status: number,
-    public response?: unknown
+    public response?: unknown,
+    public code?: string
   ) {
     super(message);
     this.name = 'ApiError';
@@ -79,6 +82,7 @@ export async function apiRequest<T>(endpoint: string, options: ApiRequestOptions
     if (!response.ok) {
       let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
       let errorData: unknown = null;
+      let errorCode: string | undefined;
 
       try {
         errorData = await response.json();
@@ -88,12 +92,15 @@ export async function apiRequest<T>(endpoint: string, options: ApiRequestOptions
           } else if (errorData.error) {
             errorMessage = typeof errorData.error === 'string' ? errorData.error : errorData.error?.message || errorMessage;
           }
+          if (typeof errorData.error === 'object' && errorData.error?.code) {
+            errorCode = errorData.error.code;
+          }
         }
       } catch {
         // If response is not JSON, use status text
       }
 
-      throw new ApiError(errorMessage, response.status, errorData);
+      throw new ApiError(errorMessage, response.status, errorData, errorCode);
     }
 
     // Handle empty responses
@@ -153,6 +160,25 @@ export const authApi = {
       body: data,
     }),
 
+  requestPasswordResetVerification: (data: {
+    email: string;
+  }): Promise<{ message: string; challengeToken: string; resendAfterSeconds: number }> =>
+    apiRequest('/admin/auth/password-reset/verification', {
+      method: 'POST',
+      body: data,
+    }),
+
+  resetPassword: (data: {
+    email: string;
+    challengeToken: string;
+    verificationCode: string;
+    newPassword: string;
+  }): Promise<{ message: string }> =>
+    apiRequest('/admin/auth/password-reset', {
+      method: 'POST',
+      body: data,
+    }),
+
   signIn: (data: {
     email: string;
     password: string;
@@ -187,11 +213,13 @@ export const authApi = {
   getOIDCLinkAuthorizeURL: (provider: string): Promise<{ data: { url: string; state: string } }> =>
     apiRequest(`/admin/oidc/link/${provider}`, { requireAuth: true }),
 
-  exchangeOIDCCode: (code: string): Promise<{
+  exchangeOIDCCode: (
+    code: string
+  ): Promise<{
     data: {
       user: AuthUser;
       token: string;
-    }
+    };
   }> =>
     apiRequest('/oauth/oidc/exchange', {
       method: 'POST',

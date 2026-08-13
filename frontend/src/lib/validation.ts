@@ -46,6 +46,9 @@ export const passwordSchema = (t: (key: string) => string) =>
     .min(1, { message: t(passwordValidation.messages.required) })
     .min(passwordValidation.minLength, {
       message: t(passwordValidation.messages.minLength),
+    })
+    .refine((password) => new TextEncoder().encode(password).length <= 72, {
+      message: t('auth.signIn.validation.passwordMaxLength'),
     });
 // For the campatibility with the old version, we don't use the pattern.
 // .regex(passwordValidation.pattern, {

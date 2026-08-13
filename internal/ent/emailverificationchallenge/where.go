@@ -174,6 +174,26 @@ func UpdatedAtLTE(v time.Time) predicate.EmailVerificationChallenge {
 	return predicate.EmailVerificationChallenge(sql.FieldLTE(FieldUpdatedAt, v))
 }
 
+// PurposeEQ applies the EQ predicate on the "purpose" field.
+func PurposeEQ(v Purpose) predicate.EmailVerificationChallenge {
+	return predicate.EmailVerificationChallenge(sql.FieldEQ(FieldPurpose, v))
+}
+
+// PurposeNEQ applies the NEQ predicate on the "purpose" field.
+func PurposeNEQ(v Purpose) predicate.EmailVerificationChallenge {
+	return predicate.EmailVerificationChallenge(sql.FieldNEQ(FieldPurpose, v))
+}
+
+// PurposeIn applies the In predicate on the "purpose" field.
+func PurposeIn(vs ...Purpose) predicate.EmailVerificationChallenge {
+	return predicate.EmailVerificationChallenge(sql.FieldIn(FieldPurpose, vs...))
+}
+
+// PurposeNotIn applies the NotIn predicate on the "purpose" field.
+func PurposeNotIn(vs ...Purpose) predicate.EmailVerificationChallenge {
+	return predicate.EmailVerificationChallenge(sql.FieldNotIn(FieldPurpose, vs...))
+}
+
 // EmailEQ applies the EQ predicate on the "email" field.
 func EmailEQ(v string) predicate.EmailVerificationChallenge {
 	return predicate.EmailVerificationChallenge(sql.FieldEQ(FieldEmail, v))

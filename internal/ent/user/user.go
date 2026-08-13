@@ -42,6 +42,8 @@ const (
 	FieldAvatar = "avatar"
 	// FieldIsOwner holds the string denoting the is_owner field in the database.
 	FieldIsOwner = "is_owner"
+	// FieldAuthVersion holds the string denoting the auth_version field in the database.
+	FieldAuthVersion = "auth_version"
 	// FieldDailyTokenLimit holds the string denoting the daily_token_limit field in the database.
 	FieldDailyTokenLimit = "daily_token_limit"
 	// FieldScopes holds the string denoting the scopes field in the database.
@@ -133,6 +135,7 @@ var Columns = []string{
 	FieldLastName,
 	FieldAvatar,
 	FieldIsOwner,
+	FieldAuthVersion,
 	FieldDailyTokenLimit,
 	FieldScopes,
 }
@@ -185,6 +188,10 @@ var (
 	DefaultLastName string
 	// DefaultIsOwner holds the default value on creation for the "is_owner" field.
 	DefaultIsOwner bool
+	// DefaultAuthVersion holds the default value on creation for the "auth_version" field.
+	DefaultAuthVersion int64
+	// AuthVersionValidator is a validator for the "auth_version" field. It is called by the builders before save.
+	AuthVersionValidator func(int64) error
 	// DefaultDailyTokenLimit holds the default value on creation for the "daily_token_limit" field.
 	DefaultDailyTokenLimit int64
 	// DailyTokenLimitValidator is a validator for the "daily_token_limit" field. It is called by the builders before save.
@@ -285,6 +292,11 @@ func ByAvatar(opts ...sql.OrderTermOption) OrderOption {
 // ByIsOwner orders the results by the is_owner field.
 func ByIsOwner(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldIsOwner, opts...).ToFunc()
+}
+
+// ByAuthVersion orders the results by the auth_version field.
+func ByAuthVersion(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAuthVersion, opts...).ToFunc()
 }
 
 // ByDailyTokenLimit orders the results by the daily_token_limit field.

@@ -9053,6 +9053,7 @@ type EmailVerificationChallengeMutation struct {
 	id            *int
 	created_at    *time.Time
 	updated_at    *time.Time
+	purpose       *emailverificationchallenge.Purpose
 	email         *string
 	code_digest   *string
 	source_hash   *string
@@ -9234,6 +9235,42 @@ func (m *EmailVerificationChallengeMutation) OldUpdatedAt(ctx context.Context) (
 // ResetUpdatedAt resets all changes to the "updated_at" field.
 func (m *EmailVerificationChallengeMutation) ResetUpdatedAt() {
 	m.updated_at = nil
+}
+
+// SetPurpose sets the "purpose" field.
+func (m *EmailVerificationChallengeMutation) SetPurpose(e emailverificationchallenge.Purpose) {
+	m.purpose = &e
+}
+
+// Purpose returns the value of the "purpose" field in the mutation.
+func (m *EmailVerificationChallengeMutation) Purpose() (r emailverificationchallenge.Purpose, exists bool) {
+	v := m.purpose
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPurpose returns the old "purpose" field's value of the EmailVerificationChallenge entity.
+// If the EmailVerificationChallenge object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *EmailVerificationChallengeMutation) OldPurpose(ctx context.Context) (v emailverificationchallenge.Purpose, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPurpose is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPurpose requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPurpose: %w", err)
+	}
+	return oldValue.Purpose, nil
+}
+
+// ResetPurpose resets all changes to the "purpose" field.
+func (m *EmailVerificationChallengeMutation) ResetPurpose() {
+	m.purpose = nil
 }
 
 // SetEmail sets the "email" field.
@@ -9519,12 +9556,15 @@ func (m *EmailVerificationChallengeMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *EmailVerificationChallengeMutation) Fields() []string {
-	fields := make([]string, 0, 8)
+	fields := make([]string, 0, 9)
 	if m.created_at != nil {
 		fields = append(fields, emailverificationchallenge.FieldCreatedAt)
 	}
 	if m.updated_at != nil {
 		fields = append(fields, emailverificationchallenge.FieldUpdatedAt)
+	}
+	if m.purpose != nil {
+		fields = append(fields, emailverificationchallenge.FieldPurpose)
 	}
 	if m.email != nil {
 		fields = append(fields, emailverificationchallenge.FieldEmail)
@@ -9556,6 +9596,8 @@ func (m *EmailVerificationChallengeMutation) Field(name string) (ent.Value, bool
 		return m.CreatedAt()
 	case emailverificationchallenge.FieldUpdatedAt:
 		return m.UpdatedAt()
+	case emailverificationchallenge.FieldPurpose:
+		return m.Purpose()
 	case emailverificationchallenge.FieldEmail:
 		return m.Email()
 	case emailverificationchallenge.FieldCodeDigest:
@@ -9581,6 +9623,8 @@ func (m *EmailVerificationChallengeMutation) OldField(ctx context.Context, name 
 		return m.OldCreatedAt(ctx)
 	case emailverificationchallenge.FieldUpdatedAt:
 		return m.OldUpdatedAt(ctx)
+	case emailverificationchallenge.FieldPurpose:
+		return m.OldPurpose(ctx)
 	case emailverificationchallenge.FieldEmail:
 		return m.OldEmail(ctx)
 	case emailverificationchallenge.FieldCodeDigest:
@@ -9615,6 +9659,13 @@ func (m *EmailVerificationChallengeMutation) SetField(name string, value ent.Val
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetUpdatedAt(v)
+		return nil
+	case emailverificationchallenge.FieldPurpose:
+		v, ok := value.(emailverificationchallenge.Purpose)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPurpose(v)
 		return nil
 	case emailverificationchallenge.FieldEmail:
 		v, ok := value.(string)
@@ -9736,6 +9787,9 @@ func (m *EmailVerificationChallengeMutation) ResetField(name string) error {
 		return nil
 	case emailverificationchallenge.FieldUpdatedAt:
 		m.ResetUpdatedAt()
+		return nil
+	case emailverificationchallenge.FieldPurpose:
+		m.ResetPurpose()
 		return nil
 	case emailverificationchallenge.FieldEmail:
 		m.ResetEmail()
@@ -27464,6 +27518,8 @@ type UserMutation struct {
 	last_name                         *string
 	avatar                            *string
 	is_owner                          *bool
+	auth_version                      *int64
+	addauth_version                   *int64
 	daily_token_limit                 *int64
 	adddaily_token_limit              *int64
 	scopes                            *[]string
@@ -28061,6 +28117,62 @@ func (m *UserMutation) ResetIsOwner() {
 	m.is_owner = nil
 }
 
+// SetAuthVersion sets the "auth_version" field.
+func (m *UserMutation) SetAuthVersion(i int64) {
+	m.auth_version = &i
+	m.addauth_version = nil
+}
+
+// AuthVersion returns the value of the "auth_version" field in the mutation.
+func (m *UserMutation) AuthVersion() (r int64, exists bool) {
+	v := m.auth_version
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAuthVersion returns the old "auth_version" field's value of the User entity.
+// If the User object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserMutation) OldAuthVersion(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAuthVersion is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAuthVersion requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAuthVersion: %w", err)
+	}
+	return oldValue.AuthVersion, nil
+}
+
+// AddAuthVersion adds i to the "auth_version" field.
+func (m *UserMutation) AddAuthVersion(i int64) {
+	if m.addauth_version != nil {
+		*m.addauth_version += i
+	} else {
+		m.addauth_version = &i
+	}
+}
+
+// AddedAuthVersion returns the value that was added to the "auth_version" field in this mutation.
+func (m *UserMutation) AddedAuthVersion() (r int64, exists bool) {
+	v := m.addauth_version
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetAuthVersion resets all changes to the "auth_version" field.
+func (m *UserMutation) ResetAuthVersion() {
+	m.auth_version = nil
+	m.addauth_version = nil
+}
+
 // SetDailyTokenLimit sets the "daily_token_limit" field.
 func (m *UserMutation) SetDailyTokenLimit(i int64) {
 	m.daily_token_limit = &i
@@ -28648,7 +28760,7 @@ func (m *UserMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UserMutation) Fields() []string {
-	fields := make([]string, 0, 14)
+	fields := make([]string, 0, 15)
 	if m.created_at != nil {
 		fields = append(fields, user.FieldCreatedAt)
 	}
@@ -28684,6 +28796,9 @@ func (m *UserMutation) Fields() []string {
 	}
 	if m.is_owner != nil {
 		fields = append(fields, user.FieldIsOwner)
+	}
+	if m.auth_version != nil {
+		fields = append(fields, user.FieldAuthVersion)
 	}
 	if m.daily_token_limit != nil {
 		fields = append(fields, user.FieldDailyTokenLimit)
@@ -28723,6 +28838,8 @@ func (m *UserMutation) Field(name string) (ent.Value, bool) {
 		return m.Avatar()
 	case user.FieldIsOwner:
 		return m.IsOwner()
+	case user.FieldAuthVersion:
+		return m.AuthVersion()
 	case user.FieldDailyTokenLimit:
 		return m.DailyTokenLimit()
 	case user.FieldScopes:
@@ -28760,6 +28877,8 @@ func (m *UserMutation) OldField(ctx context.Context, name string) (ent.Value, er
 		return m.OldAvatar(ctx)
 	case user.FieldIsOwner:
 		return m.OldIsOwner(ctx)
+	case user.FieldAuthVersion:
+		return m.OldAuthVersion(ctx)
 	case user.FieldDailyTokenLimit:
 		return m.OldDailyTokenLimit(ctx)
 	case user.FieldScopes:
@@ -28857,6 +28976,13 @@ func (m *UserMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetIsOwner(v)
 		return nil
+	case user.FieldAuthVersion:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAuthVersion(v)
+		return nil
 	case user.FieldDailyTokenLimit:
 		v, ok := value.(int64)
 		if !ok {
@@ -28882,6 +29008,9 @@ func (m *UserMutation) AddedFields() []string {
 	if m.adddeleted_at != nil {
 		fields = append(fields, user.FieldDeletedAt)
 	}
+	if m.addauth_version != nil {
+		fields = append(fields, user.FieldAuthVersion)
+	}
 	if m.adddaily_token_limit != nil {
 		fields = append(fields, user.FieldDailyTokenLimit)
 	}
@@ -28895,6 +29024,8 @@ func (m *UserMutation) AddedField(name string) (ent.Value, bool) {
 	switch name {
 	case user.FieldDeletedAt:
 		return m.AddedDeletedAt()
+	case user.FieldAuthVersion:
+		return m.AddedAuthVersion()
 	case user.FieldDailyTokenLimit:
 		return m.AddedDailyTokenLimit()
 	}
@@ -28912,6 +29043,13 @@ func (m *UserMutation) AddField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddDeletedAt(v)
+		return nil
+	case user.FieldAuthVersion:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddAuthVersion(v)
 		return nil
 	case user.FieldDailyTokenLimit:
 		v, ok := value.(int64)
@@ -28997,6 +29135,9 @@ func (m *UserMutation) ResetField(name string) error {
 		return nil
 	case user.FieldIsOwner:
 		m.ResetIsOwner()
+		return nil
+	case user.FieldAuthVersion:
+		m.ResetAuthVersion()
 		return nil
 	case user.FieldDailyTokenLimit:
 		m.ResetDailyTokenLimit()

@@ -382,19 +382,19 @@ func init() {
 	// emailverificationchallenge.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
 	emailverificationchallenge.UpdateDefaultUpdatedAt = emailverificationchallengeDescUpdatedAt.UpdateDefault.(func() time.Time)
 	// emailverificationchallengeDescEmail is the schema descriptor for email field.
-	emailverificationchallengeDescEmail := emailverificationchallengeFields[0].Descriptor()
+	emailverificationchallengeDescEmail := emailverificationchallengeFields[1].Descriptor()
 	// emailverificationchallenge.EmailValidator is a validator for the "email" field. It is called by the builders before save.
 	emailverificationchallenge.EmailValidator = emailverificationchallengeDescEmail.Validators[0].(func(string) error)
 	// emailverificationchallengeDescCodeDigest is the schema descriptor for code_digest field.
-	emailverificationchallengeDescCodeDigest := emailverificationchallengeFields[1].Descriptor()
+	emailverificationchallengeDescCodeDigest := emailverificationchallengeFields[2].Descriptor()
 	// emailverificationchallenge.CodeDigestValidator is a validator for the "code_digest" field. It is called by the builders before save.
 	emailverificationchallenge.CodeDigestValidator = emailverificationchallengeDescCodeDigest.Validators[0].(func(string) error)
 	// emailverificationchallengeDescSourceHash is the schema descriptor for source_hash field.
-	emailverificationchallengeDescSourceHash := emailverificationchallengeFields[2].Descriptor()
+	emailverificationchallengeDescSourceHash := emailverificationchallengeFields[3].Descriptor()
 	// emailverificationchallenge.SourceHashValidator is a validator for the "source_hash" field. It is called by the builders before save.
 	emailverificationchallenge.SourceHashValidator = emailverificationchallengeDescSourceHash.Validators[0].(func(string) error)
 	// emailverificationchallengeDescAttempts is the schema descriptor for attempts field.
-	emailverificationchallengeDescAttempts := emailverificationchallengeFields[4].Descriptor()
+	emailverificationchallengeDescAttempts := emailverificationchallengeFields[5].Descriptor()
 	// emailverificationchallenge.DefaultAttempts holds the default value on creation for the attempts field.
 	emailverificationchallenge.DefaultAttempts = emailverificationchallengeDescAttempts.Default.(int)
 	// emailverificationchallenge.AttemptsValidator is a validator for the "attempts" field. It is called by the builders before save.
@@ -1039,14 +1039,20 @@ func init() {
 	userDescIsOwner := userFields[8].Descriptor()
 	// user.DefaultIsOwner holds the default value on creation for the is_owner field.
 	user.DefaultIsOwner = userDescIsOwner.Default.(bool)
+	// userDescAuthVersion is the schema descriptor for auth_version field.
+	userDescAuthVersion := userFields[9].Descriptor()
+	// user.DefaultAuthVersion holds the default value on creation for the auth_version field.
+	user.DefaultAuthVersion = userDescAuthVersion.Default.(int64)
+	// user.AuthVersionValidator is a validator for the "auth_version" field. It is called by the builders before save.
+	user.AuthVersionValidator = userDescAuthVersion.Validators[0].(func(int64) error)
 	// userDescDailyTokenLimit is the schema descriptor for daily_token_limit field.
-	userDescDailyTokenLimit := userFields[9].Descriptor()
+	userDescDailyTokenLimit := userFields[10].Descriptor()
 	// user.DefaultDailyTokenLimit holds the default value on creation for the daily_token_limit field.
 	user.DefaultDailyTokenLimit = userDescDailyTokenLimit.Default.(int64)
 	// user.DailyTokenLimitValidator is a validator for the "daily_token_limit" field. It is called by the builders before save.
 	user.DailyTokenLimitValidator = userDescDailyTokenLimit.Validators[0].(func(int64) error)
 	// userDescScopes is the schema descriptor for scopes field.
-	userDescScopes := userFields[10].Descriptor()
+	userDescScopes := userFields[11].Descriptor()
 	// user.DefaultScopes holds the default value on creation for the scopes field.
 	user.DefaultScopes = userDescScopes.Default.([]string)
 	userprojectMixin := schema.UserProject{}.Mixin()

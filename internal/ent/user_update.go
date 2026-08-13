@@ -197,6 +197,27 @@ func (_u *UserUpdate) SetNillableIsOwner(v *bool) *UserUpdate {
 	return _u
 }
 
+// SetAuthVersion sets the "auth_version" field.
+func (_u *UserUpdate) SetAuthVersion(v int64) *UserUpdate {
+	_u.mutation.ResetAuthVersion()
+	_u.mutation.SetAuthVersion(v)
+	return _u
+}
+
+// SetNillableAuthVersion sets the "auth_version" field if the given value is not nil.
+func (_u *UserUpdate) SetNillableAuthVersion(v *int64) *UserUpdate {
+	if v != nil {
+		_u.SetAuthVersion(*v)
+	}
+	return _u
+}
+
+// AddAuthVersion adds value to the "auth_version" field.
+func (_u *UserUpdate) AddAuthVersion(v int64) *UserUpdate {
+	_u.mutation.AddAuthVersion(v)
+	return _u
+}
+
 // SetDailyTokenLimit sets the "daily_token_limit" field.
 func (_u *UserUpdate) SetDailyTokenLimit(v int64) *UserUpdate {
 	_u.mutation.ResetDailyTokenLimit()
@@ -583,6 +604,11 @@ func (_u *UserUpdate) check() error {
 			return &ValidationError{Name: "nickname", err: fmt.Errorf(`ent: validator failed for field "User.nickname": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.AuthVersion(); ok {
+		if err := user.AuthVersionValidator(v); err != nil {
+			return &ValidationError{Name: "auth_version", err: fmt.Errorf(`ent: validator failed for field "User.auth_version": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.DailyTokenLimit(); ok {
 		if err := user.DailyTokenLimitValidator(v); err != nil {
 			return &ValidationError{Name: "daily_token_limit", err: fmt.Errorf(`ent: validator failed for field "User.daily_token_limit": %w`, err)}
@@ -647,6 +673,12 @@ func (_u *UserUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.IsOwner(); ok {
 		_spec.SetField(user.FieldIsOwner, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.AuthVersion(); ok {
+		_spec.SetField(user.FieldAuthVersion, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedAuthVersion(); ok {
+		_spec.AddField(user.FieldAuthVersion, field.TypeInt64, value)
 	}
 	if value, ok := _u.mutation.DailyTokenLimit(); ok {
 		_spec.SetField(user.FieldDailyTokenLimit, field.TypeInt64, value)
@@ -1230,6 +1262,27 @@ func (_u *UserUpdateOne) SetNillableIsOwner(v *bool) *UserUpdateOne {
 	return _u
 }
 
+// SetAuthVersion sets the "auth_version" field.
+func (_u *UserUpdateOne) SetAuthVersion(v int64) *UserUpdateOne {
+	_u.mutation.ResetAuthVersion()
+	_u.mutation.SetAuthVersion(v)
+	return _u
+}
+
+// SetNillableAuthVersion sets the "auth_version" field if the given value is not nil.
+func (_u *UserUpdateOne) SetNillableAuthVersion(v *int64) *UserUpdateOne {
+	if v != nil {
+		_u.SetAuthVersion(*v)
+	}
+	return _u
+}
+
+// AddAuthVersion adds value to the "auth_version" field.
+func (_u *UserUpdateOne) AddAuthVersion(v int64) *UserUpdateOne {
+	_u.mutation.AddAuthVersion(v)
+	return _u
+}
+
 // SetDailyTokenLimit sets the "daily_token_limit" field.
 func (_u *UserUpdateOne) SetDailyTokenLimit(v int64) *UserUpdateOne {
 	_u.mutation.ResetDailyTokenLimit()
@@ -1629,6 +1682,11 @@ func (_u *UserUpdateOne) check() error {
 			return &ValidationError{Name: "nickname", err: fmt.Errorf(`ent: validator failed for field "User.nickname": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.AuthVersion(); ok {
+		if err := user.AuthVersionValidator(v); err != nil {
+			return &ValidationError{Name: "auth_version", err: fmt.Errorf(`ent: validator failed for field "User.auth_version": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.DailyTokenLimit(); ok {
 		if err := user.DailyTokenLimitValidator(v); err != nil {
 			return &ValidationError{Name: "daily_token_limit", err: fmt.Errorf(`ent: validator failed for field "User.daily_token_limit": %w`, err)}
@@ -1710,6 +1768,12 @@ func (_u *UserUpdateOne) sqlSave(ctx context.Context) (_node *User, err error) {
 	}
 	if value, ok := _u.mutation.IsOwner(); ok {
 		_spec.SetField(user.FieldIsOwner, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.AuthVersion(); ok {
+		_spec.SetField(user.FieldAuthVersion, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedAuthVersion(); ok {
+		_spec.AddField(user.FieldAuthVersion, field.TypeInt64, value)
 	}
 	if value, ok := _u.mutation.DailyTokenLimit(); ok {
 		_spec.SetField(user.FieldDailyTokenLimit, field.TypeInt64, value)

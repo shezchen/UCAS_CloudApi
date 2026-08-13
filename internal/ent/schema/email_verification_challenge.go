@@ -10,9 +10,10 @@ import (
 	"github.com/looplj/axonhub/internal/scopes"
 )
 
-// EmailVerificationChallenge stores a short-lived, one-time registration
-// challenge. The verification code and request source are stored only as
-// keyed digests so a database read cannot reveal either value.
+// EmailVerificationChallenge stores a short-lived, one-time email challenge.
+// The purpose keeps registration and password-reset codes cryptographically
+// and operationally separate. The verification code and request source are
+// stored only as keyed digests so a database read cannot reveal either value.
 type EmailVerificationChallenge struct {
 	ent.Schema
 }
@@ -23,6 +24,9 @@ func (EmailVerificationChallenge) Mixin() []ent.Mixin {
 
 func (EmailVerificationChallenge) Fields() []ent.Field {
 	return []ent.Field{
+		field.Enum("purpose").
+			Values("registration", "password_reset").
+			Default("registration"),
 		field.String("email").MaxLen(320),
 		field.String("code_digest").MaxLen(64).Sensitive(),
 		field.String("source_hash").MaxLen(64).Sensitive(),
@@ -34,10 +38,10 @@ func (EmailVerificationChallenge) Fields() []ent.Field {
 
 func (EmailVerificationChallenge) Indexes() []ent.Index {
 	return []ent.Index{
-		index.Fields("email", "created_at"),
-		index.Fields("source_hash", "created_at"),
+		index.Fields("email", "purpose", "created_at"),
+		index.Fields("source_hash", "purpose", "created_at"),
 		index.Fields("expires_at"),
-		index.Fields("email", "consumed_at", "expires_at"),
+		index.Fields("email", "purpose", "consumed_at", "expires_at"),
 	}
 }
 

@@ -241,6 +241,7 @@ var schemaGraph = func() *sqlgraph.Schema {
 		Fields: map[string]*sqlgraph.FieldSpec{
 			emailverificationchallenge.FieldCreatedAt:  {Type: field.TypeTime, Column: emailverificationchallenge.FieldCreatedAt},
 			emailverificationchallenge.FieldUpdatedAt:  {Type: field.TypeTime, Column: emailverificationchallenge.FieldUpdatedAt},
+			emailverificationchallenge.FieldPurpose:    {Type: field.TypeEnum, Column: emailverificationchallenge.FieldPurpose},
 			emailverificationchallenge.FieldEmail:      {Type: field.TypeString, Column: emailverificationchallenge.FieldEmail},
 			emailverificationchallenge.FieldCodeDigest: {Type: field.TypeString, Column: emailverificationchallenge.FieldCodeDigest},
 			emailverificationchallenge.FieldSourceHash: {Type: field.TypeString, Column: emailverificationchallenge.FieldSourceHash},
@@ -619,6 +620,7 @@ var schemaGraph = func() *sqlgraph.Schema {
 			user.FieldLastName:        {Type: field.TypeString, Column: user.FieldLastName},
 			user.FieldAvatar:          {Type: field.TypeString, Column: user.FieldAvatar},
 			user.FieldIsOwner:         {Type: field.TypeBool, Column: user.FieldIsOwner},
+			user.FieldAuthVersion:     {Type: field.TypeInt64, Column: user.FieldAuthVersion},
 			user.FieldDailyTokenLimit: {Type: field.TypeInt64, Column: user.FieldDailyTokenLimit},
 			user.FieldScopes:          {Type: field.TypeJSON, Column: user.FieldScopes},
 		},
@@ -2491,6 +2493,11 @@ func (f *EmailVerificationChallengeFilter) WhereCreatedAt(p entql.TimeP) {
 // WhereUpdatedAt applies the entql time.Time predicate on the updated_at field.
 func (f *EmailVerificationChallengeFilter) WhereUpdatedAt(p entql.TimeP) {
 	f.Where(p.Field(emailverificationchallenge.FieldUpdatedAt))
+}
+
+// WherePurpose applies the entql string predicate on the purpose field.
+func (f *EmailVerificationChallengeFilter) WherePurpose(p entql.StringP) {
+	f.Where(p.Field(emailverificationchallenge.FieldPurpose))
 }
 
 // WhereEmail applies the entql string predicate on the email field.
@@ -4482,6 +4489,11 @@ func (f *UserFilter) WhereAvatar(p entql.StringP) {
 // WhereIsOwner applies the entql bool predicate on the is_owner field.
 func (f *UserFilter) WhereIsOwner(p entql.BoolP) {
 	f.Where(p.Field(user.FieldIsOwner))
+}
+
+// WhereAuthVersion applies the entql int64 predicate on the auth_version field.
+func (f *UserFilter) WhereAuthVersion(p entql.Int64P) {
+	f.Where(p.Field(user.FieldAuthVersion))
 }
 
 // WhereDailyTokenLimit applies the entql int64 predicate on the daily_token_limit field.

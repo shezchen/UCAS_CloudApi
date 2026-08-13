@@ -50,6 +50,20 @@ func (_c *EmailVerificationChallengeCreate) SetNillableUpdatedAt(v *time.Time) *
 	return _c
 }
 
+// SetPurpose sets the "purpose" field.
+func (_c *EmailVerificationChallengeCreate) SetPurpose(v emailverificationchallenge.Purpose) *EmailVerificationChallengeCreate {
+	_c.mutation.SetPurpose(v)
+	return _c
+}
+
+// SetNillablePurpose sets the "purpose" field if the given value is not nil.
+func (_c *EmailVerificationChallengeCreate) SetNillablePurpose(v *emailverificationchallenge.Purpose) *EmailVerificationChallengeCreate {
+	if v != nil {
+		_c.SetPurpose(*v)
+	}
+	return _c
+}
+
 // SetEmail sets the "email" field.
 func (_c *EmailVerificationChallengeCreate) SetEmail(v string) *EmailVerificationChallengeCreate {
 	_c.mutation.SetEmail(v)
@@ -153,6 +167,10 @@ func (_c *EmailVerificationChallengeCreate) defaults() error {
 		v := emailverificationchallenge.DefaultUpdatedAt()
 		_c.mutation.SetUpdatedAt(v)
 	}
+	if _, ok := _c.mutation.Purpose(); !ok {
+		v := emailverificationchallenge.DefaultPurpose
+		_c.mutation.SetPurpose(v)
+	}
 	if _, ok := _c.mutation.Attempts(); !ok {
 		v := emailverificationchallenge.DefaultAttempts
 		_c.mutation.SetAttempts(v)
@@ -162,6 +180,14 @@ func (_c *EmailVerificationChallengeCreate) defaults() error {
 
 // check runs all checks and user-defined validators on the builder.
 func (_c *EmailVerificationChallengeCreate) check() error {
+	if _, ok := _c.mutation.Purpose(); !ok {
+		return &ValidationError{Name: "purpose", err: errors.New(`ent: missing required field "EmailVerificationChallenge.purpose"`)}
+	}
+	if v, ok := _c.mutation.Purpose(); ok {
+		if err := emailverificationchallenge.PurposeValidator(v); err != nil {
+			return &ValidationError{Name: "purpose", err: fmt.Errorf(`ent: validator failed for field "EmailVerificationChallenge.purpose": %w`, err)}
+		}
+	}
 	if _, ok := _c.mutation.Email(); !ok {
 		return &ValidationError{Name: "email", err: errors.New(`ent: missing required field "EmailVerificationChallenge.email"`)}
 	}
@@ -231,6 +257,10 @@ func (_c *EmailVerificationChallengeCreate) createSpec() (*EmailVerificationChal
 	if value, ok := _c.mutation.UpdatedAt(); ok {
 		_spec.SetField(emailverificationchallenge.FieldUpdatedAt, field.TypeTime, value)
 		_node.UpdatedAt = value
+	}
+	if value, ok := _c.mutation.Purpose(); ok {
+		_spec.SetField(emailverificationchallenge.FieldPurpose, field.TypeEnum, value)
+		_node.Purpose = value
 	}
 	if value, ok := _c.mutation.Email(); ok {
 		_spec.SetField(emailverificationchallenge.FieldEmail, field.TypeString, value)
@@ -317,6 +347,18 @@ func (u *EmailVerificationChallengeUpsert) SetUpdatedAt(v time.Time) *EmailVerif
 // UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
 func (u *EmailVerificationChallengeUpsert) UpdateUpdatedAt() *EmailVerificationChallengeUpsert {
 	u.SetExcluded(emailverificationchallenge.FieldUpdatedAt)
+	return u
+}
+
+// SetPurpose sets the "purpose" field.
+func (u *EmailVerificationChallengeUpsert) SetPurpose(v emailverificationchallenge.Purpose) *EmailVerificationChallengeUpsert {
+	u.Set(emailverificationchallenge.FieldPurpose, v)
+	return u
+}
+
+// UpdatePurpose sets the "purpose" field to the value that was provided on create.
+func (u *EmailVerificationChallengeUpsert) UpdatePurpose() *EmailVerificationChallengeUpsert {
+	u.SetExcluded(emailverificationchallenge.FieldPurpose)
 	return u
 }
 
@@ -460,6 +502,20 @@ func (u *EmailVerificationChallengeUpsertOne) SetUpdatedAt(v time.Time) *EmailVe
 func (u *EmailVerificationChallengeUpsertOne) UpdateUpdatedAt() *EmailVerificationChallengeUpsertOne {
 	return u.Update(func(s *EmailVerificationChallengeUpsert) {
 		s.UpdateUpdatedAt()
+	})
+}
+
+// SetPurpose sets the "purpose" field.
+func (u *EmailVerificationChallengeUpsertOne) SetPurpose(v emailverificationchallenge.Purpose) *EmailVerificationChallengeUpsertOne {
+	return u.Update(func(s *EmailVerificationChallengeUpsert) {
+		s.SetPurpose(v)
+	})
+}
+
+// UpdatePurpose sets the "purpose" field to the value that was provided on create.
+func (u *EmailVerificationChallengeUpsertOne) UpdatePurpose() *EmailVerificationChallengeUpsertOne {
+	return u.Update(func(s *EmailVerificationChallengeUpsert) {
+		s.UpdatePurpose()
 	})
 }
 
@@ -783,6 +839,20 @@ func (u *EmailVerificationChallengeUpsertBulk) SetUpdatedAt(v time.Time) *EmailV
 func (u *EmailVerificationChallengeUpsertBulk) UpdateUpdatedAt() *EmailVerificationChallengeUpsertBulk {
 	return u.Update(func(s *EmailVerificationChallengeUpsert) {
 		s.UpdateUpdatedAt()
+	})
+}
+
+// SetPurpose sets the "purpose" field.
+func (u *EmailVerificationChallengeUpsertBulk) SetPurpose(v emailverificationchallenge.Purpose) *EmailVerificationChallengeUpsertBulk {
+	return u.Update(func(s *EmailVerificationChallengeUpsert) {
+		s.SetPurpose(v)
+	})
+}
+
+// UpdatePurpose sets the "purpose" field to the value that was provided on create.
+func (u *EmailVerificationChallengeUpsertBulk) UpdatePurpose() *EmailVerificationChallengeUpsertBulk {
+	return u.Update(func(s *EmailVerificationChallengeUpsert) {
+		s.UpdatePurpose()
 	})
 }
 

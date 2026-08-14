@@ -31,6 +31,13 @@ func New(config Config) (*Server, error) {
 	}
 
 	engine := gin.New()
+	// The trailing-slash redirect is answered by the router before any
+	// middleware runs, so a redirected request never reaches WithCORS and a
+	// browser sees an opaque CORS failure instead of following the redirect.
+	// Unmatched paths fall through to the SPA fallback on NoRoute instead,
+	// which returns a JSON 404 for API prefixes and index.html otherwise.
+	engine.RedirectTrailingSlash = false
+
 	if err := engine.SetTrustedProxies(config.TrustedProxies); err != nil {
 		return nil, fmt.Errorf("configure trusted proxies: %w", err)
 	}

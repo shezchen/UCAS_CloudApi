@@ -1,0 +1,129 @@
+package middleware
+
+import (
+	"net/http"
+	"path"
+
+	"github.com/gin-gonic/gin"
+
+	"github.com/looplj/axonhub/internal/server/apipath"
+)
+
+const (
+	publicCORSAllowMethods = "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS"
+
+	// publicCORSAllowHeaders is the fallback allow-list used when a preflight
+	// request does not carry Access-Control-Request-Headers. When the browser
+	// does send Access-Control-Request-Headers, the requested headers are
+	// reflected back instead, so preflight never fails on client-specific
+	// headers (e.g. x-client-name, x-stainless-*, anthropic-version).
+	publicCORSAllowHeaders = "Accept, Accept-Language, Authorization, Cache-Control, Content-Type, Origin, User-Agent, " +
+		"X-Api-Key, Api-Key, X-Goog-Api-Key, X-Google-Api-Key, X-Requested-With, X-Request-Id, " +
+		"X-Client-Name, X-Client-Version, OpenAI-Organization, OpenAI-Project, OpenAI-Beta, " +
+		"Anthropic-Version, Anthropic-Beta, Anthropic-Dangerous-Direct-Browser-Access, " +
+		"X-Goog-Api-Client, X-Project-Id, AH-Thread-Id, AH-Trace-Id, X-Trace-Id, X-Thread-Id, " +
+		"X-Session-Affinity, X-Stainless-Arch, X-Stainless-Lang, X-Stainless-Os, " +
+		"X-Stainless-Package-Version, X-Stainless-Retry-Count, X-Stainless-Runtime, " +
+		"X-Stainless-Runtime-Version, X-Stainless-Timeout, X-Stainless-Helper-Method"
+
+	// publicCORSExposeHeaders makes AxonHub's tracing headers readable from
+	// browser JavaScript on actual (non-preflight) responses.
+	publicCORSExposeHeaders = "AH-Request-Id, AH-Trace-Id, AH-Thread-Id, X-Request-Id, X-Vercel-AI-Data-Stream"
+
+	// publicCORSMaxAge caps preflight cache duration at 24h; browsers clamp
+	// this to their own maximum (e.g. 2h in Chromium).
+	publicCORSMaxAge = "86400"
+)
+
+// IsPublicAPIPath reports whether the request path belongs to the public model
+// APIs that use the browser-friendly wildcard CORS policy. Those routes
+// authenticate with API keys carried in request headers instead of cookies or
+// browser sessions, so they are safe to expose to any origin; management
+// surfaces (/admin, /openapi, /oauth, static frontend) are not.
+//
+// Only canonical paths qualify. A path such as /v1/../admin/graphql has a
+// public prefix but is served by the admin router, so anything that path.Clean
+// rewrites falls through to the restricted policy. The single exception is a
+// trailing slash: gin does not route those (the redirect is disabled so this
+// middleware runs at all) and they end up in the SPA fallback, which still has
+// to answer them with the public policy.
+func IsPublicAPIPath(requestPath string) bool {
+	if requestPath == "" {
+		return false
+	}
+
+	cleaned := path.Clean(requestPath)
+	if requestPath != cleaned && requestPath != cleaned+"/" {
+		return false
+	}
+
+	return apipath.IsPublicModelAPI(cleaned)
+}
+
+// WithCORS dispatches CORS handling by route class.
+//
+// Public model API routes always get a wildcard, credential-less policy so
+// that any browser-based client holding a valid API key can call them
+// directly. Every other route (admin dashboard, management APIs, OAuth) is
+// delegated to the restricted handler, which is the configurable strict CORS
+// policy and may be nil when disabled.
+//
+// Preflight requests to public routes are answered here with 204, so the
+// middleware has to be registered before any authentication middleware that
+// could reject them. Under the current route layout that ordering is belt and
+// braces: every API route is registered for a concrete method, so gin matches
+// OPTIONS against the catch-all route in its own method tree and the API key
+// middleware is not in that chain either way.
+//
+// allowPrivateNetwork controls whether Private Network Access preflights are
+// granted; callers are expected to keep it false unless the operator asked for
+// it and the API still requires authentication.
+func WithCORS(restricted gin.HandlerFunc, allowPrivateNetwork bool) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if IsPublicAPIPath(c.Request.URL.Path) {
+			applyPublicCORS(c, allowPrivateNetwork)
+			return
+		}
+
+		if restricted != nil {
+			restricted(c)
+		}
+	}
+}
+
+func applyPublicCORS(c *gin.Context, allowPrivateNetwork bool) {
+	header := c.Writer.Header()
+	header.Set("Access-Control-Allow-Origin", "*")
+	// A wildcard origin must never be combined with credentials; browsers
+	// reject that pairing. Public APIs use API keys, not cookies, so drop
+	// whatever another layer may have set.
+	header.Del("Access-Control-Allow-Credentials")
+
+	if c.Request.Method != http.MethodOptions {
+		header.Set("Access-Control-Expose-Headers", publicCORSExposeHeaders)
+		return
+	}
+
+	header.Set("Access-Control-Allow-Methods", publicCORSAllowMethods)
+
+	if requested := c.Request.Header.Get("Access-Control-Request-Headers"); requested != "" {
+		header.Set("Access-Control-Allow-Headers", requested)
+	} else {
+		header.Set("Access-Control-Allow-Headers", publicCORSAllowHeaders)
+	}
+
+	header.Set("Access-Control-Max-Age", publicCORSMaxAge)
+	header.Add("Vary", "Access-Control-Request-Headers")
+
+	// Chromium sends a Private Network Access preflight when a public site
+	// calls a locally hosted instance (e.g. SillyTavern on HTTPS talking to a
+	// self-hosted gateway on localhost). Granting it is what makes that setup
+	// work, and it is also what would let any other site the operator visits
+	// reach the same instance, so it stays behind an explicit opt-in.
+	if allowPrivateNetwork && c.Request.Header.Get("Access-Control-Request-Private-Network") == "true" {
+		header.Set("Access-Control-Allow-Private-Network", "true")
+		header.Add("Vary", "Access-Control-Request-Private-Network")
+	}
+
+	c.AbortWithStatus(http.StatusNoContent)
+}

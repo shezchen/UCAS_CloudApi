@@ -55,6 +55,22 @@ type CORS struct {
 	ExposedHeaders   []string      `conf:"exposed_headers" yaml:"exposed_headers" json:"exposed_headers"`
 	AllowCredentials bool          `conf:"allow_credentials" yaml:"allow_credentials" json:"allow_credentials"`
 	MaxAge           time.Duration `conf:"max_age" yaml:"max_age" json:"max_age"`
+
+	// AllowPrivateNetwork answers Chromium's Private Network Access preflight
+	// on the public model APIs with a grant, which is what lets a page served
+	// over the public internet call an instance running on loopback or an
+	// intranet address. Off by default: turning it on means any site the
+	// operator's browser visits can reach that instance.
+	AllowPrivateNetwork bool `conf:"allow_private_network" yaml:"allow_private_network" json:"allow_private_network"`
+}
+
+// AllowPrivateNetworkCORS reports whether Private Network Access preflights may
+// be granted. The grant only limits which origins can reach the instance, not
+// what they may do once there, so it is withheld whenever the API accepts
+// unauthenticated requests -- otherwise any page could drive the visitor's
+// browser against their private instance and read the responses.
+func (c Config) AllowPrivateNetworkCORS() bool {
+	return c.CORS.AllowPrivateNetwork && !c.API.Auth.AllowNoAuth
 }
 
 type API struct {

@@ -73,6 +73,42 @@ func TestHandler_ServesSPAIndexForFrontendRoutes(t *testing.T) {
 	require.Equal(t, "no-cache, no-store, must-revalidate", recorder.Header().Get("Cache-Control"))
 }
 
+// The engine disables RedirectTrailingSlash so that CORS middleware runs on
+// these requests, which routes them here instead. Each one has to land in the
+// same branch it would without the trailing slash.
+func TestHandler_TrailingSlashKeepsTheRouteClass(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	useTestStaticFS(t)
+
+	router := gin.New()
+	router.RedirectTrailingSlash = false
+	router.NoRoute(Handler())
+
+	t.Run("api path returns JSON 404", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/v1/models/", nil)
+
+		router.ServeHTTP(recorder, req)
+
+		require.Equal(t, http.StatusNotFound, recorder.Code)
+		require.Contains(t, recorder.Header().Get("Content-Type"), "application/json")
+
+		var resp objects.ErrorResponse
+		require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
+		require.Equal(t, "path not found: /v1/models/", resp.Error.Message)
+	})
+
+	t.Run("frontend route serves the SPA", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/settings/profile/", nil)
+
+		router.ServeHTTP(recorder, req)
+
+		require.Equal(t, http.StatusOK, recorder.Code)
+		require.Contains(t, recorder.Header().Get("Content-Type"), "text/html")
+	})
+}
+
 func TestHandler_DoesNotFallbackMissingStaticAssetToSPAIndex(t *testing.T) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)

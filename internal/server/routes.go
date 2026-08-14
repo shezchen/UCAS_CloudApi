@@ -1,12 +1,16 @@
 package server
 
 import (
+	"context"
+	"net/http"
+
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/fx"
 
 	"github.com/looplj/axonhub/internal/ent"
 	"github.com/looplj/axonhub/internal/ent/request"
+	"github.com/looplj/axonhub/internal/log"
 	"github.com/looplj/axonhub/internal/server/api"
 	"github.com/looplj/axonhub/internal/server/biz"
 	"github.com/looplj/axonhub/internal/server/gql"
@@ -64,7 +68,11 @@ func SetupRoutes(server *Server, handlers Handlers, client *ent.Client, services
 	server.Use(middleware.WithLoggingTracing(server.Config.Trace))
 	server.Use(middleware.WithMetrics())
 
-	// Setup CORS middleware at server level if enabled
+	// CORS is split by route class: public model APIs (OpenAI/Anthropic/...
+	// compatible endpoints) always allow browser calls from any origin since
+	// they authenticate with API keys instead of cookies, while admin and
+	// management routes keep the configurable strict policy below.
+	var restrictedCORS gin.HandlerFunc
 	if server.Config.CORS.Enabled {
 		corsConfig := cors.DefaultConfig()
 		corsConfig.AllowOrigins = server.Config.CORS.AllowedOrigins
@@ -74,10 +82,24 @@ func SetupRoutes(server *Server, handlers Handlers, client *ent.Client, services
 		corsConfig.AllowCredentials = server.Config.CORS.AllowCredentials
 		corsConfig.MaxAge = server.Config.CORS.MaxAge
 
-		corsHandler := cors.New(corsConfig)
-		server.Use(corsHandler)
-		server.OPTIONS("*any", corsHandler)
+		restrictedCORS = cors.New(corsConfig)
 	}
+
+	if server.Config.CORS.AllowPrivateNetwork && !server.Config.AllowPrivateNetworkCORS() {
+		log.Warn(context.Background(),
+			"ignoring server.cors.allow_private_network because server.api.auth.allow_no_auth is enabled: "+
+				"granting Private Network Access to an API that needs no key would let any site read from this instance")
+	}
+
+	server.Use(middleware.WithCORS(restrictedCORS, server.Config.AllowPrivateNetworkCORS()))
+
+	// Public API preflights are short-circuited with 204 by WithCORS before
+	// this handler runs. The catch-all keeps every other OPTIONS request
+	// (e.g. without an Origin header) from falling through to the static SPA
+	// handler and answering with 404 or an HTML page.
+	server.OPTIONS("*any", func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
 
 	publicGroup := server.Group("", middleware.WithTimeout(server.Config.RequestTimeout))
 	{

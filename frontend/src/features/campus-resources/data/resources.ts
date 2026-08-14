@@ -65,6 +65,7 @@ const campusResourceChannelSchema = z.object({
   source: z.enum(['project', 'donated']),
   description: z.string().optional(),
   contributor: z.string(),
+  contributorAvatar: z.string().optional(),
   status: z.enum(['enabled', 'disabled']),
   expiresAt: z.string().optional(),
   models: z.array(z.string()).default([]),

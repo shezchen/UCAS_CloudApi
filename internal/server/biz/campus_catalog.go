@@ -168,19 +168,20 @@ type UpdateCampusChannelModelCapabilitiesInput struct {
 }
 
 type CampusChannelResource struct {
-	ID              string               `json:"id"`
-	Name            string               `json:"name"`
-	Provider        string               `json:"provider"`
-	Source          string               `json:"source"`
-	Description     string               `json:"description,omitempty"`
-	Contributor     string               `json:"contributor"`
-	Status          string               `json:"status"`
-	ExpiresAt       *time.Time           `json:"expiresAt,omitempty"`
-	Models          []string             `json:"models"`
-	ModelCount      int                  `json:"modelCount"`
-	EffectiveTokens int64                `json:"effectiveTokens"`
-	CanProbe        bool                 `json:"canProbe"`
-	Health          *CampusChannelHealth `json:"health,omitempty"`
+	ID                string               `json:"id"`
+	Name              string               `json:"name"`
+	Provider          string               `json:"provider"`
+	Source            string               `json:"source"`
+	Description       string               `json:"description,omitempty"`
+	Contributor       string               `json:"contributor"`
+	ContributorAvatar string               `json:"contributorAvatar,omitempty"`
+	Status            string               `json:"status"`
+	ExpiresAt         *time.Time           `json:"expiresAt,omitempty"`
+	Models            []string             `json:"models"`
+	ModelCount        int                  `json:"modelCount"`
+	EffectiveTokens   int64                `json:"effectiveTokens"`
+	CanProbe          bool                 `json:"canProbe"`
+	Health            *CampusChannelHealth `json:"health,omitempty"`
 }
 
 type CampusChannelHealth struct {
@@ -891,6 +892,7 @@ func (svc *CampusCatalogService) listPublicChannels(ctx context.Context, project
 			resource.Source = "donated"
 			resource.Description = sanitizeCampusChannelDescription(ch.Remark)
 			alias := CampusPublicAlias(projectID, *ch.UserID)
+			resource.ContributorAvatar = CampusAvatarPath(alias)
 			if ch.Edges.User == nil {
 				resource.Contributor = alias
 			} else {

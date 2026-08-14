@@ -3,6 +3,7 @@ import { Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Header } from '@/components/layout/header';
 import { Main } from '@/components/layout/main';
+import { UserAvatar } from '@/components/user-avatar';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -139,6 +140,7 @@ export function CampusUsageLeaderboardPage() {
                     </TableCell>
                     <TableCell className='border-0 bg-inherit px-4 py-3 font-medium'>
                       <div className='flex items-center gap-2'>
+                        <UserAvatar avatar={entry.avatar} label={entry.displayName} className='size-8' />
                         <div className='min-w-0'>
                           <span className='block truncate'>{entry.displayName}</span>
                           {entry.displayName !== entry.publicAlias && (

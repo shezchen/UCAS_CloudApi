@@ -307,6 +307,7 @@ type ComplexityRoot struct {
 	}
 
 	CampusUsageLeaderboardEntry struct {
+		Avatar              func(childComplexity int) int
 		DisplayName         func(childComplexity int) int
 		IsMe                func(childComplexity int) int
 		LimitPercent        func(childComplexity int) int
@@ -1919,6 +1920,7 @@ type ComplexityRoot struct {
 	}
 
 	UsageStatsByUser struct {
+		Avatar       func(childComplexity int) int
 		RequestCount func(childComplexity int) int
 		TotalCost    func(childComplexity int) int
 		TotalTokens  func(childComplexity int) int
@@ -3199,6 +3201,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.complexity.CampusModelUsageLeaderboardEntry.Rank(childComplexity), true
 
+	case "CampusUsageLeaderboardEntry.avatar":
+		if e.complexity.CampusUsageLeaderboardEntry.Avatar == nil {
+			break
+		}
+
+		return e.complexity.CampusUsageLeaderboardEntry.Avatar(childComplexity), true
 	case "CampusUsageLeaderboardEntry.displayName":
 		if e.complexity.CampusUsageLeaderboardEntry.DisplayName == nil {
 			break
@@ -10548,6 +10556,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.complexity.UsageMetadata.TotalTokens(childComplexity), true
 
+	case "UsageStatsByUser.avatar":
+		if e.complexity.UsageStatsByUser.Avatar == nil {
+			break
+		}
+
+		return e.complexity.UsageStatsByUser.Avatar(childComplexity), true
 	case "UsageStatsByUser.requestCount":
 		if e.complexity.UsageStatsByUser.RequestCount == nil {
 			break
@@ -18874,6 +18888,35 @@ func (ec *executionContext) _CampusUsageLeaderboardEntry_publicAlias(ctx context
 }
 
 func (ec *executionContext) fieldContext_CampusUsageLeaderboardEntry_publicAlias(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CampusUsageLeaderboardEntry",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CampusUsageLeaderboardEntry_avatar(ctx context.Context, field graphql.CollectedField, obj *CampusUsageLeaderboardEntry) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CampusUsageLeaderboardEntry_avatar,
+		func(ctx context.Context) (any, error) {
+			return obj.Avatar, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_CampusUsageLeaderboardEntry_avatar(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "CampusUsageLeaderboardEntry",
 		Field:      field,
@@ -43539,6 +43582,8 @@ func (ec *executionContext) fieldContext_Query_usageStatsByUser(ctx context.Cont
 				return ec.fieldContext_UsageStatsByUser_userId(ctx, field)
 			case "userName":
 				return ec.fieldContext_UsageStatsByUser_userName(ctx, field)
+			case "avatar":
+				return ec.fieldContext_UsageStatsByUser_avatar(ctx, field)
 			case "requestCount":
 				return ec.fieldContext_UsageStatsByUser_requestCount(ctx, field)
 			case "totalTokens":
@@ -43594,6 +43639,8 @@ func (ec *executionContext) fieldContext_Query_campusUsageLeaderboard(ctx contex
 				return ec.fieldContext_CampusUsageLeaderboardEntry_displayName(ctx, field)
 			case "publicAlias":
 				return ec.fieldContext_CampusUsageLeaderboardEntry_publicAlias(ctx, field)
+			case "avatar":
+				return ec.fieldContext_CampusUsageLeaderboardEntry_avatar(ctx, field)
 			case "isMe":
 				return ec.fieldContext_CampusUsageLeaderboardEntry_isMe(ctx, field)
 			case "recordedTokens":
@@ -56960,6 +57007,35 @@ func (ec *executionContext) _UsageStatsByUser_userName(ctx context.Context, fiel
 }
 
 func (ec *executionContext) fieldContext_UsageStatsByUser_userName(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "UsageStatsByUser",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _UsageStatsByUser_avatar(ctx context.Context, field graphql.CollectedField, obj *UsageStatsByUser) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_UsageStatsByUser_avatar,
+		func(ctx context.Context) (any, error) {
+			return obj.Avatar, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_UsageStatsByUser_avatar(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "UsageStatsByUser",
 		Field:      field,
@@ -91097,6 +91173,8 @@ func (ec *executionContext) _CampusUsageLeaderboardEntry(ctx context.Context, se
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "avatar":
+			out.Values[i] = ec._CampusUsageLeaderboardEntry_avatar(ctx, field, obj)
 		case "isMe":
 			out.Values[i] = ec._CampusUsageLeaderboardEntry_isMe(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
@@ -107099,6 +107177,8 @@ func (ec *executionContext) _UsageStatsByUser(ctx context.Context, sel ast.Selec
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "avatar":
+			out.Values[i] = ec._UsageStatsByUser_avatar(ctx, field, obj)
 		case "requestCount":
 			out.Values[i] = ec._UsageStatsByUser_requestCount(ctx, field, obj)
 			if out.Values[i] == graphql.Null {

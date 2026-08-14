@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import LongText from '@/components/long-text';
+import { UserAvatar } from '@/components/user-avatar';
 import { User } from '../data/schema';
 import { DataTableRowActions } from './data-table-row-actions';
 
@@ -35,7 +36,16 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
     {
       accessorKey: 'firstName',
       header: t('users.columns.firstName'),
-      cell: ({ row }) => <LongText>{row.getValue('firstName')}</LongText>,
+      cell: ({ row }) => {
+        const user = row.original;
+        const label = [user.firstName, user.lastName].filter(Boolean).join(' ') || user.email;
+        return (
+          <div className='flex min-w-0 items-center gap-2'>
+            <UserAvatar userId={user.id} label={label} className='size-8' />
+            <LongText className='min-w-0 flex-1'>{row.getValue('firstName')}</LongText>
+          </div>
+        );
+      },
     },
     {
       accessorKey: 'lastName',

@@ -42,6 +42,7 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { DataTableColumnHeader } from '@/components/data-table-column-header';
+import { UserAvatar } from '@/components/user-avatar';
 import { useChannels } from '../context/channels-context';
 import { useTestChannel, useUpdateChannel } from '../data/channels';
 import { CHANNEL_CONFIGS, getProvider } from '../data/config_channels';
@@ -684,7 +685,12 @@ const DonorCell = memo(({ row }: { row: Row<Channel> }) => {
 
   const fullName = [donor?.firstName, donor?.lastName].filter(Boolean).join(' ');
   const label = fullName || donor?.email || channel.userID || '-';
-  const content = <div className='max-w-44 truncate text-center text-sm'>{label}</div>;
+  const content = (
+    <div className='mx-auto flex max-w-44 items-center justify-center gap-2 text-sm'>
+      <UserAvatar userId={donor?.id ?? channel.userID} label={label} className='size-8' />
+      <span className='truncate'>{label}</span>
+    </div>
+  );
 
   if (!donor?.email || donor.email === label) return content;
 

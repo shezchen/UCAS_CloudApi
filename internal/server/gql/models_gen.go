@@ -130,14 +130,16 @@ type CampusModelUsageLeaderboardEntry struct {
 	MeteredRequestCount int     `json:"meteredRequestCount"`
 }
 
-// Privacy-safe campus leaderboard entry for effective-token usage in a selected
-// Beijing calendar period. Effective tokens exclude cache-read input.
-// The public alias is stable only within the current project and does not expose
-// the underlying user, API key, channel, model, request content, or cost.
+// Campus leaderboard entry for effective-token usage in a selected Beijing
+// calendar period. Effective tokens exclude cache-read input. The public alias is
+// stable only within the current project; the optional nickname and avatar are
+// user-selected public profile fields. Direct user IDs, API keys, channels,
+// request content, and cost are not exposed.
 type CampusUsageLeaderboardEntry struct {
 	Rank                int     `json:"rank"`
 	DisplayName         string  `json:"displayName"`
 	PublicAlias         string  `json:"publicAlias"`
+	Avatar              *string `json:"avatar,omitempty"`
 	IsMe                bool    `json:"isMe"`
 	RecordedTokens      float64 `json:"recordedTokens"`
 	MeteredRequestCount int     `json:"meteredRequestCount"`
@@ -599,6 +601,7 @@ type UpdateUserDailyQuotaSettingsInput struct {
 type UsageStatsByUser struct {
 	UserID       objects.GUID `json:"userId"`
 	UserName     string       `json:"userName"`
+	Avatar       *string      `json:"avatar,omitempty"`
 	RequestCount int          `json:"requestCount"`
 	TotalTokens  int          `json:"totalTokens"`
 	TotalCost    float64      `json:"totalCost"`

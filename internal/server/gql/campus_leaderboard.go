@@ -145,10 +145,12 @@ func rankCampusUsage(
 		if i >= campusLeaderboardLimit && !isCurrentUser {
 			continue
 		}
+		avatar := biz.CampusAvatarPath(item.PublicAlias)
 		entries = append(entries, &CampusUsageLeaderboardEntry{
 			Rank:                i + 1,
 			DisplayName:         item.DisplayName,
 			PublicAlias:         item.PublicAlias,
+			Avatar:              &avatar,
 			IsMe:                isCurrentUser,
 			RecordedTokens:      float64(item.RecordedTokens),
 			MeteredRequestCount: item.MeteredRequestCnt,
@@ -237,7 +239,7 @@ func (r *queryResolver) resolveCampusUsageLeaderboard(ctx context.Context, timeW
 	var aggregates []campusUsageAggregate
 
 	// Membership is verified above. The audited system scope is limited to this
-	// aggregate, whose GraphQL DTO exposes only public aliases and nicknames.
+	// aggregate, whose GraphQL DTO exposes only public profile fields.
 	err = authz.RunWithSystemBypassVoid(ctx, "campus-user-usage-leaderboard", func(aggregateCtx context.Context) error {
 		return r.client.UsageLog.Query().
 			Where(

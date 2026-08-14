@@ -325,6 +325,7 @@ const CHANNEL_SUCCESS_RATES_QUERY = `
 export const usageStatsByUserSchema = z.object({
   userId: z.string(),
   userName: z.string(),
+  avatar: z.string().optional().nullable(),
   requestCount: z.number(),
   totalTokens: z.number(),
   totalCost: z.number(),

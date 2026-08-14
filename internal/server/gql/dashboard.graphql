@@ -217,21 +217,24 @@ Usage statistics grouped by user
 type UsageStatsByUser {
   userId: ID!
   userName: String!
+  avatar: String
   requestCount: Int!
   totalTokens: Int!
   totalCost: Float!
 }
 
 """
-Privacy-safe campus leaderboard entry for effective-token usage in a selected
-Beijing calendar period. Effective tokens exclude cache-read input.
-The public alias is stable only within the current project and does not expose
-the underlying user, API key, channel, model, request content, or cost.
+Campus leaderboard entry for effective-token usage in a selected Beijing
+calendar period. Effective tokens exclude cache-read input. The public alias is
+stable only within the current project; the optional nickname and avatar are
+user-selected public profile fields. Direct user IDs, API keys, channels,
+request content, and cost are not exposed.
 """
 type CampusUsageLeaderboardEntry {
   rank: Int!
   displayName: String!
   publicAlias: String!
+  avatar: String
   isMe: Boolean!
   recordedTokens: Float!
   meteredRequestCount: Int!

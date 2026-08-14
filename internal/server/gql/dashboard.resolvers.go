@@ -29,6 +29,7 @@ import (
 	"github.com/looplj/axonhub/internal/objects"
 	"github.com/looplj/axonhub/internal/pkg/xtime"
 	"github.com/looplj/axonhub/internal/scopes"
+	"github.com/looplj/axonhub/internal/server/biz"
 	"github.com/looplj/axonhub/internal/server/gql/qb"
 	"github.com/samber/lo"
 	"github.com/vektah/gqlparser/v2/gqlerror"
@@ -1922,9 +1923,11 @@ func (r *queryResolver) UsageStatsByUser(ctx context.Context, timeWindow *string
 		if userName == "" {
 			userName = item.Email
 		}
+		avatar := biz.UserAvatarPath(item.UserID)
 		return &UsageStatsByUser{
 			UserID:       objects.GUID{Type: ent.TypeUser, ID: item.UserID},
 			UserName:     userName,
+			Avatar:       &avatar,
 			RequestCount: item.Count,
 			TotalTokens:  int(item.TotalTokens),
 			TotalCost:    item.TotalCost,

@@ -4,6 +4,7 @@ import { Search, Loader2 } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Header } from '@/components/layout/header';
 import { Main } from '@/components/layout/main';
+import { UserAvatar } from '@/components/user-avatar';
 import { Button } from '@/components/ui/button';
 import { DateRangePicker, type DateTimeRangeValue } from '@/components/date-range-picker';
 import { buildDateRangeWhereClause } from '@/utils/date-range';
@@ -154,7 +155,12 @@ function OwnerUsageStatisticsPage() {
                     className='group/row table-row-hover rounded-xl border-0 !bg-[var(--table-background)] transition-all duration-200 ease-in-out'
                   >
                     <TableCell className='text-muted-foreground text-center text-xs border-0 bg-inherit px-4 py-3'>{index + 1}</TableCell>
-                    <TableCell className='font-medium border-0 bg-inherit px-4 py-3'>{item.userName}</TableCell>
+                    <TableCell className='font-medium border-0 bg-inherit px-4 py-3'>
+                      <div className='flex min-w-0 items-center gap-2'>
+                        <UserAvatar avatar={item.avatar} label={item.userName} className='size-8' />
+                        <span className='truncate'>{item.userName}</span>
+                      </div>
+                    </TableCell>
                     <TableCell className='text-right font-mono text-sm border-0 bg-inherit px-4 py-3'>{formatNumber(item.requestCount)}</TableCell>
                     <TableCell className='text-right font-mono text-sm border-0 bg-inherit px-4 py-3'>{formatNumber(item.totalTokens)}</TableCell>
                     <TableCell className='text-right font-mono text-sm border-0 bg-inherit px-4 py-3'>{formatCurrency(item.totalCost)}</TableCell>

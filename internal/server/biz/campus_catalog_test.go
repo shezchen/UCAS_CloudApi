@@ -212,6 +212,7 @@ func TestCampusCatalogServiceOwnModelsAndSafeChannels(t *testing.T) {
 		SetEmail("member@mails.ucas.ac.cn").
 		SetPassword("hash").
 		SetNickname("目录同学").
+		SetAvatar("data:image/png;base64,member").
 		SaveX(setupCtx)
 	other := client.User.Create().
 		SetEmail("other@mails.ucas.ac.cn").
@@ -380,6 +381,7 @@ func TestCampusCatalogServiceOwnModelsAndSafeChannels(t *testing.T) {
 	donatedChannel := byName["同学共享"]
 	require.Equal(t, "donated", donatedChannel.Source)
 	require.Equal(t, "目录同学", donatedChannel.Contributor)
+	require.Equal(t, CampusAvatarPath(CampusPublicAlias(projectRow.ID, member.ID)), donatedChannel.ContributorAvatar)
 	require.Equal(t, "公益 共享说明", donatedChannel.Description)
 	require.Equal(t, 2, donatedChannel.ModelCount)
 	require.Equal(t, []string{"kimi-k2.5", "kimi-k2.6"}, donatedChannel.Models)
@@ -396,6 +398,7 @@ func TestCampusCatalogServiceOwnModelsAndSafeChannels(t *testing.T) {
 		"sk-secret", "provider-secret", "private-owner.invalid", "private-donor.invalid",
 		"base_url", "baseURL", "credentials", "settings", "policies", "endpoints",
 		"error_message", "errorMessage", "email", "user_id", "userId", "channelId",
+		"data:image", "base64,",
 	} {
 		require.NotContains(t, payloadText, forbidden)
 	}

@@ -9,6 +9,7 @@ const USAGE_STATS_BY_USER_QUERY = `
     usageStatsByUser(timeWindow: $timeWindow) {
       userId
       userName
+      avatar
       requestCount
       totalTokens
       totalCost
@@ -22,6 +23,7 @@ const CAMPUS_USAGE_LEADERBOARD_QUERY = `
       rank
       displayName
       publicAlias
+      avatar
       isMe
       recordedTokens
       meteredRequestCount
@@ -48,6 +50,7 @@ export const campusUsageLeaderboardEntrySchema = z.object({
   rank: z.number().int().positive(),
   displayName: z.string(),
   publicAlias: z.string(),
+  avatar: z.string().optional().nullable(),
   isMe: z.boolean(),
   recordedTokens: z.number().nonnegative(),
   meteredRequestCount: z.number().int().nonnegative(),

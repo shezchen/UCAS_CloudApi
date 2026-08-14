@@ -21,7 +21,6 @@ import {
   Search,
   Settings2,
   ShieldCheck,
-  UserRound,
   WalletCards,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -40,6 +39,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Header } from '@/components/layout/header';
 import { Main } from '@/components/layout/main';
+import { UserAvatar } from '@/components/user-avatar';
 import { getProviderQuotaUsagePercentage, type ProviderQuotaChannel, useProviderQuotaStatuses } from '@/features/system/data/quotas';
 import {
   type CampusManagedChannel,
@@ -503,7 +503,7 @@ function ChannelCard({
               {channel.name}
             </CardTitle>
             <CardDescription className='text-foreground/80 mt-1 flex items-center gap-1.5 font-medium'>
-              <UserRound className='text-primary size-3.5 shrink-0' aria-hidden='true' />
+              <UserAvatar avatar={channel.contributorAvatar} label={channel.contributor} className='size-6' />
               <span className='truncate' title={channel.contributor}>
                 {t('resources.channels.providedBy', { contributor: channel.contributor })}
               </span>

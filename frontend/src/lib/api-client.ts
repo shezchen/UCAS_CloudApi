@@ -120,6 +120,33 @@ export async function apiRequest<T>(endpoint: string, options: ApiRequestOptions
   }
 }
 
+export async function apiRequestBlob(endpoint: string, options: ApiRequestOptions = {}): Promise<Blob> {
+  const { method = 'GET', headers = {}, requireAuth = false } = options;
+  const url = `${API_BASE_URL}${endpoint}`;
+  const requestHeaders: Record<string, string> = { ...headers };
+
+  if (requireAuth) {
+    const token = getTokenFromStorage();
+    if (token) {
+      requestHeaders['Authorization'] = `Bearer ${token}`;
+    }
+  }
+
+  try {
+    const response = await fetch(url, { method, headers: requestHeaders });
+    if (!response.ok) {
+      throw new ApiError(`HTTP ${response.status}: ${response.statusText}`, response.status);
+    }
+    return await response.blob();
+  } catch (error) {
+    if (error instanceof ApiError) {
+      throw error;
+    }
+    const message = error instanceof Error ? error.message : 'Network error occurred';
+    throw new ApiError(message, 0);
+  }
+}
+
 // System API endpoints
 export const systemApi = {
   getStatus: (): Promise<{ isInitialized: boolean }> => apiRequest('/admin/system/status'),

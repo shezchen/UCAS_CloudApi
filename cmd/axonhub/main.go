@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/andreazorzetto/yh/highlight"
@@ -57,13 +58,32 @@ func (l *logger) LogEvent(event fxevent.Event) {
 }
 
 func startServer() {
+	// Load and validate before handing the config to fx: an error returned
+	// from an fx.Invoke would only surface through the fx event logger, which
+	// runs at debug level, so the process would exit without saying why.
+	config, err := conf.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
+		os.Exit(1)
+	}
+
+	if problems := validateConfig(config); len(problems) > 0 {
+		fmt.Fprintln(os.Stderr, "Configuration validation failed:")
+
+		for _, problem := range problems {
+			fmt.Fprintf(os.Stderr, "  - %s\n", problem)
+		}
+
+		os.Exit(1)
+	}
+
 	server.Run(
 		fx.StartTimeout(60*time.Second),
 		fx.StopTimeout(30*time.Second),
 		fx.WithLogger(func() fxevent.Logger {
 			return &logger{}
 		}),
-		fx.Provide(conf.Load),
+		fx.Provide(func() (conf.Config, error) { return config, nil }),
 		fx.Provide(metrics.NewProvider),
 		fx.Invoke(func(lc fx.Lifecycle, server *server.Server, provider *sdk.MeterProvider, ent *ent.Client, requestSvc *biz.RequestService) {
 			lc.Append(fx.Hook{
@@ -230,6 +250,16 @@ func validateConfig(config conf.Config) []string {
 
 	if config.APIServer.CORS.Enabled && len(config.APIServer.CORS.AllowedOrigins) == 0 {
 		errors = append(errors, "server.cors.allowed_origins cannot be empty when CORS is enabled")
+	}
+
+	// Browsers reject a wildcard origin on a credentialed request outright, so
+	// this combination does not open anything up -- it silently breaks every
+	// cross-origin call that carries cookies, while reading like a permissive
+	// setting that works.
+	if config.APIServer.CORS.Enabled && config.APIServer.CORS.AllowCredentials &&
+		slices.Contains(config.APIServer.CORS.AllowedOrigins, "*") {
+		errors = append(errors,
+			`server.cors.allowed_origins must not contain "*" when server.cors.allow_credentials is true; list explicit origins instead`)
 	}
 
 	return errors

@@ -19,7 +19,9 @@ services:
     environment:
       POSTGRES_DB: axonhub
       POSTGRES_USER: axonhub
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-axonhub_password}
+      # 必须显式提供强密码，无默认值；未设置时 docker compose 会直接报错退出。
+      # 例如: echo "DB_PASSWORD=$(openssl rand -hex 24)" > .env
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required. Set a strong password, e.g. in a .env file.}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
@@ -40,7 +42,10 @@ services:
     environment:
       # 数据库配置可以通过环境变量设置，优先级高于配置文件
       AXONHUB_DB_DIALECT: postgres
-      AXONHUB_DB_DSN: postgres://axonhub:${DB_PASSWORD:-axonhub_password}@postgres:5432/axonhub?sslmode=disable
+      # 警示: sslmode=disable 仅适用于本 compose 内网中容器间的通信；
+      # 连接外部/生产数据库时务必改为 sslmode=require 或 verify-full。
+      # 注意: 密码中若包含 URL 特殊字符 (如 @ / : # ?) 需先做 URL 编码。
+      AXONHUB_DB_DSN: postgres://axonhub:${DB_PASSWORD:?DB_PASSWORD is required. Set a strong password, e.g. in a .env file.}@postgres:5432/axonhub?sslmode=disable
     ports:
       - "8090:8090"
     volumes:
@@ -109,10 +114,11 @@ services:
   #   image: mysql:8.0
   #   container_name: axonhub-mysql
   #   environment:
-  #     MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-axonhub_root_password}
+  #     # 必须显式提供强密码，无默认值；未设置时 docker compose 会直接报错退出。
+  #     MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required. Set a strong password, e.g. in a .env file.}
   #     MYSQL_DATABASE: axonhub
   #     MYSQL_USER: axonhub
-  #     MYSQL_PASSWORD: ${MYSQL_PASSWORD:-axonhub_password}
+  #     MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required. Set a strong password, e.g. in a .env file.}
   #   volumes:
   #     - mysql_data:/var/lib/mysql
   #   ports:
@@ -121,7 +127,7 @@ services:
   #     - axonhub-network
   #   restart: unless-stopped
   #   healthcheck:
-  #     test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-axonhub_root_password}"]
+  #     test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required. Set a strong password, e.g. in a .env file.}"]
   #     interval: 10s
   #     timeout: 5s
   #     retries: 5
@@ -134,7 +140,7 @@ services:
   #   environment:
   #     AXONHUB_DB_DIALECT: mysql
   #     # DSN 格式参考: ${MYSQL_USER}:${MYSQL_PASSWORD}@tcp(mysql:3306)/${MYSQL_DATABASE}?charset=utf8mb4&parseTime=True&loc=Local
-  #     AXONHUB_DB_DSN: axonhub:${MYSQL_PASSWORD:-axonhub_password}@tcp(mysql:3306)/axonhub?charset=utf8mb4&parseTime=True&loc=Local
+  #     AXONHUB_DB_DSN: axonhub:${MYSQL_PASSWORD:?MYSQL_PASSWORD is required. Set a strong password, e.g. in a .env file.}@tcp(mysql:3306)/axonhub?charset=utf8mb4&parseTime=True&loc=Local
   #   ports:
   #     - "8090:8090"
   #   volumes:

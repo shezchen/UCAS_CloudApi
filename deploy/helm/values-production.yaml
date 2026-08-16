@@ -20,10 +20,13 @@ axonhub:
   # Environment variables - customize the database connection string for your environment
   env:
     AXONHUB_DB_DIALECT: postgres
-    # For external database - modify this connection string
-    AXONHUB_DB_DSN: postgres://axonhub:your_db_password@your-db-host:5432/axonhub?sslmode=require
-    # For internal PostgreSQL - uncomment below and comment above
-    # AXONHUB_DB_DSN: postgres://axonhub:CHANGE_ME_POSTGRES_USER_123456@axonhub-postgresql:5432/axonhub?sslmode=disable
+    # REQUIRED: no default, an install without it fails rather than starting
+    # with a credential taken from this file.
+    # For an external database:
+    #   AXONHUB_DB_DSN: postgres://axonhub:<password>@your-db-host:5432/axonhub?sslmode=require
+    # For the bundled PostgreSQL (password must match postgresql.auth.password):
+    #   AXONHUB_DB_DSN: postgres://axonhub:<password>@axonhub-postgresql:5432/axonhub?sslmode=disable
+    AXONHUB_DB_DSN: ""
     # Read replica DSN for read-write separation - leave empty to disable (env: AXONHUB_DB_READ_REPLICA_READ_DSN)
     # AXONHUB_DB_READ_REPLICA_READ_DSN: postgres://axonhub:your_db_password@your-db-read-host:5432/axonhub?sslmode=require
   
@@ -89,11 +92,12 @@ postgresql:
     tag: "16-alpine"
     pullPolicy: IfNotPresent
   
-  # Security - CHANGE THESE VALUES IN PRODUCTION
+  # Security - these must be supplied; rendering fails while password is empty.
   auth:
-    postgresPassword: "CHANGE_ME_POSTGRES_ADMIN_123456"
     username: "axonhub"
-    password: "CHANGE_ME_POSTGRES_USER_123456"
+    # Only applied on first start (PostgreSQL reads POSTGRES_PASSWORD during
+    # initdb), and must match the password in axonhub.env.AXONHUB_DB_DSN.
+    password: ""
     database: "axonhub"
   
   # Service configuration

@@ -15,6 +15,14 @@ cd axonhub
 
 ### 2. Configure Environment
 
+Set the database password. `docker-compose.yml` has no default for it and
+refuses to start while it is unset:
+
+```bash
+cp .env.example .env
+sed -i "s/^DB_PASSWORD=.*/DB_PASSWORD=$(openssl rand -hex 24)/" .env
+```
+
 Copy the example configuration file:
 
 ```bash
@@ -55,6 +63,47 @@ docker-compose ps
 Access the application:
 - Web interface: http://localhost:8090
 - Default admin: admin@example.com / admin123
+
+## Upgrading an Existing Deployment
+
+`docker-compose.yml` used to fall back to a hard-coded `axonhub_password` when
+`DB_PASSWORD` was unset. That fallback is gone, so a stack that relied on it
+stops with `DB_PASSWORD is required` until a value is supplied — and supplying
+a *different* one is not enough on its own.
+
+PostgreSQL reads `POSTGRES_PASSWORD` only while it initialises a new data
+directory. An existing `postgres_data` volume keeps the credential it was
+created with, so a new `DB_PASSWORD` leaves AxonHub failing to connect with
+`password authentication failed for user "axonhub"`. Choose one of the two:
+
+**Keep the credential the volume already has.** Nothing changes inside
+PostgreSQL; the old default just becomes explicit:
+
+```bash
+cp .env.example .env
+sed -i 's/^DB_PASSWORD=.*/DB_PASSWORD=axonhub_password/' .env
+docker compose up -d
+```
+
+**Rotate to a new one.** Change it inside PostgreSQL first, so both sides end
+up matching:
+
+```bash
+NEW_PASSWORD="$(openssl rand -hex 24)"
+
+docker compose exec postgres \
+  psql -U axonhub -d axonhub -c "ALTER USER axonhub WITH PASSWORD '${NEW_PASSWORD}';"
+
+cp .env.example .env
+sed -i "s/^DB_PASSWORD=.*/DB_PASSWORD=${NEW_PASSWORD}/" .env
+docker compose up -d
+```
+
+The same applies to the commented-out MySQL services, whose previous defaults
+were `axonhub_root_password` and `axonhub_password`.
+
+Discarding the volume with `docker compose down -v` also works, but it deletes
+every channel, key and request log, so keep that for throwaway deployments.
 
 ## Docker Compose Configuration
 

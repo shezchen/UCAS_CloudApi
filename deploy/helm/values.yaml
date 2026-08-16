@@ -19,10 +19,16 @@ axonhub:
   # Environment variables for AxonHub
   env:
     AXONHUB_DB_DIALECT: postgres
-    # Full database connection string - customize this for your environment
-    AXONHUB_DB_DSN: postgres://axonhub:axonhub_password@axonhub-postgresql:5432/axonhub?sslmode=disable
+    # Full database connection string. REQUIRED: there is deliberately no
+    # default, so an install without it fails instead of coming up with a
+    # password that is published in this repository. The password has to match
+    # postgresql.auth.password below.
+    #   --set axonhub.env.AXONHUB_DB_DSN="postgres://axonhub:<password>@axonhub-postgresql:5432/axonhub?sslmode=disable"
+    # WARNING: sslmode=disable is only acceptable for in-cluster traffic to the
+    # bundled PostgreSQL; use sslmode=require (or verify-full) for external databases.
+    AXONHUB_DB_DSN: ""
     # Read replica DSN - leave empty to disable read-write separation (env: AXONHUB_DB_READ_REPLICA_READ_DSN)
-    # AXONHUB_DB_READ_REPLICA_READ_DSN: postgres://axonhub:axonhub_password@axonhub-postgresql:5432/axonhub?sslmode=disable
+    # AXONHUB_DB_READ_REPLICA_READ_DSN: postgres://axonhub:<password>@axonhub-postgresql:5432/axonhub?sslmode=disable
   
   # Service configuration
   service:
@@ -89,11 +95,16 @@ postgresql:
     tag: "16-alpine"
     pullPolicy: IfNotPresent
   
-  # Database credentials
+  # Database credentials.
+  # password has no default on purpose: rendering fails without it rather than
+  # initialising the database with a credential anyone can read in this repo.
+  #   --set postgresql.auth.password=...
   auth:
-    postgresPassword: "axonhub_password"  # Should be overridden in production
     username: "axonhub"
-    password: "axonhub_password"  # Should be overridden in production
+    # Must match the password embedded in axonhub.env.AXONHUB_DB_DSN above.
+    # Only applied on first start: PostgreSQL reads POSTGRES_PASSWORD during
+    # initdb, so changing it here does nothing to an existing data volume.
+    password: ""
     database: "axonhub"
   
   # Service configuration

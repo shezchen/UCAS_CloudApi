@@ -43,6 +43,9 @@ spec:
           image: "{{ .Values.axonhub.image.repository }}:{{ .Values.axonhub.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.axonhub.image.pullPolicy }}
           env:
+            {{- if .Values.postgresql.enabled }}
+            {{- $_ := required "axonhub.env.AXONHUB_DB_DSN is required when postgresql.enabled is true. Point it at the bundled database using the same password as postgresql.auth.password, e.g. --set axonhub.env.AXONHUB_DB_DSN=postgres://axonhub:<password>@axonhub-postgresql:5432/axonhub?sslmode=disable" (.Values.axonhub.env.AXONHUB_DB_DSN | default "") }}
+            {{- end }}
             {{- range $key, $value := .Values.axonhub.env }}
             - name: {{ $key }}
               value: {{ $value | quote }}

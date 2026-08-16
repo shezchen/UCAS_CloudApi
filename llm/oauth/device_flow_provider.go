@@ -56,6 +56,11 @@ type DeviceFlowConfig struct {
 // TokenExchanger defines the interface for exchanging OAuth access tokens
 // for provider-specific tokens (e.g., Copilot token exchange).
 // This is optional - if not set, GetToken returns the access_token directly.
+//
+// Implementations own caching and deduplication of exchanged tokens, because
+// only they know the provider's expiry semantics and how much slack a token
+// needs to survive a long request. DeviceFlowProvider calls Exchange for every
+// token request and must not add a second cache on top.
 type TokenExchanger interface {
 	// Exchange exchanges an OAuth access token for a provider-specific token.
 	// Returns the exchanged token, expiration timestamp, and any error.
@@ -284,32 +289,25 @@ func (p *DeviceFlowProvider) GetToken(ctx context.Context) (string, error) {
 	return p.getAccessTokenWithRefresh(ctx)
 }
 
-// getExchangedToken exchanges the access token using the TokenExchanger.
+// getExchangedToken exchanges the access token using the TokenExchanger,
+// preferring the provider's HTTP client (which may carry proxy or TLS
+// settings) over the exchanger's default client.
 func (p *DeviceFlowProvider) getExchangedToken(ctx context.Context, accessToken string) (string, error) {
-	v, err, _ := p.sf.Do("exchange", func() (any, error) {
-		// Try with custom HTTP client first
-		if p.httpClient != nil {
-			token, _, err := p.tokenExchanger.ExchangeWithClient(ctx, p.httpClient, accessToken)
-			if err == nil {
-				return token, nil
-			}
-			// Fall back to default exchange
+	if p.httpClient != nil {
+		token, _, err := p.tokenExchanger.ExchangeWithClient(ctx, p.httpClient, accessToken)
+		if err == nil {
+			return token, nil
 		}
 
-		token, _, err := p.tokenExchanger.Exchange(ctx, accessToken)
-		if err != nil {
-			return nil, fmt.Errorf("token exchange failed: %w", err)
-		}
-
-		return token, nil
-	})
-	if err != nil {
-		return "", err
+		// The provider client may carry proxy settings; falling back silently
+		// would hide that subsequent requests bypass them.
+		slog.WarnContext(ctx, "token exchange with provider http client failed, falling back to default exchange",
+			slog.Any("error", err))
 	}
 
-	token, ok := v.(string)
-	if !ok {
-		return "", fmt.Errorf("singleflight returned unexpected type %T", v)
+	token, _, err := p.tokenExchanger.Exchange(ctx, accessToken)
+	if err != nil {
+		return "", fmt.Errorf("token exchange failed: %w", err)
 	}
 
 	return token, nil

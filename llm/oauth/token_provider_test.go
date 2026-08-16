@@ -229,6 +229,42 @@ func TestTokenProviderGetRefreshFlowSingleflight(t *testing.T) {
 	require.Equal(t, int32(1), refreshed.Load())
 }
 
+func TestTokenProviderGetStaticCredentialsWithoutExpiry(t *testing.T) {
+	t.Parallel()
+
+	provider := NewTokenProvider(TokenProviderParams{
+		HTTPClient: httpclient.NewHttpClient(),
+		OAuthUrls:  OAuthUrls{TokenUrl: "http://example.com/token"},
+		Credentials: &OAuthCredentials{
+			ClientID:    "client-1",
+			AccessToken: "static-access-token",
+		},
+	})
+
+	creds, err := provider.Get(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "static-access-token", creds.AccessToken)
+}
+
+func TestTokenProviderGetExpiredCredentialsWithoutRefreshToken(t *testing.T) {
+	t.Parallel()
+
+	provider := NewTokenProvider(TokenProviderParams{
+		HTTPClient: httpclient.NewHttpClient(),
+		OAuthUrls:  OAuthUrls{TokenUrl: "http://example.com/token"},
+		Credentials: &OAuthCredentials{
+			ClientID:    "client-1",
+			AccessToken: "expired-access-token",
+			ExpiresAt:   time.Now().Add(-10 * time.Minute),
+		},
+	})
+
+	// A credential with a known past expiry is dead; serving it would send
+	// every request upstream to be rejected with a 401.
+	_, err := provider.Get(context.Background())
+	require.EqualError(t, err, "refresh_token is empty")
+}
+
 func TestTokenProviderRefreshValidation(t *testing.T) {
 	t.Parallel()
 

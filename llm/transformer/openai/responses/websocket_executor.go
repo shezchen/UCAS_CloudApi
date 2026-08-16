@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"slices"
@@ -203,6 +204,12 @@ func (e *WebSocketExecutor) DoStream(ctx context.Context, request *httpclient.Re
 
 	stream := &webSocketStream{ctx: ctx, lease: lease, done: make(chan struct{})}
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.ErrorContext(ctx, "websocket stream context watcher panicked", slog.Any("cause", r))
+			}
+		}()
+
 		select {
 		case <-ctx.Done():
 			_ = stream.Close()

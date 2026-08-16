@@ -202,15 +202,11 @@ func (t *OutboundTransformer) TransformRequest(
 		headers.Set("Anthropic-Version", "2023-06-01")
 	}
 
-	// Apply platform-specific transformations
-	body, err := json.Marshal(anthropicReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal anthropic request: %w", err)
-	}
-
-	// Add beta header for web search feature only when:
+	// Enable the web search beta only when:
 	// 1. Native web search tool is present, AND
 	// 2. Platform is direct Anthropic API or Bedrock (not Vertex which may not support this beta)
+	// Bedrock carries beta flags in the request body, so this must happen
+	// before the request is marshaled.
 	if containsNativeWebSearchTool(anthropicReq.Tools) {
 		//nolint:exhaustive // Checked.
 		switch t.config.Type {
@@ -219,6 +215,12 @@ func (t *OutboundTransformer) TransformRequest(
 		case PlatformBedrock:
 			anthropicReq.AnthropicBeta = append(anthropicReq.AnthropicBeta, "web-search-2025-03-05")
 		}
+	}
+
+	// Apply platform-specific transformations
+	body, err := json.Marshal(anthropicReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal anthropic request: %w", err)
 	}
 
 	// Prepare authentication

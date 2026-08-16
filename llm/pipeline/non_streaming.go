@@ -125,7 +125,7 @@ func (p *pipeline) autoAggregateStream(
 		return nil, ErrEmptyStreamChunks
 	}
 
-	body, _, err := p.Inbound.AggregateStreamChunks(ctx, chunks)
+	body, meta, err := p.Inbound.AggregateStreamChunks(ctx, chunks)
 	if err != nil {
 		_ = inboundStream.Close()
 		p.applyRawErrorResponseMiddlewares(ctx, err)
@@ -136,6 +136,33 @@ func (p *pipeline) autoAggregateStream(
 		_ = inboundStream.Close()
 		p.applyRawErrorResponseMiddlewares(ctx, ErrEmptyAggregatedBody)
 		return nil, ErrEmptyAggregatedBody
+	}
+
+	// A forced-stream aggregation must not turn an explicitly failed stream
+	// (response.incomplete, response.failed, ...) into an HTTP 200. Fail the
+	// attempt so the existing retry/failover logic applies.
+	//
+	// An upstream that simply never signals a terminal state is a different
+	// case: OpenAI-compatible gateways that omit finish_reason exist, and
+	// failing them would burn a full generation on every candidate channel and
+	// mark healthy channels as failing. Accept those and record the gap.
+	switch outcome := ResponseMetaTerminalOutcome(meta); {
+	case outcome.Terminal && !outcome.Successful:
+		outcomeErr := outcome.Err
+		if outcomeErr == nil {
+			outcomeErr = newProtocolTerminalError("not_completed", meta.IncompleteReason)
+		}
+
+		_ = inboundStream.Close()
+		p.applyRawErrorResponseMiddlewares(ctx, outcomeErr)
+
+		return nil, WrapUpstreamError(outcomeErr)
+	case !outcome.Terminal:
+		slog.WarnContext(ctx, "aggregated stream ended without a terminal event",
+			slog.String("response_id", meta.ID),
+			slog.String("protocol_status", meta.ProtocolStatus),
+			slog.Int("chunks", len(chunks)),
+		)
 	}
 
 	resp := &httpclient.Response{

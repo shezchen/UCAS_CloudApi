@@ -215,9 +215,16 @@ func (t *InboundTransformer) TransformError(ctx context.Context, rawErr error) *
 	}
 
 	if llmErr, ok := errors.AsType[*llm.ResponseError](rawErr); ok {
+		statusCode := llmErr.StatusCode
+		if statusCode == 0 {
+			// A zero status code would produce an invalid HTTP response; treat
+			// an unspecified upstream status as a bad gateway.
+			statusCode = http.StatusBadGateway
+		}
+
 		return &httpclient.Error{
-			StatusCode: llmErr.StatusCode,
-			Status:     http.StatusText(llmErr.StatusCode),
+			StatusCode: statusCode,
+			Status:     http.StatusText(statusCode),
 			Body:       xjson.MustMarshal(&OpenAIError{Detail: llmErr.Detail}),
 		}
 	}

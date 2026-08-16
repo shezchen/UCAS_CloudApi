@@ -161,6 +161,14 @@ func (p *TokenProvider) Get(ctx context.Context) (*OAuthCredentials, error) {
 		return creds, nil
 	}
 
+	// Static long-lived tokens come without expires_at, which IsExpired treats
+	// as expired; returning them beats failing every request on an impossible
+	// refresh. A credential with a known past expiry is genuinely expired, so
+	// it must still take the refresh path and surface that error.
+	if creds.RefreshToken == "" && creds.ExpiresAt.IsZero() {
+		return creds, nil
+	}
+
 	// Refresh with singleflight to avoid stampede inside the same transformer.
 	v, err, _ := p.sf.Do("refresh", func() (any, error) {
 		p.mu.RLock()
@@ -170,6 +178,10 @@ func (p *TokenProvider) Get(ctx context.Context) (*OAuthCredentials, error) {
 
 		if current == nil {
 			return nil, fmt.Errorf("credentials is nil")
+		}
+
+		if current.RefreshToken == "" && current.ExpiresAt.IsZero() {
+			return current, nil
 		}
 
 		if !current.IsExpired(time.Now()) {

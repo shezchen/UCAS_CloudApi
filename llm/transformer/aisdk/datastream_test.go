@@ -332,3 +332,53 @@ func TestDataStreamTransformer_TransformError(t *testing.T) {
 		})
 	}
 }
+
+func TestDataStreamTransformer_AggregateStreamChunks_ReportsTerminalState(t *testing.T) {
+	transformer := NewDataStreamTransformer()
+	ctx := context.Background()
+
+	event := func(payload string) *httpclient.StreamEvent {
+		return &httpclient.StreamEvent{Data: []byte(payload)}
+	}
+
+	tests := []struct {
+		name          string
+		chunks        []*httpclient.StreamEvent
+		wantTerminal  bool
+		wantCompleted bool
+	}{
+		{
+			name: "finish marks the stream complete",
+			chunks: []*httpclient.StreamEvent{
+				event(`{"type":"start","messageId":"msg-1"}`),
+				event(`{"type":"text-start"}`),
+				event(`{"type":"text-delta","delta":"hi"}`),
+				event(`{"type":"text-end"}`),
+				event(`{"type":"finish-step"}`),
+				event(`{"type":"finish"}`),
+			},
+			wantTerminal:  true,
+			wantCompleted: true,
+		},
+		{
+			name: "a stream cut before finish is not terminal",
+			chunks: []*httpclient.StreamEvent{
+				event(`{"type":"start","messageId":"msg-2"}`),
+				event(`{"type":"text-start"}`),
+				event(`{"type":"text-delta","delta":"hi"}`),
+				event(`{"type":"finish-step"}`),
+			},
+			wantTerminal:  false,
+			wantCompleted: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, meta, err := transformer.AggregateStreamChunks(ctx, tt.chunks)
+			require.NoError(t, err)
+			require.Equal(t, tt.wantTerminal, meta.Terminal)
+			require.Equal(t, tt.wantCompleted, meta.Completed)
+		})
+	}
+}

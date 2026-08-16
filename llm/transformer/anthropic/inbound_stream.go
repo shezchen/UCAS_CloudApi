@@ -39,6 +39,8 @@ type anthropicInboundStream struct {
 	hasToolContentStarted     bool
 	hasFinished               bool
 	messageStoped             bool
+	sourceExhausted           bool
+	closed                    bool
 	messageID                 string
 	model                     string
 	contentIndex              int64
@@ -46,6 +48,9 @@ type anthropicInboundStream struct {
 	queueIndex                int
 	err                       error
 	stopReason                *string
+	// Last usage reported by any source chunk, kept for the synthesized
+	// terminal message_delta when the upstream never sends a usage chunk.
+	lastUsage *llm.Usage
 	// Tool call tracking
 	toolCalls            map[int]*llm.ToolCall // Track tool calls by index
 	currentToolCallIndex int
@@ -321,9 +326,15 @@ func (s *anthropicInboundStream) Next() bool {
 	s.eventQueue = nil
 	s.queueIndex = 0
 
+	if s.sourceExhausted {
+		return false
+	}
+
 	// Try to get the next chunk from source
 	if !s.source.Next() {
-		return false
+		s.sourceExhausted = true
+
+		return s.finalizeExhaustedSource()
 	}
 
 	chunk := s.source.Current()
@@ -334,6 +345,10 @@ func (s *anthropicInboundStream) Next() bool {
 	// Handle [DONE] marker
 	if chunk.Object == "[DONE]" {
 		return s.Next() // Try next chunk
+	}
+
+	if chunk.Usage != nil {
+		s.lastUsage = chunk.Usage
 	}
 
 	// Initialize message ID and model from first chunk
@@ -902,6 +917,93 @@ func (s *anthropicInboundStream) Next() bool {
 	return s.Next()
 }
 
+// finalizeExhaustedSource synthesizes the terminal message_delta and
+// message_stop events when the source stream ends before they were emitted.
+// This happens with upstreams that ignore include_usage and never send the
+// trailing usage chunk: the stop reason is recorded but the terminal events
+// are still pending. Without this fallback Anthropic clients never receive
+// message_delta/message_stop and hang or mis-handle the response.
+// It reports whether synthesized events were enqueued.
+func (s *anthropicInboundStream) finalizeExhaustedSource() bool {
+	// A closed source reports exhaustion too, but a torn-down stream must not
+	// produce new events.
+	if s.closed {
+		return false
+	}
+
+	// A broken source must surface through Err(); do not fabricate a clean
+	// termination on top of a transport error.
+	if s.source.Err() != nil {
+		return false
+	}
+
+	if !s.hasStarted || s.messageStoped {
+		return false
+	}
+
+	// Close any content block that is still open.
+	if err := s.closeThinkingBlock(); err != nil {
+		s.err = fmt.Errorf("failed to close thinking block at stream end: %w", err)
+		return false
+	}
+
+	if s.hasTextContentStarted {
+		if err := s.flushPendingTextCitations(); err != nil {
+			s.err = fmt.Errorf("failed to flush text citations at stream end: %w", err)
+			return false
+		}
+
+		s.hasTextContentStarted = false
+
+		if err := s.enqueEvent(&StreamEvent{
+			Type:  "content_block_stop",
+			Index: &s.contentIndex,
+		}); err != nil {
+			s.err = fmt.Errorf("failed to enqueue content_block_stop event at stream end: %w", err)
+			return false
+		}
+
+		s.contentIndex += 1
+	}
+
+	if s.hasToolContentStarted {
+		if err := s.closeToolBlock(); err != nil {
+			s.err = fmt.Errorf("failed to close tool block at stream end: %w", err)
+			return false
+		}
+	}
+
+	// Zero rather than the message_start placeholder when the upstream never
+	// reported usage: clients render these counts, so a fabricated 1 is a wrong
+	// number where 0 reads as absent.
+	usage := &Usage{}
+	if s.lastUsage != nil {
+		usage = convertToAnthropicUsage(s.lastUsage)
+	}
+
+	// Only the stop reason actually reported by the upstream is attached; a
+	// stream truncated before finish_reason keeps a null stop reason.
+	deltaEvent := StreamEvent{
+		Type:  "message_delta",
+		Delta: &StreamDelta{StopReason: s.stopReason},
+		Usage: usage,
+	}
+
+	if err := s.enqueEvent(&deltaEvent); err != nil {
+		s.err = fmt.Errorf("failed to enqueue message_delta event at stream end: %w", err)
+		return false
+	}
+
+	if err := s.enqueEvent(&StreamEvent{Type: "message_stop"}); err != nil {
+		s.err = fmt.Errorf("failed to enqueue message_stop event at stream end: %w", err)
+		return false
+	}
+
+	s.messageStoped = true
+
+	return s.queueIndex < len(s.eventQueue)
+}
+
 func (s *anthropicInboundStream) Current() *httpclient.StreamEvent {
 	if s.queueIndex < len(s.eventQueue) {
 		event := s.eventQueue[s.queueIndex]
@@ -922,5 +1024,7 @@ func (s *anthropicInboundStream) Err() error {
 }
 
 func (s *anthropicInboundStream) Close() error {
+	s.closed = true
+
 	return s.source.Close()
 }

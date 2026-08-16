@@ -27,6 +27,17 @@ type Inbound interface {
 	// This method handles unified-specific streaming formats and converts the chunks to a the client request format complete response.
 	// e.g: the client request with OpenAI chat completion format, and the provider is Anthropic Claude, the chunks is the unified stream event format,
 	// the AggregateStreamChunks will convert the chunks to the OpenAI chat completion format.
+	//
+	// The returned llm.ResponseMeta must describe the terminal state of the
+	// aggregated stream, because callers use it to decide whether an attempt may
+	// be served and persisted as a success:
+	//   - Terminal reports that the chunks contained an explicit terminal event.
+	//   - Completed reports that the terminal event was a successful one.
+	//     A truncated or explicitly failed stream is Terminal without Completed.
+	//   - ProtocolStatus/IncompleteReason carry explicit lifecycle states (e.g.
+	//     the Responses API incomplete/failed/canceled) and take precedence.
+	// Leaving all of them zero means "the upstream never signalled a terminal
+	// state"; callers treat that as acceptable but unverified, not as a failure.
 	AggregateStreamChunks(ctx context.Context, chunks []*httpclient.StreamEvent) ([]byte, llm.ResponseMeta, error)
 }
 

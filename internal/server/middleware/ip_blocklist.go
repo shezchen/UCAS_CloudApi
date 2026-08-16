@@ -34,6 +34,23 @@ func WithIPBlocklist(systemService *biz.SystemService) gin.HandlerFunc {
 	}
 }
 
+// clientIPCandidates collects the addresses evaluated against the blocklist.
+//
+// c.ClientIP() already honors the engine's trusted-proxy configuration
+// (server.go calls SetTrustedProxies): behind a configured proxy it returns the
+// proxy-supplied client address, otherwise the direct peer. The raw
+// X-Forwarded-For / X-Real-IP values are additionally included as
+// defense-in-depth candidates.
+//
+// SECURITY NOTE: X-Forwarded-For and X-Real-IP are client-controlled when the
+// deployment is not behind a trusted proxy, so they must never be used for
+// allow decisions. They only widen the set of addresses compared against the
+// blocklist, so a spoofed candidate can make a caller match a blocked entry
+// (blocking itself) but cannot remove a match produced by another candidate.
+// Evasion is prevented by normalizing every address in isBlockedAddr rather
+// than by this list. Deployments terminating TLS behind a proxy should
+// configure server.trusted_proxies so c.ClientIP() resolves the real client
+// address.
 func clientIPCandidates(c *gin.Context) []string {
 	candidates := make([]string, 0, 3)
 	seen := make(map[string]struct{}, 3)
@@ -79,7 +96,16 @@ func isBlockedIP(clientIPs []string, blockedIPs []string) bool {
 	return false
 }
 
+// isBlockedAddr compares clientAddr against the blocklist.
+//
+// Every address is unmapped first: netip treats an IPv4 address and its
+// IPv4-mapped IPv6 form as distinct, and Prefix.Contains never matches an
+// IPv4-mapped address against an IPv4 prefix. Without normalization a caller
+// behind a trusted proxy could send X-Forwarded-For: ::ffff:<blocked-ip> and
+// evade both the exact and the CIDR entries.
 func isBlockedAddr(clientAddr netip.Addr, blockedIPs []string) bool {
+	clientAddr = clientAddr.Unmap()
+
 	for _, item := range blockedIPs {
 		item = strings.TrimSpace(item)
 		if item == "" {
@@ -93,7 +119,7 @@ func isBlockedAddr(clientAddr netip.Addr, blockedIPs []string) bool {
 				continue
 			}
 
-			if prefix.Contains(clientAddr) {
+			if unmapPrefix(prefix).Contains(clientAddr) {
 				return true
 			}
 
@@ -106,10 +132,23 @@ func isBlockedAddr(clientAddr netip.Addr, blockedIPs []string) bool {
 			continue
 		}
 
-		if blockedAddr == clientAddr {
+		if blockedAddr.Unmap() == clientAddr {
 			return true
 		}
 	}
 
 	return false
+}
+
+// unmapPrefix rewrites an IPv4-mapped IPv6 prefix (e.g. ::ffff:203.0.113.0/120)
+// to its IPv4 equivalent so it can match unmapped client addresses. Prefixes
+// that are not IPv4-mapped, or whose length cannot describe an IPv4 network,
+// are returned unchanged.
+func unmapPrefix(prefix netip.Prefix) netip.Prefix {
+	addr := prefix.Addr()
+	if !addr.Is4In6() || prefix.Bits() < 96 {
+		return prefix
+	}
+
+	return netip.PrefixFrom(addr.Unmap(), prefix.Bits()-96)
 }

@@ -54,11 +54,14 @@ func WithInsecureSkipVerify(skip bool) ClientOption {
 }
 
 // WithPublicNetworkOnly restricts requests to HTTP(S)/WS(S) endpoints that
-// resolve exclusively to public IP addresses. DNS is resolved again at dial
-// time and the validated IP is dialed directly, preventing DNS-rebinding
-// between URL validation and connection establishment. Environment proxies are
-// disabled; an explicitly configured URL proxy is retained and subject to the
-// same public-address dial guard.
+// resolve exclusively to public IP addresses. On the direct path DNS is
+// resolved again at dial time and the validated IP is dialed, so the
+// destination cannot change between validation and connection: DNS rebinding
+// and redirects into private space are both blocked.
+//
+// Environment proxies are disabled. An explicitly configured URL proxy is
+// retained, and it weakens the guarantee — see the proxy caveat on
+// applyClientOptions.
 func WithPublicNetworkOnly() ClientOption {
 	return func(o *clientOptions) {
 		o.publicNetworkOnly = true
@@ -68,8 +71,11 @@ func WithPublicNetworkOnly() ClientOption {
 // WithPublicNetworkOnlyAndTrustedEnvironmentProxy keeps the process-managed
 // environment proxy for public-network-only requests. It is intended for
 // multi-tenant channels where the deployment, not the channel contributor,
-// controls HTTP_PROXY and HTTPS_PROXY. Explicit URL proxies remain subject to
-// the normal public-network dial guard.
+// controls HTTP_PROXY and HTTPS_PROXY.
+//
+// Using a proxy weakens the public-network guarantee — see the proxy caveat on
+// applyClientOptions. It is accepted here because the proxy is chosen by the
+// deployment.
 func WithPublicNetworkOnlyAndTrustedEnvironmentProxy() ClientOption {
 	return func(o *clientOptions) {
 		o.publicNetworkOnly = true
@@ -127,6 +133,50 @@ func publicNetworkAddressRestricted(addr netip.Addr) bool {
 	return false
 }
 
+// validatePublicNetworkURLSyntax runs every public-network check that does not
+// need name resolution and returns the normalized host.
+func validatePublicNetworkURLSyntax(
+	rawURL string,
+	allowedSchemes map[string]struct{},
+	allowUserinfo bool,
+) (string, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid URL: %w", err)
+	}
+
+	if parsed.Opaque != "" || parsed.Host == "" {
+		return "", fmt.Errorf("URL must be absolute and include a host")
+	}
+
+	scheme := strings.ToLower(parsed.Scheme)
+	if _, ok := allowedSchemes[scheme]; !ok {
+		return "", fmt.Errorf("URL scheme %q is not supported", parsed.Scheme)
+	}
+
+	if parsed.User != nil && !allowUserinfo {
+		return "", fmt.Errorf("URL userinfo is not allowed")
+	}
+
+	host := strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
+	if host == "" {
+		return "", fmt.Errorf("URL host is required")
+	}
+
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") ||
+		host == "metadata.google.internal" || host == "metadata.tencentyun.com" {
+		return "", fmt.Errorf("URL host %q is not publicly routable", host)
+	}
+
+	if literal, parseErr := netip.ParseAddr(host); parseErr == nil {
+		if publicNetworkAddressRestricted(literal) {
+			return "", fmt.Errorf("URL host %q resolves to a restricted address", host)
+		}
+	}
+
+	return host, nil
+}
+
 func validatePublicNetworkURLWithResolver(
 	ctx context.Context,
 	rawURL string,
@@ -134,39 +184,12 @@ func validatePublicNetworkURLWithResolver(
 	allowedSchemes map[string]struct{},
 	allowUserinfo bool,
 ) error {
-	parsed, err := url.Parse(rawURL)
+	host, err := validatePublicNetworkURLSyntax(rawURL, allowedSchemes, allowUserinfo)
 	if err != nil {
-		return fmt.Errorf("invalid URL: %w", err)
+		return err
 	}
 
-	if parsed.Opaque != "" || parsed.Host == "" {
-		return fmt.Errorf("URL must be absolute and include a host")
-	}
-
-	scheme := strings.ToLower(parsed.Scheme)
-	if _, ok := allowedSchemes[scheme]; !ok {
-		return fmt.Errorf("URL scheme %q is not supported", parsed.Scheme)
-	}
-
-	if parsed.User != nil && !allowUserinfo {
-		return fmt.Errorf("URL userinfo is not allowed")
-	}
-
-	host := strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
-	if host == "" {
-		return fmt.Errorf("URL host is required")
-	}
-
-	if host == "localhost" || strings.HasSuffix(host, ".localhost") ||
-		host == "metadata.google.internal" || host == "metadata.tencentyun.com" {
-		return fmt.Errorf("URL host %q is not publicly routable", host)
-	}
-
-	if literal, parseErr := netip.ParseAddr(host); parseErr == nil {
-		if publicNetworkAddressRestricted(literal) {
-			return fmt.Errorf("URL host %q resolves to a restricted address", host)
-		}
-
+	if _, parseErr := netip.ParseAddr(host); parseErr == nil {
 		return nil
 	}
 
@@ -211,6 +234,60 @@ func ValidatePublicURL(ctx context.Context, rawURL string) error {
 // standard authenticated proxy URLs.
 func ValidatePublicProxyURL(ctx context.Context, rawURL string) error {
 	return validatePublicNetworkURLWithResolver(ctx, rawURL, net.DefaultResolver, publicProxySchemes, true)
+}
+
+// ValidatePublicEndpointURLSyntax verifies that an HTTP(S)/WS(S) endpoint URL
+// is well formed and is not, on the face of it, aimed at a non-public address,
+// without resolving DNS.
+//
+// It is a save-time gate for configuration that is later delivered through the
+// public-network pinned dialer: it rejects what is visible in the URL itself
+// (loopback, private and link-local literals, localhost, cloud metadata names)
+// so a misconfiguration fails when it is saved rather than being dropped at
+// delivery time. A hostname that resolves to a restricted address is not
+// rejected here — DNS can change between saving and delivery, so a save-time
+// lookup would be misleading as well as flaky, and the dialer is the
+// enforcement point.
+func ValidatePublicEndpointURLSyntax(rawURL string) error {
+	_, err := validatePublicNetworkURLSyntax(rawURL, publicEndpointSchemes, false)
+
+	return err
+}
+
+// ValidateEndpointURLSyntax verifies that an endpoint URL is an absolute
+// HTTP(S)/WS(S) URL with a host and without userinfo, without resolving DNS
+// and without restricting the destination network.
+//
+// It is the create/update-time gate for owner-managed channels: owners may
+// legitimately target private or loopback providers (e.g. a local Ollama
+// instance), so the public-address restriction of ValidatePublicURL does not
+// apply, but non-network schemes (file:, gopher:, ...), opaque URLs, and
+// credential-bearing URLs are still rejected.
+func ValidateEndpointURLSyntax(rawURL string) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+
+	if parsed.Opaque != "" || parsed.Host == "" {
+		return fmt.Errorf("URL must be absolute and include a host")
+	}
+
+	if _, ok := publicEndpointSchemes[strings.ToLower(parsed.Scheme)]; !ok {
+		return fmt.Errorf("URL scheme %q is not supported", parsed.Scheme)
+	}
+
+	if parsed.User != nil {
+		return fmt.Errorf("URL userinfo is not allowed")
+	}
+
+	// A non-empty Host can still carry no hostname ("http://:8080"), which the
+	// Go client dials as localhost.
+	if strings.TrimSuffix(parsed.Hostname(), ".") == "" {
+		return fmt.Errorf("URL host is required")
+	}
+
+	return nil
 }
 
 func publicNetworkDialContext(resolver publicNetworkResolver, dialer contextDialer) func(context.Context, string, string) (net.Conn, error) {
@@ -329,6 +406,23 @@ func usesEnvironmentProxy(proxyConfig *ProxyConfig) bool {
 	return proxyConfig == nil || proxyConfig.Type == "" || proxyConfig.Type == ProxyTypeEnvironment
 }
 
+// applyClientOptions installs the public-network restriction on the transport.
+//
+// PROXY CAVEAT: the restriction is enforced by resolving the destination and
+// dialing the validated IP, which only holds while the transport dials the
+// destination itself. As soon as a proxy is configured, the transport dials
+// the proxy and the proxy resolves the origin hostname, so the pin covers the
+// hop to the proxy and nothing beyond it. On that path the only check on the
+// origin is the pre-flight validation (ValidatePublicURL / ValidateRequestURL
+// and the CheckRedirect hook below), which resolves the name separately from
+// whoever connects to it and is therefore open to DNS rebinding.
+//
+// This is accepted rather than fixed: pinning through a proxy would mean
+// rewriting the CONNECT target to an IP, which breaks TLS verification and
+// authenticated proxies. Both proxy paths are deployment-controlled — the
+// environment proxy comes from the process, and a URL proxy is owner
+// configuration — so the residual exposure is to a proxy the operator chose.
+// Do not treat a proxied client as rebinding-safe.
 func applyClientOptions(client *http.Client, transport *http.Transport, options clientOptions, proxyConfig *ProxyConfig) {
 	if options.resolver == nil {
 		options.resolver = net.DefaultResolver
@@ -349,9 +443,9 @@ func applyClientOptions(client *http.Client, transport *http.Transport, options 
 				trustedEnvironmentProxyDialAddresses(),
 			)
 		} else if proxyConfig != nil && proxyConfig.Type == ProxyTypeURL {
-			// Explicit URL proxies are useful for provider connectivity and are
-			// safe here because both the request target and proxy dial are
-			// constrained to public addresses.
+			// Explicit URL proxies are useful for provider connectivity. The
+			// dial guard constrains the proxy address, not the origin the proxy
+			// then connects to; see the proxy caveat above.
 			transport.Proxy = getProxyFunc(proxyConfig)
 			transport.DialContext = publicNetworkDialContext(options.resolver, &net.Dialer{
 				Timeout:   30 * time.Second,

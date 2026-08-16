@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/samber/lo"
 	"github.com/stretchr/testify/require"
 
 	"github.com/looplj/axonhub/internal/authz"
@@ -348,4 +349,59 @@ func TestChannelService_BulkArchiveChannels(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestChannelService_BulkImportChannelsRejectsInvalidBaseURL(t *testing.T) {
+	svc, client := setupTestChannelService(t)
+	defer client.Close()
+
+	ctx := context.Background()
+	ctx = ent.NewContext(ctx, client)
+	ctx = authz.WithTestBypass(ctx)
+
+	items := []*BulkImportChannelItem{
+		{
+			Type:            string(channel.TypeOpenai),
+			Name:            "valid",
+			BaseURL:         lo.ToPtr("https://api.openai.com/v1"),
+			APIKey:          lo.ToPtr("key"),
+			SupportedModels: []string{"gpt-4"},
+		},
+		{
+			Type:            string(channel.TypeOpenai),
+			Name:            "file-scheme",
+			BaseURL:         lo.ToPtr("file:///etc/passwd"),
+			APIKey:          lo.ToPtr("key"),
+			SupportedModels: []string{"gpt-4"},
+		},
+		{
+			Type:            string(channel.TypeOpenai),
+			Name:            "with-credentials",
+			BaseURL:         lo.ToPtr("https://user:pass@api.openai.com/v1"),
+			APIKey:          lo.ToPtr("key"),
+			SupportedModels: []string{"gpt-4"},
+		},
+		{
+			Type:            string(channel.TypeOpenai),
+			Name:            "private-host",
+			BaseURL:         lo.ToPtr("http://192.168.1.10:11434"),
+			APIKey:          lo.ToPtr("key"),
+			SupportedModels: []string{"gpt-4"},
+		},
+	}
+
+	result, err := svc.BulkImportChannels(ctx, items)
+	require.NoError(t, err)
+
+	// Owners may target private providers, so only the two malformed URLs fail.
+	require.Equal(t, 2, result.Created)
+	require.Equal(t, 2, result.Failed)
+	require.False(t, result.Success)
+
+	imported, err := client.Channel.Query().All(ctx)
+	require.NoError(t, err)
+	require.ElementsMatch(t,
+		[]string{"valid", "private-host"},
+		lo.Map(imported, func(ch *ent.Channel, _ int) string { return ch.Name }),
+	)
 }

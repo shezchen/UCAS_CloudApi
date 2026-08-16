@@ -681,6 +681,8 @@ func (svc *ChannelService) createChannel(ctx context.Context, input ent.CreateCh
 		if err := ValidateDonationChannelConfiguration(ctx, input.Type, input.BaseURL, &input.Credentials, input.Settings, input.Endpoints); err != nil {
 			return nil, fmt.Errorf("invalid donated channel network configuration: %w", err)
 		}
+	} else if err := ValidateOwnerChannelURLs(input.BaseURL, input.Endpoints); err != nil {
+		return nil, fmt.Errorf("invalid channel base URL configuration: %w", err)
 	}
 
 	if input.Settings != nil {
@@ -895,6 +897,12 @@ func (svc *ChannelService) UpdateChannel(ctx context.Context, id int, input *ent
 
 		if err := ValidateDonationChannelConfiguration(ctx, effectiveType, effectiveBaseURL, effectiveCredentials, effectiveSettings, effectiveEndpoints); err != nil {
 			return nil, fmt.Errorf("invalid donated channel network configuration: %w", err)
+		}
+	} else {
+		// Owner path: validate only the URLs this update changes, so channels
+		// with legacy stored values keep working until their URLs are edited.
+		if err := ValidateOwnerChannelURLs(input.BaseURL, input.Endpoints); err != nil {
+			return nil, fmt.Errorf("invalid channel base URL configuration: %w", err)
 		}
 	}
 
@@ -1169,6 +1177,8 @@ func (svc *ChannelService) SaveChannelEndpoints(ctx context.Context, input SaveC
 		if err := ValidateDonationChannelConfiguration(ctx, ch.Type, &ch.BaseURL, &ch.Credentials, ch.Settings, input.Endpoints); err != nil {
 			return nil, fmt.Errorf("invalid donated channel network configuration: %w", err)
 		}
+	} else if err := ValidateOwnerChannelURLs(nil, input.Endpoints); err != nil {
+		return nil, fmt.Errorf("invalid endpoint base URL configuration: %w", err)
 	}
 
 	ch, err = svc.entFromContext(ctx).Channel.UpdateOne(ch).

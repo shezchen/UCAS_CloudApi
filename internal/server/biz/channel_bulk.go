@@ -305,6 +305,13 @@ func (svc *ChannelService) BulkImportChannels(ctx context.Context, items []*Bulk
 			continue
 		}
 
+		if err := ValidateOwnerChannelURLs(item.BaseURL, nil); err != nil {
+			errors = append(errors, fmt.Sprintf("Row %d (%s): %s", i+1, item.Name, err.Error()))
+			failed++
+
+			continue
+		}
+
 		if item.APIKey == nil || *item.APIKey == "" {
 			errors = append(errors, fmt.Sprintf("Row %d (%s): API Key is required", i+1, item.Name))
 			failed++

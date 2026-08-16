@@ -16,6 +16,12 @@ const (
 )
 
 // WithAPIKey stores the API key entity in the context.
+//
+// WARNING: this writes into the container already stored in ctx (in place),
+// so the new identity is visible to every context derived from the same
+// container — including the original request context. To impersonate a
+// principal for a nested or scoped execution, first clone the container with
+// WithIsolatedContainer (or DetachForAsync for background work).
 func WithAPIKey(ctx context.Context, apiKey *ent.APIKey) context.Context {
 	container := getContainer(ctx)
 	container.mu.Lock()
@@ -44,6 +50,14 @@ func GetAPIKeyString(ctx context.Context) (string, bool) {
 }
 
 // WithUser stores the user entity in the context.
+//
+// WARNING: this writes into the container already stored in ctx (in place),
+// so the new identity is visible to every context derived from the same
+// container — including the original request context. To impersonate a
+// principal for a nested or scoped execution, first clone the container with
+// WithIsolatedContainer (or DetachForAsync for background work). For
+// unauthenticated flows that need elevated database access, prefer
+// authz.RunWithSystemBypass over injecting a synthetic user here.
 func WithUser(ctx context.Context, user *ent.User) context.Context {
 	container := getContainer(ctx)
 	container.mu.Lock()

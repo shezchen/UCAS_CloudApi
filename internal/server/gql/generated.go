@@ -2058,13 +2058,14 @@ type ComplexityRoot struct {
 	}
 
 	WebhookTarget struct {
-		Body      func(childComplexity int) int
-		Enabled   func(childComplexity int) int
-		Headers   func(childComplexity int) int
-		Name      func(childComplexity int) int
-		Proxy     func(childComplexity int) int
-		TimeoutMs func(childComplexity int) int
-		URL       func(childComplexity int) int
+		AllowPrivateNetwork func(childComplexity int) int
+		Body                func(childComplexity int) int
+		Enabled             func(childComplexity int) int
+		Headers             func(childComplexity int) int
+		Name                func(childComplexity int) int
+		Proxy               func(childComplexity int) int
+		TimeoutMs           func(childComplexity int) int
+		URL                 func(childComplexity int) int
 	}
 }
 
@@ -11140,6 +11141,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.complexity.WebhookSubscription.TargetNames(childComplexity), true
 
+	case "WebhookTarget.allowPrivateNetwork":
+		if e.complexity.WebhookTarget.AllowPrivateNetwork == nil {
+			break
+		}
+
+		return e.complexity.WebhookTarget.AllowPrivateNetwork(childComplexity), true
 	case "WebhookTarget.body":
 		if e.complexity.WebhookTarget.Body == nil {
 			break
@@ -59861,6 +59868,8 @@ func (ec *executionContext) fieldContext_WebhookNotifierConfig_targets(_ context
 				return ec.fieldContext_WebhookTarget_headers(ctx, field)
 			case "body":
 				return ec.fieldContext_WebhookTarget_body(ctx, field)
+			case "allowPrivateNetwork":
+				return ec.fieldContext_WebhookTarget_allowPrivateNetwork(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type WebhookTarget", field.Name)
 		},
@@ -60175,6 +60184,35 @@ func (ec *executionContext) fieldContext_WebhookTarget_body(_ context.Context, f
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WebhookTarget_allowPrivateNetwork(ctx context.Context, field graphql.CollectedField, obj *biz.WebhookTarget) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WebhookTarget_allowPrivateNetwork,
+		func(ctx context.Context) (any, error) {
+			return obj.AllowPrivateNetwork, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WebhookTarget_allowPrivateNetwork(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WebhookTarget",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
 		},
 	}
 	return fc, nil
@@ -89116,7 +89154,11 @@ func (ec *executionContext) unmarshalInputWebhookTargetInput(ctx context.Context
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"name", "enabled", "url", "proxy", "timeoutMs", "headers", "body"}
+	if _, present := asMap["allowPrivateNetwork"]; !present {
+		asMap["allowPrivateNetwork"] = false
+	}
+
+	fieldsInOrder := [...]string{"name", "enabled", "url", "proxy", "timeoutMs", "headers", "body", "allowPrivateNetwork"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -89172,6 +89214,13 @@ func (ec *executionContext) unmarshalInputWebhookTargetInput(ctx context.Context
 				return it, err
 			}
 			it.Body = data
+		case "allowPrivateNetwork":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("allowPrivateNetwork"))
+			data, err := ec.unmarshalNBoolean2bool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.AllowPrivateNetwork = data
 		}
 	}
 
@@ -108726,6 +108775,11 @@ func (ec *executionContext) _WebhookTarget(ctx context.Context, sel ast.Selectio
 			}
 		case "body":
 			out.Values[i] = ec._WebhookTarget_body(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "allowPrivateNetwork":
+			out.Values[i] = ec._WebhookTarget_allowPrivateNetwork(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}

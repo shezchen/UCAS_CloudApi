@@ -21,6 +21,34 @@ func ValidateDonationURL(ctx context.Context, rawURL string) error {
 	return httpclient.ValidatePublicURL(ctx, rawURL)
 }
 
+// ValidateOwnerChannelURLs is the create/update-time gate for owner-managed
+// channels. Owners may point channels at private or self-hosted providers
+// (local Ollama, internal vLLM), so unlike the donation gate it does not
+// restrict the destination network; it only rejects base URLs that are not
+// absolute HTTP(S)/WS(S) URLs (file:, gopher:, opaque, or credential-bearing
+// URLs). Donated channels are additionally validated with
+// ValidateDonationChannelConfiguration and dial through a public-only pinned
+// dialer at request time.
+func ValidateOwnerChannelURLs(baseURL *string, endpoints []objects.ChannelEndpoint) error {
+	if baseURL != nil && *baseURL != "" {
+		if err := httpclient.ValidateEndpointURLSyntax(*baseURL); err != nil {
+			return fmt.Errorf("base URL: %w", err)
+		}
+	}
+
+	for i, endpoint := range endpoints {
+		if endpoint.BaseURL == "" {
+			continue
+		}
+
+		if err := httpclient.ValidateEndpointURLSyntax(endpoint.BaseURL); err != nil {
+			return fmt.Errorf("endpoint[%d] base URL: %w", i, err)
+		}
+	}
+
+	return nil
+}
+
 var donationGCPRegionPattern = regexp.MustCompile(`^(?:global|[a-z][a-z0-9]*(?:-[a-z0-9]+)*)$`)
 
 type donationGCPServiceAccountJSON struct {
